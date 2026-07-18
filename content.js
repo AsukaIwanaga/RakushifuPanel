@@ -66,19 +66,40 @@
   }
 
   // ===== データ取得 =====
+  // 拡張の再読込後は、開きっぱなしのタブに残った旧content scriptから見ると
+  // chrome.runtime が失効する (Extension context invalidated)。以降は静かに停止する。
+  const alive = () => { try { return !!(chrome.runtime && chrome.runtime.id); } catch { return false; } };
+  const timers = [];
+  let lostNotified = false;
+  function contextLost() {
+    timers.forEach(clearInterval);
+    if (lostNotified) return;
+    lostNotified = true;
+    $('#stats').innerHTML =
+      '<span class="err">拡張機能が更新されました。ページを再読み込みしてください</span>';
+    $('#tableWrap').innerHTML = '';
+    $('#tasks').innerHTML = '';
+    $('#unconfirmed').innerHTML = '';
+  }
+
   function fetchSheet(date) {
     const sheetName = sheetNameFor(date);
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'fetchSheetCsv', sheetId: SHEET_ID, sheetName }, (res) => {
-        if (chrome.runtime.lastError || !res) {
-          resolve({ error: chrome.runtime.lastError?.message || '応答なし', sheetName });
-        } else if (!res.ok || !res.text || res.text.trim().startsWith('<')) {
-          // ログイン切れ or シートなし → HTMLが返る
-          resolve({ error: `シート取得失敗 (${res.status ?? res.error})`, sheetName });
-        } else {
-          resolve({ rows: parseCSV(res.text), sheetName });
-        }
-      });
+      if (!alive()) return resolve({ error: '拡張更新済み・要ページ再読込', sheetName });
+      try {
+        chrome.runtime.sendMessage({ type: 'fetchSheetCsv', sheetId: SHEET_ID, sheetName }, (res) => {
+          if (chrome.runtime.lastError || !res) {
+            resolve({ error: chrome.runtime.lastError?.message || '応答なし', sheetName });
+          } else if (!res.ok || !res.text || res.text.trim().startsWith('<')) {
+            // ログイン切れ or シートなし → HTMLが返る
+            resolve({ error: `シート取得失敗 (${res.status ?? res.error})`, sheetName });
+          } else {
+            resolve({ rows: parseCSV(res.text), sheetName });
+          }
+        });
+      } catch {
+        resolve({ error: '拡張更新済み・要ページ再読込', sheetName });
+      }
     });
   }
 
@@ -200,7 +221,10 @@
   // ===== 月次タスク（月次タスク一覧シート） =====
   let taskRowsCache = null;
   const fetchCsv = (msg) => new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: 'fetchSheetCsv', sheetId: TASK_SHEET_ID, ...msg }, resolve);
+    if (!alive()) return resolve(null);
+    try {
+      chrome.runtime.sendMessage({ type: 'fetchSheetCsv', sheetId: TASK_SHEET_ID, ...msg }, resolve);
+    } catch { resolve(null); }
   });
 
   async function fetchTaskRows() {
@@ -405,6 +429,7 @@
     ]);
     if (res.error) {
       $('#stats').innerHTML = `<span class="err">${res.error}: ${res.sheetName}</span>`;
+      renderTasks(); // 日付シートが無い日でもタスク欄は独立して更新する
       return;
     }
     const { header, hourly } = extractSheetData(res.rows);
@@ -551,17 +576,24 @@
   }
 
   // URL変化 (日付移動・ビュー切替) を監視してパネルの対象日を追従
-  setInterval(() => {
+  timers.push(setInterval(() => {
+    if (!alive()) return contextLost();
     if (location.href === lastHref) return;
     lastHref = location.href;
     const d = parseYmd(urlParams().from || '');
     if (d && ymd(d) !== ymd(targetDate)) { targetDate = d; renderSheet(); }
-  }, URL_WATCH_MS);
+  }, URL_WATCH_MS));
 
   pruneDoneKeys();
   renderSheet();
   renderUnconfirmed();
-  setInterval(renderUnconfirmed, CONFIRM_POLL_MS);
+  timers.push(setInterval(() => {
+    if (!alive()) return contextLost();
+    renderUnconfirmed();
+  }, CONFIRM_POLL_MS));
   // シフト編集の反映を追うため、パネルが開いている間は実人数込みで定期更新
-  setInterval(() => { if (panel.classList.contains('open')) renderSheet(); }, 2 * 60 * 1000);
+  timers.push(setInterval(() => {
+    if (!alive()) return contextLost();
+    if (panel.classList.contains('open')) renderSheet();
+  }, 2 * 60 * 1000));
 })();
