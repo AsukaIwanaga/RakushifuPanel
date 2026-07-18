@@ -454,21 +454,22 @@
         max-height: calc(100vh - 80px); overflow-y: auto;
         background: #fff; border: 1px solid #ccc; border-radius: 10px;
         box-shadow: 0 4px 20px rgba(0,0,0,.25); padding: 10px; display: none;
-        font-size: 12px; color: #222;
+        font-size: 13px; color: #222;
       }
       #tableWrap { overflow-x: auto; }
       #panel.open { display: block; }
       .nav { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-      .nav b { flex: 1; text-align: center; font-size: 13px; }
+      .nav b { flex: 1; text-align: center; font-size: 14px; }
       .nav button {
         border: 1px solid #ccc; background: #f5f5f5; border-radius: 5px;
-        cursor: pointer; padding: 2px 8px; font-size: 12px;
+        cursor: pointer; padding: 3px 10px; font-size: 13px;
       }
+      .nav button.accent { background: #2c6e49; color: #fff; border-color: #2c6e49; font-weight: 700; }
       .stats { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
       .chip { background: #eef4f0; border-radius: 5px; padding: 2px 7px; }
       .chip b { color: #2c6e49; }
       table { border-collapse: collapse; width: 100%; }
-      th, td { border: 1px solid #ddd; padding: 1px 4px; text-align: center; font-size: 11px; white-space: nowrap; }
+      th, td { border: 1px solid #ddd; padding: 2px 5px; text-align: center; font-size: 12px; white-space: nowrap; }
       th { background: #f0f0f0; color: #555; }
       th.row-head, td.row-head { text-align: left; color: #333; font-weight: 600; }
       td.now, th.now { background: #fff7d6; }
@@ -484,7 +485,7 @@
       tr.diff td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
       tr.diff td.over { background: #e8f5ec; color: #1e7a44; font-weight: 700; }
       th.short-mark { background: #d64545; color: #fff; }
-      .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 12px; }
+      .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 13px; }
       .section-title.fold { cursor: pointer; user-select: none; }
       .unconfirmed { display: flex; flex-wrap: wrap; gap: 4px; }
       .unconfirmed .day {
@@ -497,14 +498,14 @@
         border: 1px solid #2c6e49; background: #eef4f0; color: #2c6e49;
         border-radius: 5px; cursor: pointer; padding: 4px 12px; font-size: 12px; margin-top: 4px;
       }
-      .muted { color: #888; font-size: 11px; }
+      .muted { color: #888; font-size: 12px; }
       .tasks .task { display: flex; gap: 6px; padding: 2px 0; border-bottom: 1px dotted #eee; align-items: flex-start; }
       .tasks .task .tid {
-        flex: 0 0 auto; font-weight: 700; color: #2c6e49; font-size: 11px;
+        flex: 0 0 auto; font-weight: 700; color: #2c6e49; font-size: 12px;
         background: #eef4f0; border-radius: 4px; padding: 0 5px; align-self: center;
       }
       .tasks .task.ext .tid { color: #a15c00; background: #fdf3e3; }
-      .tasks .task .tnote { color: #888; font-size: 10px; }
+      .tasks .task .tnote { color: #888; font-size: 11px; }
     </style>
     <button id="toggle" title="客数予測パネル">📊<span class="badge" id="badge"></span></button>
     <div id="panel">
@@ -512,7 +513,7 @@
         <button id="prev">◀</button>
         <b id="dateLabel">-</b>
         <button id="next">▶</button>
-        <button id="reload" title="再読込">⟳</button>
+        <button id="reload" class="accent">更新</button>
       </div>
       <div id="stats" class="stats"></div>
       <div id="tableWrap"></div>
