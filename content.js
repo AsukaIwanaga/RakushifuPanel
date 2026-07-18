@@ -194,7 +194,7 @@
     };
     // 固定作業を上乗せした「必要」行（判定はこちらを使う）。部分時間は比例配分
     if (FIXED.length) {
-      const fF = HOURS.map(() => 0), fK = HOURS.map(() => 0), fAll = HOURS.map(() => 0);
+      const fF = HOURS.map(() => 0), fK = HOURS.map(() => 0), fFK = HOURS.map(() => 0);
       for (const t of FIXED) {
         HOURS.forEach((h, i) => {
           const ov = Math.max(0, Math.min(t.e, h * 60 + 60) - Math.max(t.s, h * 60)) / 60;
@@ -202,13 +202,14 @@
           const v = t.n * ov;
           if (t.grp === 'F') fF[i] += v;
           else if (t.grp === 'K') fK[i] += v;
-          fAll[i] += v; // FK=どちらのグループでも可 → 合計必要にのみ加算
+          else fFK[i] += v; // FK=どちらのグループでも可 → 合計必要にのみ加算
         });
       }
-      hourly['FIXED'] = mk(fAll.map(r1));
+      hourly['FIXED'] = mk(HOURS.map((_, i) => r1(fF[i] + fK[i] + fFK[i])));
+      if (fFK.some((v) => v > 0)) hourly['FIXED（FK）'] = mk(fFK.map(r1));
       hourly['NEED（F）'] = mk(HOURS.map((_, i) => r1(reqF[i] + fF[i])));
       hourly['NEED（K）'] = mk(HOURS.map((_, i) => r1(reqK[i] + fK[i])));
-      hourly['NEED（SUM）'] = mk(HOURS.map((_, i) => r1(reqSum[i] + fAll[i])));
+      hourly['NEED（SUM）'] = mk(HOURS.map((_, i) => r1(reqSum[i] + fF[i] + fK[i] + fFK[i])));
     }
     const chips = [];
     if (le.total != null) chips.push([LE_FIELD + '計', le.total]);
@@ -593,34 +594,68 @@
     }
   }
 
-  // ===== 前年客数・修正客数の下に 必要人数(REQ計) 行を注入 =====
-  // req = {sum: {hours[], total}, f: {hours[]}, k: {hours[]}} — セルtitleにF/K内訳
-  function updateReqRows(req) {
+  // ===== 修正客数行の下に必要人数行を注入（セクション別・v1.11.0移植） =====
+  // フロアセクション=必要F(+必要FK) / キッチン=必要K(+必要FK)。FKは両方に重複表示。
+  // reqPack = {f, k, fk?, sum} 各{hours[], total}（固定作業があれば固定込みのNEED値）
+  function updateReqRows(reqPack) {
     document.querySelectorAll('.rf-req-row').forEach((e) => e.remove());
-    lastReq = req || null;
-    if (!req || !onOneDayTarget()) return;
+    lastReq = reqPack || null;
+    if (!reqPack || !onOneDayTarget()) return;
     const labels = [...document.querySelectorAll('th.metrics-row-header')]
       .filter((th) => (th.textContent || '').includes(LE_FIELD));
     for (const th of labels) {
       const tr = th.closest('tr');
       if (!tr) continue;
-      const clone = tr.cloneNode(true);
-      clone.classList.add('rf-req-row');
-      const cth = clone.querySelector('th.metrics-row-header');
-      if (cth) cth.innerHTML = `<span style="font-weight:700;color:#2c6e49;">OP全体必要人数 (合計: ${req.sum.total || '-'})</span>`;
-      // 時刻6..24の19セルが並ぶコンテナを探して値を差し替え
-      const rowCells = [...clone.querySelectorAll('*')].find((e) => e.children.length === 19);
-      if (rowCells) {
-        [...rowCells.children].forEach((cell, idx) => {
-          const inRange = idx < HOURS.length;
-          cell.textContent = inRange ? (req.sum.hours[idx] || '') : '';
-          cell.title = inRange ? `F ${req.f.hours[idx] || '0'} ・ K ${req.k.hours[idx] || '0'}` : '';
-          cell.style.color = '#2c6e49';
-          cell.style.fontWeight = '700';
-        });
+      // 修正客数行のクローンにラベルと値を差し替えた行を作る
+      const mkRow = (labelHtml, vals, color, tipFn) => {
+        const clone = tr.cloneNode(true);
+        clone.classList.add('rf-req-row');
+        const cth = clone.querySelector('th.metrics-row-header');
+        if (cth) cth.innerHTML = labelHtml;
+        // 時刻6..24の19セルが並ぶコンテナを探して値を差し替え
+        const rowCells = [...clone.querySelectorAll('*')].find((e) => e.children.length === 19);
+        if (rowCells) {
+          [...rowCells.children].forEach((cell, idx) => {
+            cell.textContent = idx < HOURS.length ? (vals[idx] || '') : '';
+            cell.style.color = color;
+            cell.style.fontWeight = '700';
+            if (tipFn && idx < HOURS.length) cell.title = tipFn(idx);
+          });
+        }
+        return clone;
+      };
+      const sec = sectionOf(tr);
+      let anchor = tr;
+      const tipSum = reqPack.sum ? (i) => `必要計 ${reqPack.sum.hours[i] || '0'}` : null;
+      const addReq = (label, row, color) => {
+        if (!row) return;
+        const r = mkRow(
+          `<span style="font-weight:700;color:${color};">${label} (合計: ${row.total || '-'})</span>`,
+          row.hours, color, tipSum);
+        anchor.after(r);
+        anchor = r;
+      };
+      if (sec === 'キッチン') {
+        addReq('必要K', reqPack.k, '#2c6e49');
+        addReq('必要FK', reqPack.fk, '#0e7490');
+      } else if (sec === 'フロア') {
+        addReq('必要F', reqPack.f, '#2c6e49');
+        addReq('必要FK', reqPack.fk, '#0e7490');
+      } else {
+        addReq('OP全体必要人数', reqPack.sum, '#2c6e49'); // セクション判別不能時は計を出す
       }
-      tr.after(clone);
     }
+  }
+
+  // 行の属するセクション見出し(フロア/キッチン)を特定
+  function sectionOf(el) {
+    const titles = [...document.querySelectorAll('*')]
+      .filter((e) => e.children.length === 0 && /^(フロア|キッチン)$/.test((e.textContent || '').trim()));
+    let best = null;
+    for (const t of titles) {
+      if (t.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) best = t;
+    }
+    return best ? best.textContent.trim() : null;
   }
 
   // ページ本体のシフト保存(page_hook.jsが検知)→少し待って再計算
@@ -750,9 +785,10 @@
       ` ・ FK ${actual?.FK?.[i] ?? '-'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/必要)`;
     updateStrips(SHOW.heatbar ? catDiffs : null, tip);
-    // 画面の客数行の下にOP全体必要人数(客数ベースREQ計)行を注入（個人版のLE行注入に相当）
-    const opReq = hourly['REQ（SUM）'];
-    updateReqRows((SHOW.reqRow && opReq && reqF && reqK) ? { sum: opReq, f: reqF, k: reqK } : null);
+    // 画面の客数行の下に必要人数行をセクション別に注入（フロア=必要F+FK / キッチン=必要K+FK）
+    updateReqRows((SHOW.reqRow && req && needF && needK)
+      ? { f: needF, k: needK, fk: hourly['FIXED（FK）'], sum: req }
+      : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
     if (SHOW.weekBadges) {
       fetchWeekStats(targetDate)
