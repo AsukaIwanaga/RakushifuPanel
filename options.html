@@ -68,6 +68,31 @@
   <p class="hint">らくしふ日別ビュー上部の行名。見つからない場合、パネルにエラーと
     利用可能な名前一覧（DevToolsコンソール）が出ます。</p>
 
+  <h2>表示</h2>
+  <label><input type="checkbox" id="showHeatbar"> 画面上の不足ヒートバー（フロア/キッチン各セクション）</label>
+  <label><input type="checkbox" id="showReqRow"> OP全体必要人数行の注入（修正客数行の下）</label>
+  <label><input type="checkbox" id="showWeekBadges"> 週間アサインバッジ（スタッフ名の横に 週N日/Nh）</label>
+
+  <label>塗りつぶし境界</label>
+  <p>差分の絶対値が <input type="number" id="fillTh" class="pct" step="0.5" min="0"> 人以上で
+    赤/緑の塗りつぶし表示（未満は白地に色文字）</p>
+  <label>過剰警告</label>
+  <p>余剰が <input type="number" id="surplusWarn" class="pct" step="0.5" min="0.5"> 人以上で
+    緑塗りつぶし（人件費の使いすぎサイン）</p>
+
+  <h2>業務割振タスクの解釈</h2>
+  <p class="hint">らくしふの業務割振タスク名を、実人数のカウント先に振り分けます。
+    カンマ区切り・末尾 <code>*</code> で前方一致（例: <code>BU*</code> は BU で始まる全タスク）。
+    店舗でタスク名が違う場合はここを合わせてください。</p>
+  <label>フロア(F)に振替</label>
+  <input type="text" id="tasksF" placeholder="F">
+  <label>キッチン(K)に振替</label>
+  <input type="text" id="tasksK" placeholder="K, BU*">
+  <label>FK（フロア/キッチン兼務）に振替</label>
+  <input type="text" id="tasksFK" placeholder="FK">
+  <label>OP外（MGT/cMGT行に計上・実計に入れない）</label>
+  <input type="text" id="tasksMgt" placeholder="MGT, TRer, TRee">
+
   <h2>らくしふのグループ (genre) 分類</h2>
   <label>フロアの genre_id</label>
   <input type="text" id="genresF" class="narrow" placeholder="2">

@@ -16,6 +16,15 @@
     genresF: '2',      // フロアの genre_id（カンマ区切り可）
     genresK: '3',      // キッチンの genre_id（カンマ区切り可）
     regularStaff: '',  // 正社員名（カンマ/改行区切り）
+    fillTh: '1',       // 塗りつぶし境界: |差分|がこれ以上で赤/緑の塗りつぶし表示
+    surplusWarn: '2',  // 過剰警告: 余剰がこれ以上で緑塗りつぶし
+    tasksF: 'F',                    // F振替とみなす業務割振タスク名（カンマ区切り・末尾*で前方一致）
+    tasksK: 'K, BU*',               // K振替とみなすタスク名
+    tasksFK: 'FK',                  // FK振替とみなすタスク名
+    tasksMgt: 'MGT, TRer, TRee',    // OP外(MGT/cMGT)とみなすタスク名
+    showHeatbar: '1',   // 画面上のヒートバー
+    showReqRow: '1',    // OP全体必要人数行の注入
+    showWeekBadges: '1', // 週間アサインバッジ
   };
   const cfg = await new Promise((resolve) => {
     try { chrome.storage.sync.get(DEFAULTS, (v) => resolve(v || { ...DEFAULTS })); }
@@ -64,14 +73,31 @@
   const GENRES_K = csvInts(cfg.genresK);
   // 正社員（この人のMGT/TRer/TRee時間は MGT H、その他の人のは CREW MGT H に計上）
   const REGULAR_STAFF = csvNames(cfg.regularStaff);
-  // 過剰人員の警告しきい値（これ以上のプラスは人件費浪費としてオレンジ表示）
-  const SURPLUS_WARN = 2;
-  // 業務割振タスク名 → カウント先。F/K/FK=振替、BU系=キッチン扱い、
-  // MGT/TRer/TRee=OP Hに数えず MGT系へ（正社員→MGT、その他→cMGT）
+  // 塗りつぶし境界（|差分|がこれ未満は白地に色文字）と過剰警告のしきい値
+  const FILL_TH = Math.max(0, numOr(cfg.fillTh, 1));
+  const SURPLUS_WARN = Math.max(0.1, numOr(cfg.surplusWarn, 2));
+  // ビューのON/OFF
+  const SHOW = {
+    heatbar: cfg.showHeatbar !== '0',
+    reqRow: cfg.showReqRow !== '0',
+    weekBadges: cfg.showWeekBadges !== '0',
+  };
+  // 業務割振タスク名 → カウント先（設定で変更可）。F/K/FK=振替、
+  // Mgt系=OP Hに数えず MGT系へ（正社員→MGT、その他→cMGT）。末尾*は前方一致
+  const taskMatcher = (src) => {
+    const exact = new Set(), prefixes = [];
+    for (const n of String(src || '').split(/[,、\n]/).map((x) => x.trim()).filter(Boolean)) {
+      if (n.endsWith('*')) prefixes.push(n.slice(0, -1)); else exact.add(n);
+    }
+    return (name) => !!name && (exact.has(name) || prefixes.some((p) => p && name.startsWith(p)));
+  };
+  const isTaskF = taskMatcher(cfg.tasksF), isTaskK = taskMatcher(cfg.tasksK);
+  const isTaskFK = taskMatcher(cfg.tasksFK), isTaskMgt = taskMatcher(cfg.tasksMgt);
   const moveGroup = (name, isRegular) => {
-    if (name === 'F' || name === 'K' || name === 'FK') return name;
-    if (/^BU/.test(name || '')) return 'K';
-    if (['MGT', 'TRer', 'TRee'].includes(name)) return isRegular ? 'MGT' : 'cMGT';
+    if (isTaskF(name)) return 'F';
+    if (isTaskK(name)) return 'K';
+    if (isTaskFK(name)) return 'FK';
+    if (isTaskMgt(name)) return isRegular ? 'MGT' : 'cMGT';
     return null;
   };
   const CONFIRM_POLL_MS = 5 * 60 * 1000; // 未確定チェックの間隔
@@ -543,16 +569,16 @@
         cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
         const d = i >= 0 ? catDiffs[cat][i] : undefined;
         if (d !== undefined && d !== null) {
-          // |差分|<1 は軽微 → 塗りつぶさず白地に色文字。±1以上のみ塗りつぶしで強調
+          // |差分|<FILL_TH は軽微 → 塗りつぶさず白地に色文字。それ以上は塗りつぶしで強調
           if (d < 0) {
             cell.textContent = d;
-            cell.style.cssText += d > -1
+            cell.style.cssText += d > -FILL_TH
               ? 'color:#d64545;'
               : 'background:#d64545;color:#fff;border-radius:3px;';
           } else if (d >= SURPLUS_WARN) {
             cell.textContent = `+${d}`;
             cell.style.cssText += 'background:#2e9e5b;color:#fff;border-radius:3px;';
-          } else if (d > 0 && d < 1) {
+          } else if (d > 0 && d < FILL_TH) {
             cell.textContent = `+${d}`;
             cell.style.cssText += 'color:#2e9e5b;';
           } else {
@@ -648,8 +674,8 @@
           return Math.round((actual.total[i] - num(req.hours[i])) * 10) / 10;
         })
       : null;
-    // 時刻ヘッダーの赤塗りは不足1人以上のみ（軽微な不足では騒がない）
-    const shortAt = (i) => diffs && diffs[i] !== null && diffs[i] <= -1;
+    // 時刻ヘッダーの赤塗りは不足FILL_TH以上のみ（軽微な不足では騒がない）
+    const shortAt = (i) => diffs && diffs[i] !== null && diffs[i] <= -FILL_TH;
 
     const headRow =
       `<tr><th class="row-head"></th>` +
@@ -697,9 +723,9 @@
           if (d === null) return `<td class="${nowCls(h)}"></td>`;
           const txt = d < 0 ? d : (d > 0 ? `+${d}` : '±0');
           const cls = d < 0
-            ? (d > -1 ? ' short-lite' : ' short')
+            ? (d > -FILL_TH ? ' short-lite' : ' short')
             : d >= SURPLUS_WARN ? ' over'
-            : (d > 0 && d < 1) ? ' over-lite' : '';
+            : (d > 0 && d < FILL_TH) ? ' over-lite' : '';
           return `<td class="${nowCls(h)}${cls}">${txt}</td>`;
         }).join('');
         const totalD = Math.round((actual.sum.total - num(req?.total)) * 10) / 10;
@@ -723,14 +749,16 @@
       ` ・ K ${actual?.K?.[i] ?? '-'}/${needK?.hours?.[i] || '0'}` +
       ` ・ FK ${actual?.FK?.[i] ?? '-'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/必要)`;
-    updateStrips(catDiffs, tip);
+    updateStrips(SHOW.heatbar ? catDiffs : null, tip);
     // 画面の客数行の下にOP全体必要人数(客数ベースREQ計)行を注入（個人版のLE行注入に相当）
     const opReq = hourly['REQ（SUM）'];
-    updateReqRows((opReq && reqF && reqK) ? { sum: opReq, f: reqF, k: reqK } : null);
+    updateReqRows((SHOW.reqRow && opReq && reqF && reqK) ? { sum: opReq, f: reqF, k: reqK } : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
-    fetchWeekStats(targetDate)
-      .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
-      .catch(() => {});
+    if (SHOW.weekBadges) {
+      fetchWeekStats(targetDate)
+        .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
+        .catch(() => {});
+    }
   }
 
   async function renderUnconfirmed() {
