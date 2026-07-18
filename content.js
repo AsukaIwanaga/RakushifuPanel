@@ -373,6 +373,8 @@
       tr.diff td { border-top: 2px solid #999; color: #999; }
       tr.diff td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
       tr.diff td.over { background: #e8f5ec; color: #1e7a44; font-weight: 700; }
+      tr.diff td.short-lite { color: #b02a2a; font-weight: 700; } /* |不足|<1: 白地に赤字 */
+      tr.diff td.over-lite { color: #1e7a44; font-weight: 700; }  /* 0<余剰<1: 白地に緑字 */
       th.short-mark { background: #d64545; color: #fff; }
       .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 13px; }
       .section-title.fold { cursor: pointer; user-select: none; }
@@ -540,12 +542,18 @@
         cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
         const d = i >= 0 ? catDiffs[cat][i] : undefined;
         if (d !== undefined && d !== null) {
+          // |差分|<1 は軽微 → 塗りつぶさず白地に色文字。±1以上のみ塗りつぶしで強調
           if (d < 0) {
             cell.textContent = d;
-            cell.style.cssText += 'background:#d64545;color:#fff;border-radius:3px;';
+            cell.style.cssText += d > -1
+              ? 'color:#d64545;'
+              : 'background:#d64545;color:#fff;border-radius:3px;';
           } else if (d >= SURPLUS_WARN) {
             cell.textContent = `+${d}`;
             cell.style.cssText += 'background:#2e9e5b;color:#fff;border-radius:3px;';
+          } else if (d > 0 && d < 1) {
+            cell.textContent = `+${d}`;
+            cell.style.cssText += 'color:#2e9e5b;';
           } else {
             cell.textContent = d > 0 ? `+${d}` : '0';
             cell.style.cssText += 'color:#9aa8b5;';
@@ -558,30 +566,45 @@
     }
   }
 
-  // ===== 前年客数・修正客数の下に LE客数 行を注入 =====
-  function updateLERows(le) {
-    document.querySelectorAll('.rf-le-row').forEach((e) => e.remove());
-    lastLE = le || null;
+  // ===== 前年客数・修正客数の下に LE客数 行と 必要人数(REQ計) 行を注入 =====
+  function updateLERows(le, reqPack) {
+    document.querySelectorAll('.rf-le-row, .rf-req-row').forEach((e) => e.remove());
+    lastLE = le ? { le, reqPack } : null;
     if (!le || !onOneDayTarget()) return;
     const labels = [...document.querySelectorAll('th.metrics-row-header')]
       .filter((th) => (th.textContent || '').includes('修正客数'));
     for (const th of labels) {
       const tr = th.closest('tr');
       if (!tr) continue;
-      const clone = tr.cloneNode(true);
-      clone.classList.add('rf-le-row');
-      const cth = clone.querySelector('th.metrics-row-header');
-      if (cth) cth.innerHTML = `<span style="font-weight:700;color:#1a5fb4;">LE客数 (合計: ${le.total || '-'})</span>`;
-      // 時刻6..24の19セルが並ぶコンテナを探して値を差し替え
-      const rowCells = [...clone.querySelectorAll('*')].find((e) => e.children.length === 19);
-      if (rowCells) {
-        [...rowCells.children].forEach((cell, idx) => {
-          cell.textContent = idx < HOURS.length ? (le.hours[idx] || '') : '';
-          cell.style.color = '#1a5fb4';
-          cell.style.fontWeight = '700';
-        });
+      // 修正客数行のクローンにラベルと値を差し替えた行を作る
+      const mkRow = (cls, labelHtml, vals, color, tipFn) => {
+        const clone = tr.cloneNode(true);
+        clone.classList.add(cls);
+        const cth = clone.querySelector('th.metrics-row-header');
+        if (cth) cth.innerHTML = labelHtml;
+        // 時刻6..24の19セルが並ぶコンテナを探して値を差し替え
+        const rowCells = [...clone.querySelectorAll('*')].find((e) => e.children.length === 19);
+        if (rowCells) {
+          [...rowCells.children].forEach((cell, idx) => {
+            cell.textContent = idx < HOURS.length ? (vals[idx] || '') : '';
+            cell.style.color = color;
+            cell.style.fontWeight = '700';
+            if (tipFn && idx < HOURS.length) cell.title = tipFn(idx);
+          });
+        }
+        return clone;
+      };
+      const leRow = mkRow('rf-le-row',
+        `<span style="font-weight:700;color:#1a5fb4;">LE客数 (合計: ${le.total || '-'})</span>`,
+        le.hours, '#1a5fb4');
+      tr.after(leRow);
+      if (reqPack?.sum) {
+        const reqRow = mkRow('rf-req-row',
+          `<span style="font-weight:700;color:#2c6e49;">必要人数 (合計: ${reqPack.sum.total || '-'})</span>`,
+          reqPack.sum.hours, '#2c6e49',
+          (i) => `F ${reqPack.f?.hours?.[i] || '0'} / K ${reqPack.k?.hours?.[i] || '0'} / FK ${reqPack.fk?.hours?.[i] || '0'}`);
+        leRow.after(reqRow);
       }
-      tr.after(clone);
     }
   }
 
@@ -635,7 +658,8 @@
           return Math.round((actual.total[i] - num(req.hours[i])) * 10) / 10;
         })
       : null;
-    const shortAt = (i) => diffs && diffs[i] !== null && diffs[i] < 0;
+    // 時刻ヘッダーの赤塗りは不足1人以上のみ（軽微な不足では騒がない）
+    const shortAt = (i) => diffs && diffs[i] !== null && diffs[i] <= -1;
 
     const headRow =
       `<tr><th class="row-head"></th>` +
@@ -677,7 +701,10 @@
           const d = diffs[i];
           if (d === null) return `<td class="${nowCls(h)}"></td>`;
           const txt = d < 0 ? d : (d > 0 ? `+${d}` : '±0');
-          const cls = d < 0 ? ' short' : (d >= SURPLUS_WARN ? ' over' : '');
+          const cls = d < 0
+            ? (d > -1 ? ' short-lite' : ' short')
+            : d >= SURPLUS_WARN ? ' over'
+            : (d > 0 && d < 1) ? ' over-lite' : '';
           return `<td class="${nowCls(h)}${cls}">${txt}</td>`;
         }).join('');
         const totalD = Math.round((actual.sum.total - num(req?.total)) * 10) / 10;
@@ -703,7 +730,7 @@
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/REQ)`;
     updateStrips(catDiffs, tip);
-    updateLERows(hourly['LE']);
+    updateLERows(hourly['LE'], { sum: req, f: reqF, k: reqK, fk: reqFK });
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
     fetchWeekStats(targetDate)
       .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
@@ -768,7 +795,7 @@
     // Vueの再描画でバッジ/バー/LE行が消えた場合の張り直し（軽量）
     if (lastWeekStats) updateWeekBadges(lastWeekStats);
     if (lastStrip && !document.querySelector('.rf-heat-strip')) updateStrips(lastStrip.catDiffs, lastStrip.tip);
-    if (lastLE && !document.querySelector('.rf-le-row')) updateLERows(lastLE);
+    if (lastLE && !document.querySelector('.rf-le-row')) updateLERows(lastLE.le, lastLE.reqPack);
     if (location.href === lastHref) return;
     lastHref = location.href;
     const d = parseYmd(urlParams().from || '');
