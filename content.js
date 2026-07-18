@@ -582,7 +582,17 @@
     updateShiftMarks();
   }
 
-  // ===== シフト表の名前横に変更依頼マーク（依頼中=赤 / 変更済=緑）。印刷画面には出さない =====
+  // 6チェックの最初の未完了工程を「今の状態」として言葉で返す（依頼中→承諾待ち→…）
+  const SC_STATUS = [
+    ['requested_done', '依頼中'], ['accepted_done', '承諾待ち'], ['rakushifu_done', '反映待ち'],
+    ['pre_sh_done', '確定前連絡待ち'], ['confirmed_done', '確定待ち'], ['sh_done', '周知待ち'],
+  ];
+  const scStatusLabel = (c) => {
+    const stage = SC_STATUS.find(([k]) => !c[k]);
+    return stage ? stage[1] : '完了';
+  };
+
+  // ===== シフト表の名前横に変更依頼マーク（状態語=赤 / 変更済=緑）。印刷画面には出さない =====
   function updateShiftMarks() {
     if (isPrintPage || !scState) return;
     document.querySelectorAll('.rf-sc-mark').forEach((e) => e.remove());
@@ -600,10 +610,9 @@
       const mark = document.createElement('span');
       mark.className = 'rf-sc-mark';
       if (pending.length) {
-        // 進捗を反映: 1件なら チェック数/6、複数なら件数
-        mark.textContent = pending.length === 1
-          ? `🔄依頼 ${pending[0].checked_count}/6`
-          : `🔄依頼${pending.length}件`;
+        // 進捗段階を状態語で表示（最初の未チェック工程＝今の状態）
+        const label = pending.length === 1 ? scStatusLabel(pending[0]) : `依頼${pending.length}件`;
+        mark.textContent = `🔄${label}`;
         mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#b02a2a;background:#fdecec;border:1px solid #e8b4b4;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
       } else {
@@ -612,7 +621,7 @@
           'color:#1e7a44;background:#e8f5ec;border:1px solid #b5d9c3;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
       }
       mark.title = rel.map((c) =>
-        `${c.is_done ? '✅' : `未了(${c.checked_count}/6)`} ${c.title}`).join('\n');
+        `${c.is_done ? '✅' : `【${scStatusLabel(c)}】`} ${c.title}`).join('\n');
       box.appendChild(mark);
     }
   }
