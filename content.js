@@ -371,7 +371,7 @@
       tr.mgt td, tr.mgt td.row-head { color: #999; font-weight: 400; }
       tr.diff td { border-top: 2px solid #999; color: #999; }
       tr.diff td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
-      tr.diff td.over { background: #fdf3e3; color: #b06d00; font-weight: 700; }
+      tr.diff td.over { background: #e8f5ec; color: #1e7a44; font-weight: 700; }
       th.short-mark { background: #d64545; color: #fff; }
       .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 12px; }
       .section-title.fold { cursor: pointer; user-select: none; }
@@ -544,7 +544,7 @@
             cell.style.cssText += 'background:#d64545;color:#fff;border-radius:3px;';
           } else if (d >= SURPLUS_WARN) {
             cell.textContent = `+${d}`;
-            cell.style.cssText += 'background:#e8940c;color:#fff;border-radius:3px;';
+            cell.style.cssText += 'background:#2e9e5b;color:#fff;border-radius:3px;';
           } else {
             cell.textContent = d > 0 ? `+${d}` : '0';
             cell.style.cssText += 'color:#9aa8b5;';
