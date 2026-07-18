@@ -598,14 +598,40 @@
         `<span style="font-weight:700;color:#1a5fb4;">LE客数 (合計: ${le.total || '-'})</span>`,
         le.hours, '#1a5fb4');
       tr.after(leRow);
-      if (reqPack?.sum) {
-        const reqRow = mkRow('rf-req-row',
-          `<span style="font-weight:700;color:#2c6e49;">必要人数 (合計: ${reqPack.sum.total || '-'})</span>`,
-          reqPack.sum.hours, '#2c6e49',
-          (i) => `F ${reqPack.f?.hours?.[i] || '0'} / K ${reqPack.k?.hours?.[i] || '0'} / FK ${reqPack.fk?.hours?.[i] || '0'}`);
-        leRow.after(reqRow);
+
+      // 必要人数はセクション別: フロア=F+FK / キッチン=K+FK（FKは両方に重複表示）
+      const sec = sectionOf(tr);
+      let anchor = leRow;
+      const tipSum = reqPack?.sum ? (i) => `REQ計 ${reqPack.sum.hours[i] || '0'}` : null;
+      const addReq = (label, row, color) => {
+        if (!row) return;
+        const r = mkRow('rf-req-row',
+          `<span style="font-weight:700;color:${color};">${label} (合計: ${row.total || '-'})</span>`,
+          row.hours, color, tipSum);
+        anchor.after(r);
+        anchor = r;
+      };
+      if (sec === 'キッチン') {
+        addReq('必要K', reqPack?.k, '#2c6e49');
+        addReq('必要FK', reqPack?.fk, '#0e7490');
+      } else if (sec === 'フロア') {
+        addReq('必要F', reqPack?.f, '#2c6e49');
+        addReq('必要FK', reqPack?.fk, '#0e7490');
+      } else {
+        addReq('必要人数', reqPack?.sum, '#2c6e49'); // セクション判別不能時は計を出す
       }
     }
+  }
+
+  // 行の属するセクション見出し(フロア/キッチン)を特定
+  function sectionOf(el) {
+    const titles = [...document.querySelectorAll('*')]
+      .filter((e) => e.children.length === 0 && /^(フロア|キッチン)$/.test((e.textContent || '').trim()));
+    let best = null;
+    for (const t of titles) {
+      if (t.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) best = t;
+    }
+    return best ? best.textContent.trim() : null;
   }
 
   // ページ本体のシフト保存(page_hook.jsが検知)→少し待って再計算
