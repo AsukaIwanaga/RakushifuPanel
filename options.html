@@ -28,14 +28,26 @@
     table.coef input { width: 56px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; }
     .radio-inline { display: inline; font-weight: 400; margin-right: 12px; white-space: nowrap; }
     .fk-opt { background: #f8faf9; border-radius: 6px; padding: 8px 12px; margin: 4px 0; }
-    .fixed-row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+    .fixed-row {
+      border: 1px solid #e5e9e7; border-radius: 8px; padding: 8px 10px; margin: 6px 0; background: #fcfdfc;
+    }
+    .fx-main { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
     .fixed-row input, .fixed-row select { padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; }
     .fixed-row .fx-name { width: 130px; }
     .fixed-row .fx-n { width: 55px; }
     .fixed-row .fx-del {
       border: 1px solid #e8b4b4; background: #fff; color: #b02a2a;
-      border-radius: 5px; cursor: pointer; padding: 3px 8px; font-size: 12px;
+      border-radius: 5px; cursor: pointer; padding: 3px 8px; font-size: 12px; margin-left: auto;
     }
+    .fx-days { margin-top: 6px; display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+    .fx-days .lbl { color: #888; font-size: 11px; margin-right: 2px; }
+    .fx-days label {
+      display: inline-flex; align-items: center; gap: 2px; margin: 0; font-weight: 400; font-size: 12px;
+      border: 1px solid #ccc; border-radius: 5px; padding: 1px 6px; cursor: pointer; user-select: none;
+    }
+    .fx-days label.on { background: #eef4f0; border-color: #2c6e49; color: #2c6e49; font-weight: 600; }
+    .fx-days input { display: none; }
+    .fx-days .fx-alldays { border-style: dashed; color: #2c6e49; }
     #addFixed {
       border: 1px solid #2c6e49; background: #eef4f0; color: #2c6e49;
       border-radius: 5px; cursor: pointer; padding: 4px 12px; font-size: 13px; margin-top: 4px;
@@ -131,8 +143,9 @@
   <div id="fixedList"></div>
   <button type="button" id="addFixed">＋ 作業を追加</button>
   <p class="hint">オープン・締め・ST（スタンバイ）など。「どちらでも」=F/Kどちらの人員でも
-    可（合計の必要人数にだけ加算）。登録するとパネルに「固定」「必要計」行が増え、
-    不足判定・ヒートバーが固定込み（実 − 必要計）になります。時刻は30分単位OK（0.5人として配分）。</p>
+    可（合計の必要人数にだけ加算）。曜日を選ぶとその曜日だけ（「毎日」=全曜日）。
+    登録するとパネルに「固定」「必要計」行が増え、不足判定・ヒートバーが固定込み
+    （実 − 必要計）になります。時刻は30分単位OK（0.5人として配分）。保存すると開始時刻順に並びます。</p>
 
   <label>客数フィールド名</label>
   <input type="text" id="leFieldName" class="narrow" placeholder="修正客数">

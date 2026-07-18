@@ -23,7 +23,10 @@ const DEFAULTS = {
 const $ = (id) => document.getElementById(id);
 
 // ===== 固定作業の行エディタ =====
-// 保存形式は content.js と同じテキスト（1行1件「名前 HH:MM-HH:MM F|K|FK 人数」）
+// 保存形式は content.js と同じテキスト（1行1件「名前 HH:MM-HH:MM F|K|FK 人数 [曜日]」）
+// 曜日は 日月火水木金土 を連結。省略=毎日
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+const WEEKDAYS_ORDER = ['月', '火', '水', '木', '金', '土', '日']; // 表示・保存の並び順
 const pad2 = (n) => String(n).padStart(2, '0');
 const toHHMM = (t) => { // "6:00"/"6" → time input用 "06:00"
   const m = /^(\d{1,2})(?::(\d{2}))?$/.exec(String(t || '').trim());
@@ -38,14 +41,18 @@ function parseFixedTasks(src) {
     if (!m) return null;
     const grp = (t[2] || '').toUpperCase();
     if (!['F', 'K', 'FK'].includes(grp)) return null;
-    return { name: t[0], s: toHHMM(m[1]), e: toHHMM(m[2]), grp, n: t[3] || '1' };
+    const days = (t[4] || '').split('').filter((ch) => WEEKDAYS.includes(ch));
+    return { name: t[0], s: toHHMM(m[1]), e: toHHMM(m[2]), grp, n: t[3] || '1', days };
   }).filter(Boolean);
 }
 
-function addFixedRow(task = { name: '', s: '', e: '', grp: 'F', n: '1' }) {
+function addFixedRow(task = { name: '', s: '', e: '', grp: 'F', n: '1', days: [] }) {
   const div = document.createElement('div');
   div.className = 'fixed-row';
+  const dayBtns = WEEKDAYS_ORDER.map((ch) =>
+    `<label class="fx-day"><input type="checkbox" value="${ch}">${ch}</label>`).join('');
   div.innerHTML =
+    `<div class="fx-main">` +
     `<input type="text" class="fx-name" placeholder="作業名（締め 等）">` +
     `<input type="time" class="fx-s" step="1800">` +
     `<span>〜</span>` +
@@ -57,18 +64,43 @@ function addFixedRow(task = { name: '', s: '', e: '', grp: 'F', n: '1' }) {
     `</select>` +
     `<input type="number" class="fx-n" step="0.5" min="0.5" title="人数">` +
     `<span>人</span>` +
-    `<button type="button" class="fx-del" title="この行を削除">✕ 削除</button>`;
+    `<button type="button" class="fx-del" title="この行を削除">✕ 削除</button>` +
+    `</div>` +
+    `<div class="fx-days"><span class="lbl">曜日</span>` +
+    `<label class="fx-alldays"><input type="checkbox" class="fx-all">毎日</label>` +
+    dayBtns + `</div>`;
   div.querySelector('.fx-name').value = task.name;
   div.querySelector('.fx-s').value = task.s;
   div.querySelector('.fx-e').value = task.e;
   div.querySelector('.fx-grp').value = task.grp;
   div.querySelector('.fx-n').value = task.n;
   div.querySelector('.fx-del').addEventListener('click', () => div.remove());
+
+  // 曜日チェックの見た目・「毎日」連動
+  const dayBoxes = [...div.querySelectorAll('.fx-day input')];
+  const allBox = div.querySelector('.fx-all');
+  const refresh = () => {
+    dayBoxes.forEach((b) => b.closest('label').classList.toggle('on', b.checked));
+    // 全曜日チェック or 全部未チェック（=毎日）のとき「毎日」をオン表示
+    const allOn = dayBoxes.every((b) => b.checked);
+    const noneOn = dayBoxes.every((b) => !b.checked);
+    allBox.checked = allOn || noneOn;
+    allBox.closest('label').classList.toggle('on', allBox.checked);
+  };
+  for (const b of dayBoxes) b.addEventListener('change', refresh);
+  allBox.addEventListener('change', () => {
+    // 「毎日」を押したら全曜日クリア（=毎日扱い）
+    dayBoxes.forEach((b) => { b.checked = false; });
+    refresh();
+  });
+  const set = new Set(task.days || []);
+  if (set.size && set.size < 7) dayBoxes.forEach((b) => { b.checked = set.has(b.value); });
+  refresh();
   $('fixedList').appendChild(div);
 }
 
 function serializeFixedTasks() {
-  const lines = [];
+  const rows = [];
   for (const row of document.querySelectorAll('#fixedList .fixed-row')) {
     const name = row.querySelector('.fx-name').value.trim().replace(/\s+/g, '_');
     const s = row.querySelector('.fx-s').value;
@@ -76,9 +108,15 @@ function serializeFixedTasks() {
     const grp = row.querySelector('.fx-grp').value;
     const n = parseFloat(row.querySelector('.fx-n').value);
     if (!name || !s || !e) continue; // 未入力の行は保存しない
-    lines.push(`${name} ${s}-${e} ${grp} ${Number.isFinite(n) && n > 0 ? n : 1}`);
+    const checked = [...row.querySelectorAll('.fx-day input')].filter((b) => b.checked).map((b) => b.value);
+    // 0個 or 全曜日 = 毎日 → 曜日トークンを省略。それ以外は月〜日の順で連結
+    const days = (checked.length === 0 || checked.length === 7)
+      ? '' : WEEKDAYS_ORDER.filter((ch) => checked.includes(ch)).join('');
+    rows.push({ s, line: `${name} ${s}-${e} ${grp} ${Number.isFinite(n) && n > 0 ? n : 1}${days ? ` ${days}` : ''}` });
   }
-  return lines.join('\n');
+  // 保存時に開始時刻順で並べ替え
+  rows.sort((a, b) => a.s.localeCompare(b.s));
+  return rows.map((r) => r.line).join('\n');
 }
 
 $('addFixed').addEventListener('click', () => addFixedRow());

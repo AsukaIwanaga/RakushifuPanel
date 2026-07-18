@@ -58,10 +58,18 @@
   const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
   const HOURS = Array.from({ length: 18 }, (_, i) => i + 6); // 6:00 - 23:00
 
-  // 固定作業（客数に依らない必要人数）: 「名前 開始-終了 F|K|FK 人数」を1行1件でパース
+  // 固定作業（客数に依らない必要人数）: 「名前 開始-終了 F|K|FK 人数 [曜日]」を1行1件でパース
+  // 曜日は 日月火水木金土 を連結（例 月火水木金）。省略=毎日
   const parseClock = (t) => {
     const m = /^(\d{1,2})(?::(\d{2}))?$/.exec(t);
     return m ? (+m[1]) * 60 + (+(m[2] || 0)) : null;
+  };
+  const WD_INDEX = { '日': 0, '月': 1, '火': 2, '水': 3, '木': 4, '金': 5, '土': 6 };
+  const parseDays = (tok) => {
+    if (!tok) return null; // null = 毎日
+    const set = new Set();
+    for (const ch of tok) if (ch in WD_INDEX) set.add(WD_INDEX[ch]);
+    return set.size ? set : null;
   };
   const FIXED = String(cfg.fixedTasks || '').split('\n').map((line) => {
     const t = line.trim().split(/\s+/);
@@ -72,7 +80,7 @@
     const grp = (t[2] || '').toUpperCase();
     const n = t[3] !== undefined ? parseFloat(t[3]) : 1;
     if (s == null || e == null || e <= s || !['F', 'K', 'FK'].includes(grp) || !Number.isFinite(n) || n <= 0) return null;
-    return { name: t[0], s, e, grp, n };
+    return { name: t[0], s, e, grp, n, days: parseDays(t[4]) };
   }).filter(Boolean);
 
   // パネルの表示行（キーは hourly オブジェクトの行キー）
@@ -184,7 +192,9 @@
   }
 
   // 負担込み客数 = LE[h] + p1%×LE[h-1] + p2%×LE[h-2] + n1%×LE[h+1]、REQ = ÷y (小数1桁)
-  function buildComputedHourly(fields) {
+  function buildComputedHourly(fields, weekday) {
+    // 対象日の曜日に該当する固定作業だけ（days=null は毎日）
+    const activeFixed = FIXED.filter((t) => !t.days || t.days.has(weekday));
     const le = fields[LE_FIELD];
     if (!le) {
       console.warn('[客数予測パネル] 客数フィールドが見つかりません。利用可能:', Object.keys(fields));
@@ -223,9 +233,9 @@
     };
     if (reqFK) hourly['REQ（FK）'] = mk(reqFK);
     // 固定作業を上乗せした「必要」行（判定はこちらを使う）。部分時間は比例配分
-    if (FIXED.length || reqFK) {
+    if (activeFixed.length || reqFK) {
       const fF = HOURS.map(() => 0), fK = HOURS.map(() => 0), fFK = HOURS.map(() => 0);
-      for (const t of FIXED) {
+      for (const t of activeFixed) {
         HOURS.forEach((h, i) => {
           const ov = Math.max(0, Math.min(t.e, h * 60 + 60) - Math.max(t.s, h * 60)) / 60;
           if (ov <= 0) return;
@@ -235,7 +245,7 @@
           else fFK[i] += v; // FK=どちらのグループでも可 → 合計必要にのみ加算
         });
       }
-      if (FIXED.length) {
+      if (activeFixed.length) {
         hourly['FIXED'] = mk(HOURS.map((_, i) => r1(fF[i] + fK[i] + fFK[i])));
       }
       hourly['NEED（F）'] = mk(HOURS.map((_, i) => r1(reqF[i] + fF[i])));
@@ -257,7 +267,7 @@
 
   async function fetchComputed(date) {
     try {
-      return buildComputedHourly(await fetchCustomerFields(date));
+      return buildComputedHourly(await fetchCustomerFields(date), date.getDay());
     } catch (e) {
       return { error: e.message };
     }
