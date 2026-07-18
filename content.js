@@ -336,7 +336,10 @@
       .allok { color: #2c6e49; font-weight: 600; }
       .err { color: #b02a2a; }
       .muted { color: #888; font-size: 11px; }
-      .tasks .task { display: flex; gap: 6px; padding: 2px 0; border-bottom: 1px dotted #eee; }
+      .tasks .task { display: flex; gap: 6px; padding: 2px 0; border-bottom: 1px dotted #eee; align-items: flex-start; }
+      .tasks .task input { margin: 2px 0 0; cursor: pointer; flex: 0 0 auto; }
+      .tasks .task.done { opacity: .45; }
+      .tasks .task.done .ttext { text-decoration: line-through; }
       .tasks .task .tid {
         flex: 0 0 auto; font-weight: 700; color: #2c6e49; font-size: 11px;
         background: #eef4f0; border-radius: 4px; padding: 0 5px; align-self: center;
@@ -379,6 +382,15 @@
     taskRowsCache = null; // タスクシートも再取得
     renderSheet();
     renderUnconfirmed();
+  });
+
+  // タスクの完了トグル（チェック＝取り消し線、再チェックで復活）
+  $('#tasks').addEventListener('change', (ev) => {
+    const box = ev.target;
+    if (!box.matches('input[type=checkbox][data-key]')) return;
+    if (box.checked) localStorage.setItem(box.dataset.key, '1');
+    else localStorage.removeItem(box.dataset.key);
+    box.closest('.task')?.classList.toggle('done', box.checked);
   });
 
   async function renderSheet() {
@@ -469,6 +481,21 @@
     renderTasks();
   }
 
+  // 完了トグルはローカル保存（見える取り消し線＝いつでも戻せる。確認ダイアログは出さない）
+  // M/W系は日付ごと、要請はタスク名ごとに記憶。要請の正式な完了はvault側のstatus更新で消える。
+  const doneKey = (t) => t.request
+    ? `rfDone:req:${t.task}`
+    : `rfDone:${ymd(targetDate)}:${t.id}:${t.task}`;
+  const isDone = (t) => localStorage.getItem(doneKey(t)) === '1';
+  function pruneDoneKeys() { // 45日より古い日付キーを掃除
+    const cutoff = ymd(new Date(Date.now() - 45 * 864e5));
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      const m = /^rfDone:(\d{4}-\d{2}-\d{2}):/.exec(k || '');
+      if (m && m[1] < cutoff) localStorage.removeItem(k);
+    }
+  }
+
   async function renderTasks() {
     const el = $('#tasks');
     $('#taskDate').textContent = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
@@ -476,18 +503,21 @@
       const { defRows, reqRows } = await fetchTaskRows();
       const hits = defRows.filter((t) => taskMatches(t, targetDate));
       const today = ymd(new Date());
+      const esc = (s) => s.replace(/"/g, '&quot;');
       const chip = (t) => {
+        const done = isDone(t);
+        const box = `<input type="checkbox" data-key="${esc(doneKey(t))}" ${done ? 'checked' : ''}>`;
         if (t.request) {
           const overdue = t.due && t.due < today;
-          return `<div class="task req${overdue ? ' ext' : ''}">` +
+          return `<div class="task req${overdue && !done ? ' ext' : ''}${done ? ' done' : ''}">${box}` +
             `<span class="tid">要請</span>` +
-            `<span>${t.task}` +
+            `<span class="ttext">${t.task}` +
             `<div class="tnote">${overdue ? '⚠期限超過 ' : ''}${t.due ? `期限 ${t.due}` : ''}` +
             `${t.source ? ` / ${t.source}` : ''}</div></span></div>`;
         }
-        return `<div class="task${t.rule === '外部' ? ' ext' : ''}">` +
+        return `<div class="task${t.rule === '外部' && !done ? ' ext' : ''}${done ? ' done' : ''}">${box}` +
           `<span class="tid">${t.id}</span>` +
-          `<span>${t.task}${t.rule === '外部' ? '（外部日程・行動計画参照）' : ''}` +
+          `<span class="ttext">${t.task}${t.rule === '外部' ? '（外部日程・行動計画参照）' : ''}` +
           (t.note ? `<div class="tnote">${t.note}</div>` : '') +
           `</span></div>`;
       };
@@ -528,6 +558,7 @@
     if (d && ymd(d) !== ymd(targetDate)) { targetDate = d; renderSheet(); }
   }, URL_WATCH_MS);
 
+  pruneDoneKeys();
   renderSheet();
   renderUnconfirmed();
   setInterval(renderUnconfirmed, CONFIRM_POLL_MS);
