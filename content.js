@@ -452,9 +452,7 @@
     </div>
     <div id="panel">
       <div class="nav">
-        <button id="prev">◀</button>
         <b id="dateLabel">-</b>
-        <button id="next">▶</button>
         <button id="reload" class="accent">更新</button>
       </div>
       <div id="stats" class="stats"></div>
@@ -478,8 +476,7 @@
   });
   if (localStorage.getItem('rfPanelOpen') === '1') panel.classList.add('open');
 
-  $('#prev').addEventListener('click', () => { targetDate.setDate(targetDate.getDate() - 1); renderSheet(); });
-  $('#next').addEventListener('click', () => { targetDate.setDate(targetDate.getDate() + 1); renderSheet(); });
+  // 対象日はらくしふ画面(URLのfrom=)に完全追従（独自の日付移動は廃止）
   $('#reload').addEventListener('click', () => {
     taskRowsCache = null; // タスクシートも再取得
     renderSheet();
