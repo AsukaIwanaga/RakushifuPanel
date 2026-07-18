@@ -14,15 +14,16 @@
 
   // シート側の行ラベル (G列) → パネルの列。表示したい項目はここを編集
   const HOURLY_COLS = [
-    { rowLabel: 'LE',          head: 'LE',     cls: 'le' },
-    { rowLabel: 'REQ（F）',     head: 'REQ F',  cls: '' },
-    { rowLabel: 'REQ（K）',     head: 'REQ K',  cls: '' },
-    { rowLabel: 'REQ（FK）',    head: 'REQ FK', cls: '' },
-    { rowLabel: 'REQ（SUM）',   head: 'REQ計',  cls: 'sum' },
-    { rowLabel: 'REPLAN（SUM）', head: 'REPLAN', cls: '' },
+    { rowLabel: 'LE',        head: 'LE',     cls: 'le' },
+    { rowLabel: 'REQ（F）',   head: 'REQ F',  cls: '' },
+    { rowLabel: 'REQ（K）',   head: 'REQ K',  cls: '' },
+    { rowLabel: 'REQ（FK）',  head: 'REQ FK', cls: '' },
+    { rowLabel: 'REQ（SUM）', head: 'REQ計',  cls: 'sum' },
   ];
-  // 差分行 (REPLAN − REQ): マイナス＝人員不足として赤表示
-  const DIFF = { minuend: 'REPLAN（SUM）', subtrahend: 'REQ（SUM）' };
+  // らくしふ実シフトの genre_id → F/K 分類（GT吉祥寺元町通: 2=フロア, 3=キッチン。
+  // 17=社員(REGULAR)・4=未使用 はクルーREQの比較対象外）
+  const GENRES_F = [2];
+  const GENRES_K = [3];
   // ヘッダー統計 (シート上部: ラベルG列 / 値J列)
   const HEADER_LABELS = ['LABOR%', 'LABOR H', 'SALES', 'SBP'];
 
@@ -95,6 +96,57 @@
         : null;
     }
     return { header, hourly };
+  }
+
+  // ===== らくしふ実シフト → 時間帯別実人数 =====
+  // /ajax/admin/v2/schedules を対象日1日分fetchし、休憩控除済みの人時カバレッジを時間帯別に集計
+  async function fetchActual(date) {
+    const p = new URLSearchParams(location.search);
+    const storeId = p.get('s');
+    const genreIds = p.getAll('g');
+    if (!storeId) return null;
+    const q = new URLSearchParams();
+    q.set('page_ctx_name', 'admin');
+    q.set('store_id', storeId);
+    for (const g of (genreIds.length ? genreIds : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    q.set('start_date', ymd(date));
+    q.set('end_date', ymd(date));
+    q.set('is_staff_print_page', 'false');
+    const r = await fetch('/ajax/admin/v2/schedules?' + q, {
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (!r.ok) throw new Error(`シフトAPI HTTP ${r.status}`);
+    const j = await r.json();
+
+    const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(b1, a1));
+    const cov = (sh, h) => {
+      let m = overlap(sh.start_as_min, sh.end_as_min, h * 60, h * 60 + 60);
+      for (const rt of sh.rest_times || []) {
+        m -= overlap(rt.start_hour * 60 + rt.start_minute, rt.end_hour * 60 + rt.end_minute, h * 60, h * 60 + 60);
+      }
+      return Math.max(0, m) / 60;
+    };
+
+    const zero = () => HOURS.map(() => 0);
+    const act = { F: zero(), K: zero(), total: zero() };
+    for (const sh of j.instructed || []) {
+      if (sh.off || sh.is_deleted) continue;
+      if (String(sh.attending_store_id) !== String(storeId)) continue; // 他店ヘルプ出勤は除外
+      const g = sh.attending_genre_id;
+      const grp = GENRES_F.includes(g) ? 'F' : GENRES_K.includes(g) ? 'K' : null;
+      if (!grp) continue; // 社員(REGULAR)等はクルーREQ比較の対象外
+      HOURS.forEach((h, i) => {
+        const c = cov(sh, h);
+        act[grp][i] += c;
+        act.total[i] += c;
+      });
+    }
+    const r1 = (v) => Math.round(v * 10) / 10;
+    for (const k of ['F', 'K', 'total']) act[k] = act[k].map(r1);
+    act.sum = { F: r1(act.F.reduce((a, b) => a + b, 0)), K: r1(act.K.reduce((a, b) => a + b, 0)),
+                total: r1(act.total.reduce((a, b) => a + b, 0)) };
+    return act;
   }
 
   // ===== 月次タスク（月次タスク一覧シート） =====
@@ -220,6 +272,10 @@
       tr.le td { color: #1a5fb4; font-weight: 600; }
       tr.sum td { font-weight: 600; }
       td.total, th.total { border-left: 2px solid #999; font-weight: 700; background: #fafafa; }
+      tr.act-first td { border-top: 2px solid #999; }
+      tr.act td { color: #6b21a8; }
+      tr.act td.row-head { color: #6b21a8; }
+      tr.act td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
       tr.diff td { border-top: 2px solid #999; color: #999; }
       tr.diff td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
       th.short-mark { background: #d64545; color: #fff; }
@@ -283,7 +339,10 @@
     $('#stats').innerHTML = '<span class="muted">読込中…</span>';
     $('#tableWrap').innerHTML = '';
 
-    const res = await fetchSheet(targetDate);
+    const [res, actual] = await Promise.all([
+      fetchSheet(targetDate),
+      fetchActual(targetDate).catch((e) => ({ error: e.message })),
+    ]);
     if (res.error) {
       $('#stats').innerHTML = `<span class="err">${res.error}: ${res.sheetName}</span>`;
       return;
@@ -299,13 +358,15 @@
     const isToday = ymd(targetDate) === ymd(new Date());
     const nowCls = (h) => (isToday && h === nowHour ? ' now' : '');
 
-    // 差分 (REPLAN − REQ): マイナス＝不足
+    // 実人数 (らくしふ現シフト・休憩控除済) と REQ の比較。マイナス＝不足
     const num = (s) => { const v = parseFloat(s); return Number.isFinite(v) ? v : 0; };
-    const rep = hourly[DIFF.minuend], req = hourly[DIFF.subtrahend];
-    const diffs = (rep && req)
+    const req = hourly['REQ（SUM）'];
+    const reqF = hourly['REQ（F）'], reqK = hourly['REQ（K）'];
+    const hasActual = actual && !actual.error;
+    const diffs = (hasActual && req)
       ? HOURS.map((h, i) => {
-          if (!rep.hours[i] && !req.hours[i]) return null; // 両方空欄の時間帯は営業時間外扱い
-          return Math.round((num(rep.hours[i]) - num(req.hours[i])) * 10) / 10;
+          if (!req.hours[i] && !actual.total[i]) return null; // REQも実人数も無い時間帯は営業時間外
+          return Math.round((actual.total[i] - num(req.hours[i])) * 10) / 10;
         })
       : null;
     const shortAt = (i) => diffs && diffs[i] !== null && diffs[i] < 0;
@@ -324,20 +385,38 @@
         `<td class="total">${data?.total ?? '?'}</td></tr>`;
     }).join('');
 
-    let diffRow = '';
-    if (diffs) {
-      const cells = HOURS.map((h, i) => {
-        const d = diffs[i];
-        if (d === null) return `<td class="${nowCls(h)}"></td>`;
-        const txt = d < 0 ? d : (d > 0 ? `+${d}` : '±0');
-        return `<td class="${nowCls(h)}${d < 0 ? ' short' : ''}">${txt}</td>`;
-      }).join('');
-      const totalD = Math.round((num(rep.total) - num(req.total)) * 10) / 10;
-      diffRow = `<tr class="diff"><td class="row-head">不足</td>${cells}` +
-        `<td class="total${totalD < 0 ? ' short' : ''}">${totalD < 0 ? totalD : `+${totalD}`}</td></tr>`;
+    let actualRows = '', diffRow = '';
+    if (hasActual) {
+      const fmt = (v) => (v === 0 ? '' : String(v));
+      // 実F/実K: 対応するREQ(F/K)を下回る時間帯は赤
+      const actRow = (arr, reqRow, label, sumV, extra = '') => {
+        const cells = HOURS.map((h, i) => {
+          const short = reqRow && num(reqRow.hours[i]) > arr[i] + 1e-9;
+          return `<td class="${nowCls(h)}${short ? ' short' : ''}">${fmt(arr[i])}</td>`;
+        }).join('');
+        return `<tr class="act${extra}"><td class="row-head">${label}</td>${cells}` +
+          `<td class="total">${sumV}</td></tr>`;
+      };
+      actualRows =
+        actRow(actual.F, reqF, '実F', actual.sum.F, ' act-first') +
+        actRow(actual.K, reqK, '実K', actual.sum.K) +
+        actRow(actual.total, req, '実計', actual.sum.total);
+
+      if (diffs) {
+        const cells = HOURS.map((h, i) => {
+          const d = diffs[i];
+          if (d === null) return `<td class="${nowCls(h)}"></td>`;
+          const txt = d < 0 ? d : (d > 0 ? `+${d}` : '±0');
+          return `<td class="${nowCls(h)}${d < 0 ? ' short' : ''}">${txt}</td>`;
+        }).join('');
+        const totalD = Math.round((actual.sum.total - num(req?.total)) * 10) / 10;
+        diffRow = `<tr class="diff"><td class="row-head">不足</td>${cells}` +
+          `<td class="total${totalD < 0 ? ' short' : ''}">${totalD < 0 ? totalD : `+${totalD}`}</td></tr>`;
+      }
     }
 
-    $('#tableWrap').innerHTML = `<table>${headRow}${bodyRows}${diffRow}</table>`;
+    $('#tableWrap').innerHTML = `<table>${headRow}${bodyRows}${actualRows}${diffRow}</table>` +
+      (actual?.error ? `<div class="err">実人数取得失敗: ${actual.error}</div>` : '');
     renderTasks();
   }
 
@@ -392,4 +471,6 @@
   renderSheet();
   renderUnconfirmed();
   setInterval(renderUnconfirmed, CONFIRM_POLL_MS);
+  // シフト編集の反映を追うため、パネルが開いている間は実人数込みで定期更新
+  setInterval(() => { if (panel.classList.contains('open')) renderSheet(); }, 2 * 60 * 1000);
 })();
