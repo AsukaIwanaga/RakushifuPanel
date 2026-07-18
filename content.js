@@ -835,6 +835,21 @@
       }
       b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h`;
       b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）`;
+
+      // 出勤曜日の表示（月〜日、出勤日を濃く）
+      let wd = box.querySelector('.rf-week-days');
+      if (!wd) {
+        wd = document.createElement('span');
+        wd.className = 'rf-week-days';
+        wd.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+          'background:#f7f7f7;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;letter-spacing:1px;';
+        b.after(wd);
+      }
+      const dows = new Set([...st.days].map((ds) => parseYmd(ds)?.getDay()));
+      wd.innerHTML = [1, 2, 3, 4, 5, 6, 0].map((dow) =>
+        `<span style="color:${dows.has(dow) ? (dow === 0 ? '#c33' : dow === 6 ? '#26c' : '#222') : '#d5d5d5'}">${WEEKDAYS[dow]}</span>`
+      ).join('');
+      wd.title = '出勤曜日（この週）';
     }
   }
 
