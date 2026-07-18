@@ -414,6 +414,7 @@
       tr.act td { color: #6b21a8; }
       tr.act td.row-head { color: #6b21a8; }
       tr.act td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
+      tr.act td.short-lite { color: #b02a2a; font-weight: 700; } /* 不足1人未満: 白地に赤字 */
       tr.mgt td, tr.mgt td.row-head { color: #999; font-weight: 400; }
       tr.diff td { border-top: 2px solid #999; color: #999; }
       tr.diff td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
@@ -986,11 +987,12 @@
     let actualRows = '', diffRow = '';
     if (hasActual) {
       const fmt = (v) => (v === 0 ? '' : String(v));
-      // 実F/実K: 対応するREQ(F/K)を下回る時間帯は赤
+      // 実F/実K/実計: 対応するREQを下回る時間帯を赤。不足1人以上=塗りつぶし、1人未満=赤字のみ
       const actRow = (arr, reqRow, label, sumV, extra = '') => {
         const cells = HOURS.map((h, i) => {
-          const short = reqRow && num(reqRow.hours[i]) > arr[i] + 1e-9;
-          return `<td class="${nowCls(h)}${short ? ' short' : ''}">${fmt(arr[i])}</td>`;
+          const deficit = reqRow ? num(reqRow.hours[i]) - arr[i] : 0;
+          const cls = deficit >= 1 ? ' short' : deficit > 1e-9 ? ' short-lite' : '';
+          return `<td class="${nowCls(h)}${cls}">${fmt(arr[i])}</td>`;
         }).join('');
         return `<tr class="act${extra}"><td class="row-head">${label}</td>${cells}` +
           `<td class="total">${sumV}</td></tr>`;
@@ -998,7 +1000,8 @@
       actualRows =
         actRow(actual.F, reqF, '実F', actual.sum.F, ' act-first') +
         actRow(actual.K, reqK, '実K', actual.sum.K) +
-        actRow(actual.FK, hourly['REQ（FK）'], '実FK', actual.sum.FK) +
+        // 実FK: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない(素の表示)
+        actRow(actual.FK, null, '実FK', actual.sum.FK) +
         actRow(actual.total, req, '実計', actual.sum.total) +
         // MGT系はOP H外の参考表示（実計・不足には入らない）
         (actual.sum.MGT > 0 ? actRow(actual.MGT, null, 'MGT', actual.sum.MGT, ' mgt') : '') +
