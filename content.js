@@ -65,7 +65,7 @@
 
   // パネルの表示行（キーは hourly オブジェクトの行キー）
   const HOURLY_COLS = [
-    { rowLabel: 'LE',        head: 'LE',     cls: 'le' },
+    { rowLabel: 'LE',        head: LE_FIELD, cls: 'le' }, // 行名は客数フィールド名そのまま（配布用に分かりやすく）
     { rowLabel: 'REQ（F）',   head: 'REQ F',  cls: '' },
     { rowLabel: 'REQ（K）',   head: 'REQ K',  cls: '' },
     { rowLabel: 'REQ（SUM）', head: 'REQ計',  cls: 'sum' },
@@ -374,6 +374,10 @@
   // ===== UI =====
   const host = document.createElement('div');
   host.id = 'rakushifu-forecast-panel';
+  // 印刷時は週間アサインバッジを出さない（シフト表の印刷を汚さない）
+  const printStyle = document.createElement('style');
+  printStyle.textContent = '@media print { .rf-week-badge { display: none !important; } }';
+  document.documentElement.appendChild(printStyle);
   const shadow = host.attachShadow({ mode: 'open' });
   document.documentElement.appendChild(host);
 

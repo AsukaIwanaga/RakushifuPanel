@@ -18,6 +18,14 @@
     }
     input.narrow { width: 120px; }
     input.pct { width: 60px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; }
+    table.coef { border-collapse: collapse; margin: 6px 0; }
+    table.coef th, table.coef td {
+      border: 1px solid #ddd; padding: 5px 8px; text-align: center; font-size: 12px;
+      white-space: nowrap;
+    }
+    table.coef th { background: #f4f7f5; font-weight: 600; }
+    table.coef tr > th:first-child { text-align: left; }
+    table.coef input { width: 56px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; }
     .fixed-row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
     .fixed-row input, .fixed-row select { padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; }
     .fixed-row .fx-name { width: 130px; }
@@ -53,28 +61,43 @@
   <p>店舗ごとに異なる値をここで設定します。保存後、らくしふのページを再読み込みすると反映されます。</p>
 
   <h2>必要人数（REQ）の計算</h2>
-  <p class="hint">らくしふ画面の「修正客数」を客数(LE)とし、前後の時間帯の客数×%を上乗せした
-    「負担込み客数」を人数で割って REQ を出します。例: 一時間前50%・20名/人 で
-    12時LE94・11時LE71 → (94 + 71×0.5) ÷ 20 = 6.5人。</p>
+  <p class="hint">らくしふ画面の「修正客数」に、前後の時間帯の客数×%を上乗せした
+    「負担込み客数」を人数で割って REQ（必要人数）を出します。例: 一時間前50%・20名/人 で
+    12時94名・11時71名 → (94 + 71×0.5) ÷ 20 = 6.5人。</p>
 
-  <label>負担率・必要人数（フロア）</label>
-  <p>二時間前 <input type="number" id="fP2" class="pct" step="1"> % ・
-     一時間前 <input type="number" id="fP1" class="pct" step="1"> % ・
-     一時間後 <input type="number" id="fN1" class="pct" step="1"> % ／
-     客数 <input type="number" id="fY" class="pct" step="1" min="1"> 名につき1人</p>
-
-  <label>負担率・必要人数（キッチン）</label>
-  <p>二時間前 <input type="number" id="kP2" class="pct" step="1"> % ・
-     一時間前 <input type="number" id="kP1" class="pct" step="1"> % ・
-     一時間後 <input type="number" id="kN1" class="pct" step="1"> % ／
-     客数 <input type="number" id="kY" class="pct" step="1" min="1"> 名につき1人</p>
-
-  <label>負担率・必要人数（FK・どちらでも人員）</label>
-  <p>二時間前 <input type="number" id="fkP2" class="pct" step="1"> % ・
-     一時間前 <input type="number" id="fkP1" class="pct" step="1"> % ・
-     一時間後 <input type="number" id="fkN1" class="pct" step="1"> % ／
-     客数 <input type="number" id="fkY" class="pct" step="1" min="0"> 名につき1人</p>
-  <p class="hint">フロア/キッチンどちらにも入れる人員の必要数。<b>0名 = 使わない（既定）</b>。
+  <label>負担率・必要人数</label>
+  <table class="coef">
+    <tr>
+      <th></th>
+      <th>二時間前</th>
+      <th>一時間前</th>
+      <th>一時間後</th>
+      <th>客数◯名<br>につき1人</th>
+    </tr>
+    <tr>
+      <th>フロア</th>
+      <td><input type="number" id="fP2" step="1"> %</td>
+      <td><input type="number" id="fP1" step="1"> %</td>
+      <td><input type="number" id="fN1" step="1"> %</td>
+      <td><input type="number" id="fY" step="1" min="1"> 名</td>
+    </tr>
+    <tr>
+      <th>キッチン</th>
+      <td><input type="number" id="kP2" step="1"> %</td>
+      <td><input type="number" id="kP1" step="1"> %</td>
+      <td><input type="number" id="kN1" step="1"> %</td>
+      <td><input type="number" id="kY" step="1" min="1"> 名</td>
+    </tr>
+    <tr>
+      <th>FK（どちらでも）</th>
+      <td><input type="number" id="fkP2" step="1"> %</td>
+      <td><input type="number" id="fkP1" step="1"> %</td>
+      <td><input type="number" id="fkN1" step="1"> %</td>
+      <td><input type="number" id="fkY" step="1" min="0"> 名</td>
+    </tr>
+  </table>
+  <p class="hint">%列 = その時間帯の客数に上乗せする前後時間帯の客数の割合。
+    FK=フロア/キッチンどちらにも入れる人員で、<b>0名 = 使わない（既定）</b>。
     有効にするとパネルに REQ FK 行が増え、必要計・不足判定に含まれます
     （実FKを足してもトータルの必要に足りない場合に不足）。</p>
 
