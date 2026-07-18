@@ -44,6 +44,7 @@
 
   const CONFIRM_POLL_MS = 5 * 60 * 1000; // 未確定チェックの間隔
   const URL_WATCH_MS = 1500;
+  const isPrintPage = location.pathname.includes('/schedules/print');
 
   // ===== ユーティリティ =====
   const pad2 = (n) => String(n).padStart(2, '0');
@@ -667,7 +668,7 @@
   }
 
   function updateWeekBadges(per) {
-    if (!per) return;
+    if (!per || isPrintPage) return; // 印刷画面にはバッジを出さない（紙に載せない）
     for (const nameEl of document.querySelectorAll('.user-cell .name')) {
       const nm = (nameEl.textContent || '').replace(/\s+/g, '');
       const st = per[nm];
@@ -749,8 +750,6 @@
   }
 
   // ===== 前年客数・修正客数の下に LE客数 行と 必要人数(REQ計) 行を注入 =====
-  const isPrintPage = location.pathname.includes('/schedules/print');
-
   // 印刷画面用: .custom-field-rows(前年/修正客数)へ行を追加。
   // グループはDOM順=編集画面のセクション順(フロア→キッチン)前提で F/K を割当
   function updatePrintRows(le, reqPack) {
