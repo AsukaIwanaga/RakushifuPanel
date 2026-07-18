@@ -557,11 +557,15 @@
       if (!b) {
         b = document.createElement('span');
         b.className = 'rf-week-badge';
-        b.style.cssText = 'margin-left:4px;font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
-          'color:#2c6e49;background:#eef4f0;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
+        b.style.cssText = 'display:inline-block;margin-left:4px;font:700 10px/12px -apple-system,"Hiragino Sans",sans-serif;' +
+          'color:#2c6e49;background:#eef4f0;border-radius:4px;padding:2px 4px;white-space:nowrap;flex:none;text-align:center;';
         nameEl.after(b);
       }
-      b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h`;
+      // 上段: 週N日/Nh、下段: 出勤曜日（月〜日の並び）
+      const dayChars = [...st.days].sort()
+        .map((ds) => WEEKDAYS[(parseYmd(ds) || new Date()).getDay()]).join('');
+      b.innerHTML = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h` +
+        `<br><span style="font-weight:600;color:#4a7a5f;">${dayChars}</span>`;
       b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）`;
     }
   }
