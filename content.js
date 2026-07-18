@@ -14,11 +14,15 @@
 
   // シート側の行ラベル (G列) → パネルの列。表示したい項目はここを編集
   const HOURLY_COLS = [
-    { rowLabel: 'LE',       head: 'LE',     cls: 'le' },
-    { rowLabel: 'REQ（F）',  head: 'REQ F',  cls: '' },
-    { rowLabel: 'REQ（K）',  head: 'REQ K',  cls: '' },
-    { rowLabel: 'REQ（FK）', head: 'REQ FK', cls: '' },
+    { rowLabel: 'LE',          head: 'LE',     cls: 'le' },
+    { rowLabel: 'REQ（F）',     head: 'REQ F',  cls: '' },
+    { rowLabel: 'REQ（K）',     head: 'REQ K',  cls: '' },
+    { rowLabel: 'REQ（FK）',    head: 'REQ FK', cls: '' },
+    { rowLabel: 'REQ（SUM）',   head: 'REQ計',  cls: 'sum' },
+    { rowLabel: 'REPLAN（SUM）', head: 'REPLAN', cls: '' },
   ];
+  // 差分行 (REPLAN − REQ): マイナス＝人員不足として赤表示
+  const DIFF = { minuend: 'REPLAN（SUM）', subtrahend: 'REQ（SUM）' };
   // ヘッダー統計 (シート上部: ラベルG列 / 値J列)
   const HEADER_LABELS = ['LABOR%', 'LABOR H', 'SALES', 'SBP'];
 
@@ -216,6 +220,9 @@
       tr.le td { color: #1a5fb4; font-weight: 600; }
       tr.sum td { font-weight: 600; }
       td.total, th.total { border-left: 2px solid #999; font-weight: 700; background: #fafafa; }
+      tr.diff td { border-top: 2px solid #999; color: #999; }
+      tr.diff td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
+      th.short-mark { background: #d64545; color: #fff; }
       .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 12px; }
       .unconfirmed { display: flex; flex-wrap: wrap; gap: 4px; }
       .unconfirmed .day {
@@ -292,9 +299,21 @@
     const isToday = ymd(targetDate) === ymd(new Date());
     const nowCls = (h) => (isToday && h === nowHour ? ' now' : '');
 
+    // 差分 (REPLAN − REQ): マイナス＝不足
+    const num = (s) => { const v = parseFloat(s); return Number.isFinite(v) ? v : 0; };
+    const rep = hourly[DIFF.minuend], req = hourly[DIFF.subtrahend];
+    const diffs = (rep && req)
+      ? HOURS.map((h, i) => {
+          if (!rep.hours[i] && !req.hours[i]) return null; // 両方空欄の時間帯は営業時間外扱い
+          return Math.round((num(rep.hours[i]) - num(req.hours[i])) * 10) / 10;
+        })
+      : null;
+    const shortAt = (i) => diffs && diffs[i] !== null && diffs[i] < 0;
+
     const headRow =
       `<tr><th class="row-head"></th>` +
-      HOURS.map((h) => `<th class="${nowCls(h)}">${h}</th>`).join('') +
+      HOURS.map((h, i) =>
+        `<th class="${nowCls(h)}${shortAt(i) ? ' short-mark' : ''}">${h}</th>`).join('') +
       `<th class="total">計</th></tr>`;
 
     const bodyRows = HOURLY_COLS.map((c) => {
@@ -305,7 +324,20 @@
         `<td class="total">${data?.total ?? '?'}</td></tr>`;
     }).join('');
 
-    $('#tableWrap').innerHTML = `<table>${headRow}${bodyRows}</table>`;
+    let diffRow = '';
+    if (diffs) {
+      const cells = HOURS.map((h, i) => {
+        const d = diffs[i];
+        if (d === null) return `<td class="${nowCls(h)}"></td>`;
+        const txt = d < 0 ? d : (d > 0 ? `+${d}` : '±0');
+        return `<td class="${nowCls(h)}${d < 0 ? ' short' : ''}">${txt}</td>`;
+      }).join('');
+      const totalD = Math.round((num(rep.total) - num(req.total)) * 10) / 10;
+      diffRow = `<tr class="diff"><td class="row-head">不足</td>${cells}` +
+        `<td class="total${totalD < 0 ? ' short' : ''}">${totalD < 0 ? totalD : `+${totalD}`}</td></tr>`;
+    }
+
+    $('#tableWrap').innerHTML = `<table>${headRow}${bodyRows}${diffRow}</table>`;
     renderTasks();
   }
 
