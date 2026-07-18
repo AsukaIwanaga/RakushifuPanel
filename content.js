@@ -12,6 +12,7 @@
     leFieldName: '修正客数', // らくしふカスタム指標のフィールド名（会社により異なる場合に変更）
     fP2: '0', fP1: '50', fN1: '0', fY: '20', // フロア: 二時間前%/一時間前%/一時間後%/客数◯名につき1人
     kP2: '0', kP1: '50', kN1: '0', kY: '20', // キッチン: 同上
+    fkP2: '0', fkP1: '0', fkN1: '0', fkY: '0', // FK(どちらでも人員): y=0で無効(既定)
     fixedTasks: '',    // 固定作業: 1行1件「名前 開始-終了 F|K|FK 人数」(例: 締め 21:30-23:00 K 1)
     genresF: '2',      // フロアの genre_id（カンマ区切り可）
     genresK: '3',      // キッチンの genre_id（カンマ区切り可）
@@ -39,6 +40,8 @@
   const LOAD = {
     F: { p2: numOr(cfg.fP2, 0), p1: numOr(cfg.fP1, 50), n1: numOr(cfg.fN1, 0), y: Math.max(1, numOr(cfg.fY, 20)) },
     K: { p2: numOr(cfg.kP2, 0), p1: numOr(cfg.kP1, 50), n1: numOr(cfg.kN1, 0), y: Math.max(1, numOr(cfg.kY, 20)) },
+    // FKはy=0で無効（既定）。有効時はREQ FK行が増え、必要計・不足判定に含まれる
+    FK: { p2: numOr(cfg.fkP2, 0), p1: numOr(cfg.fkP1, 0), n1: numOr(cfg.fkN1, 0), y: Math.max(0, numOr(cfg.fkY, 0)) },
   };
   const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
   const HOURS = Array.from({ length: 18 }, (_, i) => i + 6); // 6:00 - 23:00
@@ -180,7 +183,8 @@
     const req = (c) => HOURS.map((h) =>
       r1((at(h) + c.p1 / 100 * at(h - 1) + c.p2 / 100 * at(h - 2) + c.n1 / 100 * at(h + 1)) / c.y));
     const reqF = req(LOAD.F), reqK = req(LOAD.K);
-    const reqSum = HOURS.map((_, i) => r1(reqF[i] + reqK[i]));
+    const reqFK = LOAD.FK.y > 0 ? req(LOAD.FK) : null;
+    const reqSum = HOURS.map((_, i) => r1(reqF[i] + reqK[i] + (reqFK ? reqFK[i] : 0)));
     // 行キーごとの {hours[], total} に詰めて描画側へ（0は空欄表示）
     const mk = (arr, total) => ({
       hours: arr.map((v) => (v === 0 ? '' : String(v))),
@@ -192,8 +196,9 @@
       'REQ（K）': mk(reqK),
       'REQ（SUM）': mk(reqSum),
     };
+    if (reqFK) hourly['REQ（FK）'] = mk(reqFK);
     // 固定作業を上乗せした「必要」行（判定はこちらを使う）。部分時間は比例配分
-    if (FIXED.length) {
+    if (FIXED.length || reqFK) {
       const fF = HOURS.map(() => 0), fK = HOURS.map(() => 0), fFK = HOURS.map(() => 0);
       for (const t of FIXED) {
         HOURS.forEach((h, i) => {
@@ -205,10 +210,14 @@
           else fFK[i] += v; // FK=どちらのグループでも可 → 合計必要にのみ加算
         });
       }
-      hourly['FIXED'] = mk(HOURS.map((_, i) => r1(fF[i] + fK[i] + fFK[i])));
-      if (fFK.some((v) => v > 0)) hourly['FIXED（FK）'] = mk(fFK.map(r1));
+      if (FIXED.length) {
+        hourly['FIXED'] = mk(HOURS.map((_, i) => r1(fF[i] + fK[i] + fFK[i])));
+      }
       hourly['NEED（F）'] = mk(HOURS.map((_, i) => r1(reqF[i] + fF[i])));
       hourly['NEED（K）'] = mk(HOURS.map((_, i) => r1(reqK[i] + fK[i])));
+      // 必要FK = 客数ベースREQ FK + FK固定作業（どちらでも人員の必要数）
+      const needFK = HOURS.map((_, i) => r1((reqFK ? reqFK[i] : 0) + fFK[i]));
+      if (needFK.some((v) => v > 0)) hourly['NEED（FK）'] = mk(needFK);
       hourly['NEED（SUM）'] = mk(HOURS.map((_, i) => r1(reqSum[i] + fF[i] + fK[i] + fFK[i])));
     }
     const chips = [];
@@ -434,9 +443,7 @@
     <button id="toggle" title="客数予測パネル">📊<span class="badge" id="badge"></span></button>
     <div id="panel">
       <div class="nav">
-        <button id="prev">◀</button>
         <b id="dateLabel">-</b>
-        <button id="next">▶</button>
         <button id="reload" class="accent">更新</button>
         <button id="openOpts" title="設定（負担率・係数など）">設定</button>
       </div>
@@ -459,8 +466,7 @@
   });
   if (localStorage.getItem('rfPanelOpen') === '1') panel.classList.add('open');
 
-  $('#prev').addEventListener('click', () => { targetDate.setDate(targetDate.getDate() - 1); renderSheet(); });
-  $('#next').addEventListener('click', () => { targetDate.setDate(targetDate.getDate() + 1); renderSheet(); });
+  // 対象日はらくしふURLの from= に追従（パネル独自の日付移動は廃止）
   $('#reload').addEventListener('click', () => {
     custFieldCache = {};   // 修正客数も再取得
     renderSheet();
@@ -701,6 +707,7 @@
     const num = (s) => { const v = parseFloat(s); return Number.isFinite(v) ? v : 0; };
     const reqF = hourly['REQ（F）'], reqK = hourly['REQ（K）'];
     const needF = hourly['NEED（F）'] || reqF, needK = hourly['NEED（K）'] || reqK;
+    const needFK = hourly['NEED（FK）'] || hourly['REQ（FK）'] || null;
     const req = hourly['NEED（SUM）'] || hourly['REQ（SUM）'];
     const hasActual = actual && !actual.error;
     const diffs = (hasActual && req)
@@ -719,7 +726,11 @@
       `<th class="total">計</th></tr>`;
 
     const cols = [...HOURLY_COLS];
-    if (hourly['FIXED']) {
+    if (hourly['REQ（FK）']) { // REQ計 の直前に挿入
+      cols.splice(cols.findIndex((c) => c.rowLabel === 'REQ（SUM）'), 0,
+        { rowLabel: 'REQ（FK）', head: 'REQ FK', cls: '' });
+    }
+    if (hourly['FIXED']) { // 固定がある時だけ固定/必要計行（無ければ必要計=REQ計で重複するため）
       cols.push({ rowLabel: 'FIXED', head: '固定', cls: '' },
                 { rowLabel: 'NEED（SUM）', head: '必要計', cls: 'sum' });
     }
@@ -746,7 +757,7 @@
       actualRows =
         actRow(actual.F, needF, '実F', actual.sum.F, ' act-first') +
         actRow(actual.K, needK, '実K', actual.sum.K) +
-        actRow(actual.FK, null, '実FK', actual.sum.FK) + // FKはモデルにREQが無いので表示のみ
+        actRow(actual.FK, needFK, '実FK', actual.sum.FK) + // 必要FK(REQ FK+固定FK)を下回れば赤
         actRow(actual.total, req, '実計', actual.sum.total) +
         // MGT系はOP H外の参考表示（実計・不足には入らない）
         (actual.sum.MGT > 0 ? actRow(actual.MGT, null, 'MGT', actual.sum.MGT, ' mgt') : '') +
@@ -782,12 +793,12 @@
     const tip = (i) =>
       `${HOURS[i]}時  F ${actual?.F?.[i] ?? '-'}/${needF?.hours?.[i] || '0'}` +
       ` ・ K ${actual?.K?.[i] ?? '-'}/${needK?.hours?.[i] || '0'}` +
-      ` ・ FK ${actual?.FK?.[i] ?? '-'}` +
+      ` ・ FK ${actual?.FK?.[i] ?? '-'}${needFK ? `/${needFK.hours[i] || '0'}` : ''}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/必要)`;
     updateStrips(SHOW.heatbar ? catDiffs : null, tip);
     // 画面の客数行の下に必要人数行をセクション別に注入（フロア=必要F+FK / キッチン=必要K+FK）
     updateReqRows((SHOW.reqRow && req && needF && needK)
-      ? { f: needF, k: needK, fk: hourly['FIXED（FK）'], sum: req }
+      ? { f: needF, k: needK, fk: needFK, sum: req }
       : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
     if (SHOW.weekBadges) {
