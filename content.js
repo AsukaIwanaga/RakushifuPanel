@@ -12,6 +12,7 @@
     leFieldName: '修正客数', // らくしふカスタム指標のフィールド名（会社により異なる場合に変更）
     fP2: '0', fP1: '50', fN1: '0', fY: '20', // フロア: 二時間前%/一時間前%/一時間後%/客数◯名につき1人
     kP2: '0', kP1: '50', kN1: '0', kY: '20', // キッチン: 同上
+    fixedTasks: '',    // 固定作業: 1行1件「名前 開始-終了 F|K|FK 人数」(例: 締め 21:30-23:00 K 1)
     genresF: '2',      // フロアの genre_id（カンマ区切り可）
     genresK: '3',      // キッチンの genre_id（カンマ区切り可）
     regularStaff: '',  // 正社員名（カンマ/改行区切り）
@@ -32,6 +33,23 @@
   };
   const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
   const HOURS = Array.from({ length: 18 }, (_, i) => i + 6); // 6:00 - 23:00
+
+  // 固定作業（客数に依らない必要人数）: 「名前 開始-終了 F|K|FK 人数」を1行1件でパース
+  const parseClock = (t) => {
+    const m = /^(\d{1,2})(?::(\d{2}))?$/.exec(t);
+    return m ? (+m[1]) * 60 + (+(m[2] || 0)) : null;
+  };
+  const FIXED = String(cfg.fixedTasks || '').split('\n').map((line) => {
+    const t = line.trim().split(/\s+/);
+    if (t.length < 3) return null;
+    const m = /^(.+?)[-〜~](.+)$/.exec(t[1]);
+    if (!m) return null;
+    const s = parseClock(m[1]), e = parseClock(m[2]);
+    const grp = (t[2] || '').toUpperCase();
+    const n = t[3] !== undefined ? parseFloat(t[3]) : 1;
+    if (s == null || e == null || e <= s || !['F', 'K', 'FK'].includes(grp) || !Number.isFinite(n) || n <= 0) return null;
+    return { name: t[0], s, e, grp, n };
+  }).filter(Boolean);
 
   // パネルの表示行（キーは hourly オブジェクトの行キー）
   const HOURLY_COLS = [
@@ -148,6 +166,24 @@
       'REQ（K）': mk(reqK),
       'REQ（SUM）': mk(reqSum),
     };
+    // 固定作業を上乗せした「必要」行（判定はこちらを使う）。部分時間は比例配分
+    if (FIXED.length) {
+      const fF = HOURS.map(() => 0), fK = HOURS.map(() => 0), fAll = HOURS.map(() => 0);
+      for (const t of FIXED) {
+        HOURS.forEach((h, i) => {
+          const ov = Math.max(0, Math.min(t.e, h * 60 + 60) - Math.max(t.s, h * 60)) / 60;
+          if (ov <= 0) return;
+          const v = t.n * ov;
+          if (t.grp === 'F') fF[i] += v;
+          else if (t.grp === 'K') fK[i] += v;
+          fAll[i] += v; // FK=どちらのグループでも可 → 合計必要にのみ加算
+        });
+      }
+      hourly['FIXED'] = mk(fAll.map(r1));
+      hourly['NEED（F）'] = mk(HOURS.map((_, i) => r1(reqF[i] + fF[i])));
+      hourly['NEED（K）'] = mk(HOURS.map((_, i) => r1(reqK[i] + fK[i])));
+      hourly['NEED（SUM）'] = mk(HOURS.map((_, i) => r1(reqSum[i] + fAll[i])));
+    }
     const chips = [];
     if (le.total != null) chips.push([LE_FIELD + '計', le.total]);
     const py = fields['前年客数'];
@@ -545,7 +581,7 @@
       const clone = tr.cloneNode(true);
       clone.classList.add('rf-req-row');
       const cth = clone.querySelector('th.metrics-row-header');
-      if (cth) cth.innerHTML = `<span style="font-weight:700;color:#2c6e49;">必要人数 (合計: ${req.sum.total || '-'})</span>`;
+      if (cth) cth.innerHTML = `<span style="font-weight:700;color:#2c6e49;">OP全体必要人数 (合計: ${req.sum.total || '-'})</span>`;
       // 時刻6..24の19セルが並ぶコンテナを探して値を差し替え
       const rowCells = [...clone.querySelectorAll('*')].find((e) => e.children.length === 19);
       if (rowCells) {
@@ -599,14 +635,16 @@
     const isToday = ymd(targetDate) === ymd(new Date());
     const nowCls = (h) => (isToday && h === nowHour ? ' now' : '');
 
-    // 実人数 (らくしふ現シフト・休憩控除済) と REQ の比較。マイナス＝不足
+    // 実人数 (らくしふ現シフト・休憩控除済) と必要人数の比較。マイナス＝不足
+    // 固定作業があれば NEED（REQ+固定）を判定に使う。無ければ NEED=REQ
     const num = (s) => { const v = parseFloat(s); return Number.isFinite(v) ? v : 0; };
-    const req = hourly['REQ（SUM）'];
     const reqF = hourly['REQ（F）'], reqK = hourly['REQ（K）'];
+    const needF = hourly['NEED（F）'] || reqF, needK = hourly['NEED（K）'] || reqK;
+    const req = hourly['NEED（SUM）'] || hourly['REQ（SUM）'];
     const hasActual = actual && !actual.error;
     const diffs = (hasActual && req)
       ? HOURS.map((h, i) => {
-          if (!req.hours[i] && !actual.total[i]) return null; // REQも実人数も無い時間帯は営業時間外
+          if (!req.hours[i] && !actual.total[i]) return null; // 必要も実人数も無い時間帯は営業時間外
           return Math.round((actual.total[i] - num(req.hours[i])) * 10) / 10;
         })
       : null;
@@ -619,7 +657,12 @@
         `<th class="${nowCls(h)}${shortAt(i) ? ' short-mark' : ''}">${h}</th>`).join('') +
       `<th class="total">計</th></tr>`;
 
-    const bodyRows = HOURLY_COLS.map((c) => {
+    const cols = [...HOURLY_COLS];
+    if (hourly['FIXED']) {
+      cols.push({ rowLabel: 'FIXED', head: '固定', cls: '' },
+                { rowLabel: 'NEED（SUM）', head: '必要計', cls: 'sum' });
+    }
+    const bodyRows = cols.map((c) => {
       const data = hourly[c.rowLabel];
       const cells = HOURS.map((h, i) =>
         `<td class="${nowCls(h)}">${data ? (data.hours[i] || '') : '?'}</td>`).join('');
@@ -640,8 +683,8 @@
           `<td class="total">${sumV}</td></tr>`;
       };
       actualRows =
-        actRow(actual.F, reqF, '実F', actual.sum.F, ' act-first') +
-        actRow(actual.K, reqK, '実K', actual.sum.K) +
+        actRow(actual.F, needF, '実F', actual.sum.F, ' act-first') +
+        actRow(actual.K, needK, '実K', actual.sum.K) +
         actRow(actual.FK, null, '実FK', actual.sum.FK) + // FKはモデルにREQが無いので表示のみ
         actRow(actual.total, req, '実計', actual.sum.total) +
         // MGT系はOP H外の参考表示（実計・不足には入らない）
@@ -673,16 +716,17 @@
       return Math.round((arr[i] - num(reqRow?.hours?.[i])) * 10) / 10;
     }) : null;
     const catDiffs = hasActual ? {
-      F: mkDiff(actual.F, reqF), K: mkDiff(actual.K, reqK),
+      F: mkDiff(actual.F, needF), K: mkDiff(actual.K, needK),
     } : null;
     const tip = (i) =>
-      `${HOURS[i]}時  F ${actual?.F?.[i] ?? '-'}/${reqF?.hours?.[i] || '0'}` +
-      ` ・ K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'}` +
+      `${HOURS[i]}時  F ${actual?.F?.[i] ?? '-'}/${needF?.hours?.[i] || '0'}` +
+      ` ・ K ${actual?.K?.[i] ?? '-'}/${needK?.hours?.[i] || '0'}` +
       ` ・ FK ${actual?.FK?.[i] ?? '-'}` +
-      ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/REQ)`;
+      ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/必要)`;
     updateStrips(catDiffs, tip);
-    // 画面の客数行の下に必要人数(REQ計)行を注入（個人版のLE行注入に相当）
-    updateReqRows((req && reqF && reqK) ? { sum: req, f: reqF, k: reqK } : null);
+    // 画面の客数行の下にOP全体必要人数(客数ベースREQ計)行を注入（個人版のLE行注入に相当）
+    const opReq = hourly['REQ（SUM）'];
+    updateReqRows((opReq && reqF && reqK) ? { sum: opReq, f: reqF, k: reqK } : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
     fetchWeekStats(targetDate)
       .then((per) => { lastWeekStats = per; updateWeekBadges(per); })

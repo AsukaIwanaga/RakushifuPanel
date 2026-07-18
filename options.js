@@ -1,11 +1,11 @@
 // 設定画面: chrome.storage.sync に保存。content.js の DEFAULTS とキーを揃えること。
-const TEXT_FIELDS = ['leFieldName', 'genresF', 'genresK', 'regularStaff'];
+const TEXT_FIELDS = ['leFieldName', 'fixedTasks', 'genresF', 'genresK', 'regularStaff'];
 const NUM_FIELDS = ['fP2', 'fP1', 'fN1', 'fY', 'kP2', 'kP1', 'kN1', 'kY'];
 const DEFAULTS = {
   leFieldName: '修正客数',
   fP2: '0', fP1: '50', fN1: '0', fY: '20',
   kP2: '0', kP1: '50', kN1: '0', kY: '20',
-  genresF: '2', genresK: '3', regularStaff: '',
+  fixedTasks: '', genresF: '2', genresK: '3', regularStaff: '',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -24,6 +24,7 @@ $('save').addEventListener('click', () => {
   };
   const cfg = {
     leFieldName: $('leFieldName').value.trim() || '修正客数',
+    fixedTasks: $('fixedTasks').value.trim(),
     genresF: $('genresF').value.trim() || '2',
     genresK: $('genresK').value.trim() || '3',
     regularStaff: $('regularStaff').value.trim(),

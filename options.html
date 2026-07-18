@@ -57,6 +57,12 @@
      一時間後 <input type="number" id="kN1" class="pct" step="1"> % ／
      客数 <input type="number" id="kY" class="pct" step="1" min="1"> 名につき1人</p>
 
+  <label>固定作業（客数に関係なく必要な作業）<span class="opt">任意</span></label>
+  <textarea id="fixedTasks" placeholder="オープン 6:00-8:00 F 1&#10;締め 21:30-23:00 K 1&#10;ST 11:00-14:00 FK 1"></textarea>
+  <p class="hint">1行に1件「名前 開始-終了 F/K/FK 人数」（人数省略時は1）。FK=どちらのグループでも
+    可の人員（合計の必要人数にだけ加算）。入力するとパネルに「固定」「必要計」行が増え、
+    不足判定・ヒートバーが固定込み（実 − 必要計）になります。30分単位もOK（0.5人として配分）。</p>
+
   <label>客数フィールド名</label>
   <input type="text" id="leFieldName" class="narrow" placeholder="修正客数">
   <p class="hint">らくしふ日別ビュー上部の行名。見つからない場合、パネルにエラーと
