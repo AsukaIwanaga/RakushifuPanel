@@ -334,11 +334,52 @@
         width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
         background: #2c6e49; color: #fff; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
       }
-      #toggle .badge {
+      #toggle .badge, #shiftToggle .badge {
         position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px;
         border-radius: 9px; background: #d64545; color: #fff; font-size: 11px;
         line-height: 18px; padding: 0 4px; display: none;
       }
+      #shiftToggle {
+        position: fixed; right: 62px; top: 12px; z-index: 2147483646;
+        width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
+        background: #6b46a8; color: #fff; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
+      }
+      #shiftPanel {
+        position: fixed; right: 62px; top: 64px; z-index: 2147483647;
+        width: 430px; max-width: calc(100vw - 24px);
+        max-height: calc(100vh - 80px); overflow-y: auto;
+        background: #fff; border: 1px solid #ccc; border-radius: 10px;
+        box-shadow: 0 4px 20px rgba(0,0,0,.25); padding: 10px; display: none;
+        font-size: 13px; color: #222;
+      }
+      #shiftPanel.open { display: block; }
+      .sc-head { display: flex; gap: 5px; align-items: center; margin-bottom: 8px; }
+      .sc-head b { flex: 1; font-size: 14px; }
+      .sc-head button {
+        border: 1px solid #ccc; background: #f5f5f5; border-radius: 5px;
+        cursor: pointer; padding: 3px 9px; font-size: 12px;
+      }
+      .sc-head button.on { background: #6b46a8; color: #fff; border-color: #6b46a8; }
+      .sc-card { border: 1px solid #e2e2e2; border-radius: 8px; padding: 6px 9px; margin-bottom: 7px; }
+      .sc-card.done { opacity: .55; }
+      .sc-title { font-weight: 700; }
+      .sc-title .undone { color: #b02a2a; }
+      .sc-meta { color: #888; font-size: 11px; font-weight: 400; }
+      .sc-checks { display: flex; flex-wrap: wrap; gap: 3px 12px; margin: 5px 0; }
+      .sc-checks label { font-size: 12px; display: flex; gap: 4px; align-items: center; cursor: pointer; }
+      .sc-notes { color: #777; font-size: 11px; margin: 3px 0; }
+      .sc-note-input { display: flex; gap: 4px; margin-top: 3px; }
+      .sc-note-input input { flex: 1; border: 1px solid #ccc; border-radius: 4px; padding: 3px 7px; font-size: 12px; }
+      .sc-note-input button, #scNewForm button {
+        border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer;
+        padding: 2px 9px; font-size: 12px;
+      }
+      #scNewForm { border: 1px dashed #b9a3dd; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+      #scNewForm input, #scNewForm select {
+        width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 3px 7px;
+        font-size: 12px; margin-bottom: 4px; background: #fff;
+      }
+      @media print { #shiftToggle, #shiftPanel { display: none !important; } }
       #panel {
         position: fixed; right: 12px; top: 64px; z-index: 2147483646;
         width: 680px; max-width: calc(100vw - 24px);
@@ -397,6 +438,18 @@
       .tasks .task .tnote { color: #888; font-size: 11px; }
     </style>
     <button id="toggle" title="客数予測パネル">📊<span class="badge" id="badge"></span></button>
+    <button id="shiftToggle" title="シフト変更依頼">🔁<span class="badge" id="shiftBadge"></span></button>
+    <div id="shiftPanel">
+      <div class="sc-head">
+        <b>シフト変更依頼</b>
+        <button id="scFilterOpen" class="on">未完了</button>
+        <button id="scFilterAll">すべて</button>
+        <button id="scNewBtn">＋新規</button>
+        <button id="scReload">更新</button>
+      </div>
+      <div id="scNewForm" style="display:none"></div>
+      <div id="scList" class="muted">読込中…</div>
+    </div>
     <div id="panel">
       <div class="nav">
         <button id="prev">◀</button>
@@ -431,6 +484,136 @@
     taskRowsCache = null; // タスクシートも再取得
     renderSheet();
     renderUnconfirmed();
+  });
+
+  // ===== シフト変更依頼ダイアログ（WorkLogWebサーバ = ShiftChangeアプリと同一データ） =====
+  const SC_CHECKS = [
+    ['requested_done', '依頼済み'], ['accepted_done', '承諾'], ['rakushifu_done', 'らくしふ反映'],
+    ['pre_sh_done', '確定前SH連絡'], ['confirmed_done', 'らくしふ確定完了'], ['sh_done', 'SH連絡'],
+  ];
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const shiftApi = (path, payload) => new Promise((resolve) => {
+    if (!alive()) return resolve({ ok: false, error: '拡張更新済み・要ページ再読込' });
+    try {
+      chrome.runtime.sendMessage({ type: 'shiftApi', path, payload }, (r) => resolve(r || { ok: false, error: '応答なし' }));
+    } catch { resolve({ ok: false, error: '拡張更新済み・要ページ再読込' }); }
+  });
+
+  const shiftPanel = $('#shiftPanel');
+  let scShowAll = false;
+  let scState = null;
+
+  function scCard(c) {
+    const checks = SC_CHECKS.map(([k, lbl]) =>
+      `<label><input type="checkbox" data-p="${esc(c.path)}" data-k="${k}" ${c[k] ? 'checked' : ''}>${lbl}</label>`
+    ).join('');
+    const notes = (c.notes || []).slice(0, 2)
+      .map((n) => `<div>${esc(typeof n === 'string' ? n : (n.text || ''))}</div>`).join('');
+    return `<div class="sc-card${c.is_done ? ' done' : ''}">
+      <div class="sc-title">${c.is_done ? '✅' : '<span class="undone">未了</span>'} ${esc(c.title)}
+        <span class="sc-meta">${c.checked_count}/6</span></div>
+      <div class="sc-meta">${esc(c.source)}・${esc(c.requester)}　${esc(c.received_at)}</div>
+      <div class="sc-checks">${checks}</div>
+      <div class="sc-notes">${notes}</div>
+      <div class="sc-note-input">
+        <input placeholder="後追いの記録を追記…" data-p="${esc(c.path)}">
+        <button data-p="${esc(c.path)}">追記</button>
+      </div>
+    </div>`;
+  }
+
+  async function scRefresh() {
+    const el = $('#scList');
+    const r = await shiftApi('/api/shift/state');
+    if (!r.ok) {
+      el.innerHTML = `<span class="err">サーバに繋がりません（${esc(r.error || r.data?.error || '')}）。` +
+        'Tailscale と WorkLogWeb の起動を確認</span>';
+      return;
+    }
+    scState = r.data;
+    const open = (scState.cases || []).filter((c) => !c.is_done);
+    const list = scShowAll ? (scState.cases || []) : open;
+    el.innerHTML = list.map(scCard).join('') || '<span class="muted">未完了なし 🎉</span>';
+    const b = $('#shiftBadge');
+    b.textContent = open.length;
+    b.style.display = open.length ? 'block' : 'none';
+  }
+
+  function scBuildNewForm() {
+    const srcs = (scState?.sources || ['WowTalk', '口頭', '電話', 'その他']);
+    $('#scNewForm').innerHTML =
+      `<input id="scNewTarget" placeholder="対象者 (例: 高橋心さん)">` +
+      `<input id="scNewDate" placeholder="対象日 (例: 7/26)">` +
+      `<input id="scNewChange" placeholder="変更内容">` +
+      `<input id="scNewRequester" placeholder="依頼者 (空欄可)">` +
+      `<select id="scNewSource">${srcs.map((s) => `<option>${esc(s)}</option>`).join('')}</select>` +
+      `<input id="scNewMemo" placeholder="メモ (空欄可)">` +
+      `<button id="scNewCreate">作成</button>`;
+  }
+
+  $('#shiftToggle').addEventListener('click', () => {
+    shiftPanel.classList.toggle('open');
+    localStorage.setItem('rfShiftOpen', shiftPanel.classList.contains('open') ? '1' : '0');
+    if (shiftPanel.classList.contains('open')) scRefresh();
+  });
+  if (localStorage.getItem('rfShiftOpen') === '1') { shiftPanel.classList.add('open'); }
+
+  $('#scReload').addEventListener('click', scRefresh);
+  $('#scFilterOpen').addEventListener('click', () => {
+    scShowAll = false;
+    $('#scFilterOpen').classList.add('on'); $('#scFilterAll').classList.remove('on');
+    scRefresh();
+  });
+  $('#scFilterAll').addEventListener('click', () => {
+    scShowAll = true;
+    $('#scFilterAll').classList.add('on'); $('#scFilterOpen').classList.remove('on');
+    scRefresh();
+  });
+  $('#scNewBtn').addEventListener('click', () => {
+    const f = $('#scNewForm');
+    const show = f.style.display === 'none';
+    if (show && !f.innerHTML) scBuildNewForm();
+    f.style.display = show ? '' : 'none';
+  });
+
+  shiftPanel.addEventListener('change', async (ev) => {
+    const box = ev.target;
+    if (!box.matches('input[type=checkbox][data-p]')) return;
+    box.disabled = true;
+    const r = await shiftApi('/api/shift/flag', { path: box.dataset.p, key: box.dataset.k, value: box.checked });
+    if (!r.ok) alert(`更新失敗: ${r.error || r.data?.error || ''}`);
+    scRefresh();
+  });
+  shiftPanel.addEventListener('click', async (ev) => {
+    const t = ev.target;
+    if (t.matches('.sc-note-input button')) {
+      const input = t.parentElement.querySelector('input');
+      const text = (input.value || '').trim();
+      if (!text) return;
+      t.disabled = true;
+      const r = await shiftApi('/api/shift/note', { path: t.dataset.p, text });
+      if (!r.ok) alert(`追記失敗: ${r.error || r.data?.error || ''}`);
+      scRefresh();
+    }
+    if (t.id === 'scNewCreate') {
+      t.disabled = true;
+      const r = await shiftApi('/api/shift/create', {
+        target: $('#scNewTarget').value, target_date: $('#scNewDate').value,
+        change: $('#scNewChange').value, requester: $('#scNewRequester').value,
+        source: $('#scNewSource').value, memo: $('#scNewMemo').value,
+      });
+      t.disabled = false;
+      if (!r.ok) { alert(`作成失敗: ${r.error || r.data?.error || ''}`); return; }
+      $('#scNewForm').style.display = 'none';
+      $('#scNewForm').innerHTML = '';
+      scRefresh();
+    }
+  });
+  shiftPanel.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && ev.target.matches('.sc-note-input input')) {
+      ev.target.parentElement.querySelector('button').click();
+    }
   });
 
   // タスクセクションの折りたたみ（タイトルクリックで開閉・状態は記憶）
@@ -876,9 +1059,11 @@
   }
   renderSheet();
   renderUnconfirmed();
+  scRefresh(); // バッジ表示のためダイアログ閉でも件数を取る
   timers.push(setInterval(() => {
     if (!alive()) return contextLost();
     renderUnconfirmed();
+    scRefresh();
   }, CONFIRM_POLL_MS));
   // 定期更新（画面上のヒートバーはパネルの開閉に関係なく維持する）
   timers.push(setInterval(() => {
