@@ -99,7 +99,23 @@
   }
 
   // ===== らくしふ実シフト → 時間帯別実人数 =====
-  // /ajax/admin/v2/schedules を対象日1日分fetchし、休憩控除済みの人時カバレッジを時間帯別に集計
+  // 業務割振タスクの id→名前 対応表（F/K/FK 振替の判定に使用）
+  let storeTaskMapCache = null;
+  async function fetchStoreTaskMap(storeId) {
+    if (storeTaskMapCache) return storeTaskMapCache;
+    const r = await fetch(`/ajax/admin/store_tasks?store_id=${storeId}`, {
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (!r.ok) throw new Error(`store_tasks HTTP ${r.status}`);
+    const j = await r.json();
+    storeTaskMapCache = Object.fromEntries((j.store_tasks || []).map((t) => [t.id, t.name]));
+    return storeTaskMapCache;
+  }
+
+  // /ajax/admin/v2/schedules を対象日1日分fetchし、休憩(rest_times)控除済みの
+  // 人時カバレッジを時間帯別に集計。業務割振が F/K/FK のタスク時間帯は所属genreに
+  // かかわらずそのグループへ振替（例: フロア所属者のKタスク中はKにカウント）。
   async function fetchActual(date) {
     const p = new URLSearchParams(location.search);
     const storeId = p.get('s');
@@ -112,72 +128,112 @@
     q.set('start_date', ymd(date));
     q.set('end_date', ymd(date));
     q.set('is_staff_print_page', 'false');
-    const r = await fetch('/ajax/admin/v2/schedules?' + q, {
-      credentials: 'include',
-      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
-    });
+    const [r, taskMap] = await Promise.all([
+      fetch('/ajax/admin/v2/schedules?' + q, {
+        credentials: 'include',
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      }),
+      fetchStoreTaskMap(storeId).catch(() => ({})), // 対応表が取れなくても素の集計は続行
+    ]);
     if (!r.ok) throw new Error(`シフトAPI HTTP ${r.status}`);
     const j = await r.json();
 
     const overlap = (a1, a2, b1, b2) => Math.max(0, Math.min(a2, b2) - Math.max(b1, a1));
-    const cov = (sh, h) => {
-      let m = overlap(sh.start_as_min, sh.end_as_min, h * 60, h * 60 + 60);
+    // 区間[a1,a2)のうち時間帯hに掛かる正味分数（休憩控除後）
+    const net = (sh, a1, a2, h) => {
+      const s = Math.max(a1, h * 60), e = Math.min(a2, h * 60 + 60);
+      let m = Math.max(0, e - s);
+      if (m === 0) return 0;
       for (const rt of sh.rest_times || []) {
-        m -= overlap(rt.start_hour * 60 + rt.start_minute, rt.end_hour * 60 + rt.end_minute, h * 60, h * 60 + 60);
+        m -= overlap(rt.start_hour * 60 + rt.start_minute, rt.end_hour * 60 + rt.end_minute, s, e);
       }
       return Math.max(0, m) / 60;
     };
 
     const zero = () => HOURS.map(() => 0);
-    const act = { F: zero(), K: zero(), total: zero() };
+    const act = { F: zero(), K: zero(), FK: zero(), total: zero() };
     for (const sh of j.instructed || []) {
       if (sh.off || sh.is_deleted) continue;
       if (String(sh.attending_store_id) !== String(storeId)) continue; // 他店ヘルプ出勤は除外
       const g = sh.attending_genre_id;
       const grp = GENRES_F.includes(g) ? 'F' : GENRES_K.includes(g) ? 'K' : null;
       if (!grp) continue; // 社員(REGULAR)等はクルーREQ比較の対象外
+
+      // F/K/FK 振替タスク区間（シフト範囲にクリップ）
+      const moves = (sh.instructed_schedule_store_tasks || [])
+        .map((t) => ({ name: taskMap[t.store_task_id], s: Math.max(t.start_time_as_min, sh.start_as_min),
+                       e: Math.min(t.end_time_as_min, sh.end_as_min) }))
+        .filter((t) => ['F', 'K', 'FK'].includes(t.name) && t.e > t.s);
+
       HOURS.forEach((h, i) => {
-        const c = cov(sh, h);
-        act[grp][i] += c;
-        act.total[i] += c;
+        const total = net(sh, sh.start_as_min, sh.end_as_min, h);
+        if (total === 0) return;
+        let moved = 0;
+        for (const mv of moves) {
+          const m = net(sh, mv.s, mv.e, h);
+          act[mv.name][i] += m;
+          moved += m;
+        }
+        act[grp][i] += Math.max(0, total - moved); // 振替以外は所属グループ
+        act.total[i] += total;
       });
     }
     const r1 = (v) => Math.round(v * 10) / 10;
-    for (const k of ['F', 'K', 'total']) act[k] = act[k].map(r1);
-    act.sum = { F: r1(act.F.reduce((a, b) => a + b, 0)), K: r1(act.K.reduce((a, b) => a + b, 0)),
-                total: r1(act.total.reduce((a, b) => a + b, 0)) };
+    act.sum = {};
+    for (const k of ['F', 'K', 'FK', 'total']) {
+      act.sum[k] = r1(act[k].reduce((a, b) => a + b, 0));
+      act[k] = act[k].map(r1);
+    }
     return act;
   }
 
   // ===== 月次タスク（月次タスク一覧シート） =====
   let taskRowsCache = null;
+  const fetchCsv = (msg) => new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: 'fetchSheetCsv', sheetId: TASK_SHEET_ID, ...msg }, resolve);
+  });
+
   async function fetchTaskRows() {
     if (taskRowsCache) return taskRowsCache;
-    const res = await new Promise((resolve) => {
-      chrome.runtime.sendMessage(
-        { type: 'fetchSheetCsv', sheetId: TASK_SHEET_ID, gid: TASK_SHEET_GID }, resolve);
-    });
-    if (!res || !res.ok || !res.text || res.text.trim().startsWith('<')) {
+    const [def, reqs] = await Promise.all([
+      fetchCsv({ gid: TASK_SHEET_GID }),          // 定義タブ (月次M + 週次W)
+      fetchCsv({ sheetName: '要請' }),            // 要請タブ (vaultから定期書き出し・無ければ無視)
+    ]);
+    if (!def || !def.ok || !def.text || def.text.trim().startsWith('<')) {
       throw new Error('タスクシート取得失敗');
     }
-    const rows = parseCSV(res.text);
-    const head = rows.findIndex((r) => (r[0] || '').trim() === 'ID');
-    taskRowsCache = rows.slice(head + 1)
-      .filter((r) => (r[0] || '').trim())
-      .map((r) => ({
-        id: r[0].trim(), task: (r[1] || '').trim(),
-        from: parseInt(r[2], 10), to: parseInt(r[3], 10),
-        rule: (r[4] || '').trim(), note: (r[5] || '').trim(),
-      }));
+    const parseTab = (text) => {
+      const rows = parseCSV(text);
+      const head = rows.findIndex((r) => (r[0] || '').trim() === 'ID');
+      return head < 0 ? [] : rows.slice(head + 1).filter((r) => (r[0] || '').trim());
+    };
+    const defRows = parseTab(def.text).map((r) => ({
+      id: r[0].trim(), task: (r[1] || '').trim(),
+      from: parseInt(r[2], 10), to: parseInt(r[3], 10),
+      rule: (r[4] || '').trim(), note: (r[5] || '').trim(),
+    }));
+    // 要請タブ: ID / タスク / 期限(YYYY-MM-DD) / source / 起票日 — 未完了のみが書き出されている前提
+    const reqRows = (reqs && reqs.ok && reqs.text && !reqs.text.trim().startsWith('<'))
+      ? parseTab(reqs.text).map((r) => ({
+          id: r[0].trim(), task: (r[1] || '').trim(), due: (r[2] || '').trim(),
+          source: (r[3] || '').trim(), request: true,
+        }))
+      : [];
+    taskRowsCache = { defRows, reqRows };
     return taskRowsCache;
   }
 
   const isThirdTuesday = (d) => d.getDay() === 2 && d.getDate() >= 15 && d.getDate() <= 21;
   const lastDay = (d) => new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const WD_TOKENS = { SUN: 0, MON: 1, TUE: 2, WED: 3, THU: 4, FRI: 5, SAT: 6 };
 
   function taskMatches(t, d) {
     if (t.rule === '3TUE') return isThirdTuesday(d);
     if (t.rule === 'EOM') return d.getDate() === lastDay(d);
+    // 週次: 曜日トークン (例 "MON" / "MON,THU")
+    if (/^(SUN|MON|TUE|WED|THU|FRI|SAT)(,(SUN|MON|TUE|WED|THU|FRI|SAT))*$/.test(t.rule)) {
+      return t.rule.split(',').some((tok) => WD_TOKENS[tok.trim()] === d.getDay());
+    }
     return Number.isFinite(t.from) && Number.isFinite(t.to) &&
       d.getDate() >= t.from && d.getDate() <= t.to;
   }
@@ -195,34 +251,16 @@
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const json = await r.json();
-    console.debug('[客数予測パネル] shift_confirm_target_candidates raw:', json);
-
-    // 日付らしき文字列を再帰的に収集。confirm/fix系のbooleanフラグがあれば true=確定済み として除外
-    const byDate = new Map();
-    const walk = (node) => {
-      if (Array.isArray(node)) { node.forEach(walk); return; }
-      if (node && typeof node === 'object') {
-        const dates = [];
-        let flag = null;
-        for (const [k, v] of Object.entries(node)) {
-          if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) dates.push(v.slice(0, 10));
-          if (typeof v === 'boolean' && /confirm|fix|kakutei/i.test(k)) flag = v;
-        }
-        for (const d of dates) {
-          const prev = byDate.get(d);
-          if (prev === undefined || prev === null) byDate.set(d, flag);
-        }
-        Object.values(node).forEach(walk);
-        return;
+    // 実形式 (2026-07-18検証済み):
+    // {shift_confirm_target_candidates: [{genre_id, dates: [{date, need_to_confirm}]}]}
+    // need_to_confirm === true の日が「シフト確定が必要＝未確定」
+    const days = new Set();
+    for (const g of json.shift_confirm_target_candidates || []) {
+      for (const d of g.dates || []) {
+        if (d.need_to_confirm === true) days.add(d.date);
       }
-      if (typeof node === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(node) && !byDate.has(node)) byDate.set(node, null);
-    };
-    walk(json);
-
-    return [...byDate.entries()]
-      .filter(([, flag]) => flag !== true) // 確定済みフラグが立っているものは除外
-      .map(([d]) => d)
-      .sort();
+    }
+    return [...days].sort();
   }
 
   // ===== UI =====
@@ -306,7 +344,7 @@
       </div>
       <div id="stats" class="stats"></div>
       <div id="tableWrap"></div>
-      <div class="section-title">月次タスク（<span id="taskDate">-</span>）</div>
+      <div class="section-title">タスク 月次/週次/要請（<span id="taskDate">-</span>）</div>
       <div id="tasks" class="tasks muted">読込中…</div>
       <div class="section-title">シフト確定 未処理日（今日〜月末）</div>
       <div id="unconfirmed" class="unconfirmed muted">確認中…</div>
@@ -400,6 +438,7 @@
       actualRows =
         actRow(actual.F, reqF, '実F', actual.sum.F, ' act-first') +
         actRow(actual.K, reqK, '実K', actual.sum.K) +
+        actRow(actual.FK, hourly['REQ（FK）'], '実FK', actual.sum.FK) +
         actRow(actual.total, req, '実計', actual.sum.total);
 
       if (diffs) {
@@ -424,15 +463,26 @@
     const el = $('#tasks');
     $('#taskDate').textContent = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
     try {
-      const all = await fetchTaskRows();
-      const hits = all.filter((t) => taskMatches(t, targetDate));
-      if (!hits.length) { el.innerHTML = '<span class="muted">該当なし</span>'; return; }
-      el.innerHTML = hits.map((t) =>
-        `<div class="task${t.rule === '外部' ? ' ext' : ''}">` +
-        `<span class="tid">${t.id}</span>` +
-        `<span>${t.task}${t.rule === '外部' ? '（外部日程・行動計画参照）' : ''}` +
-        (t.note ? `<div class="tnote">${t.note}</div>` : '') +
-        `</span></div>`).join('');
+      const { defRows, reqRows } = await fetchTaskRows();
+      const hits = defRows.filter((t) => taskMatches(t, targetDate));
+      const today = ymd(new Date());
+      const chip = (t) => {
+        if (t.request) {
+          const overdue = t.due && t.due < today;
+          return `<div class="task req${overdue ? ' ext' : ''}">` +
+            `<span class="tid">要請</span>` +
+            `<span>${t.task}` +
+            `<div class="tnote">${overdue ? '⚠期限超過 ' : ''}${t.due ? `期限 ${t.due}` : ''}` +
+            `${t.source ? ` / ${t.source}` : ''}</div></span></div>`;
+        }
+        return `<div class="task${t.rule === '外部' ? ' ext' : ''}">` +
+          `<span class="tid">${t.id}</span>` +
+          `<span>${t.task}${t.rule === '外部' ? '（外部日程・行動計画参照）' : ''}` +
+          (t.note ? `<div class="tnote">${t.note}</div>` : '') +
+          `</span></div>`;
+      };
+      const html = hits.map(chip).join('') + reqRows.map(chip).join('');
+      el.innerHTML = html || '<span class="muted">該当なし</span>';
     } catch (e) {
       el.innerHTML = `<span class="err">${e.message}</span>`;
     }
