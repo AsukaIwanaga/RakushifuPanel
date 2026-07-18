@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>らくしふ 客数予測パネル — 設定</title>
+  <style>
+    body {
+      font-family: -apple-system, "Hiragino Sans", sans-serif;
+      max-width: 640px; margin: 24px auto; padding: 0 16px;
+      font-size: 13px; color: #222; line-height: 1.6;
+    }
+    h1 { font-size: 18px; color: #2c6e49; }
+    h2 { font-size: 14px; margin: 20px 0 6px; border-bottom: 2px solid #eef4f0; padding-bottom: 2px; }
+    label { display: block; font-weight: 600; margin: 12px 0 2px; }
+    input[type="text"], textarea {
+      width: 100%; box-sizing: border-box; padding: 6px 8px;
+      border: 1px solid #ccc; border-radius: 5px; font-size: 13px; font-family: inherit;
+    }
+    input.narrow { width: 120px; }
+    textarea { height: 60px; }
+    .hint { color: #888; font-size: 11px; margin: 2px 0 0; }
+    .req { color: #b02a2a; font-size: 11px; margin-left: 4px; }
+    .opt { color: #888; font-size: 11px; margin-left: 4px; font-weight: 400; }
+    #save {
+      margin-top: 20px; padding: 8px 24px; font-size: 14px; cursor: pointer;
+      background: #2c6e49; color: #fff; border: none; border-radius: 6px;
+    }
+    #status { margin-left: 10px; font-weight: 600; }
+    #status.ok { color: #2c6e49; }
+    #status.err { color: #b02a2a; }
+    details { margin-top: 24px; background: #f8f8f8; border-radius: 8px; padding: 10px 14px; }
+    summary { cursor: pointer; font-weight: 600; }
+    code { background: #eef4f0; border-radius: 3px; padding: 0 4px; }
+  </style>
+</head>
+<body>
+  <h1>📊 らくしふ 客数予測パネル — 設定</h1>
+  <p>店舗ごとに異なる値をここで設定します。保存後、らくしふのページを再読み込みすると反映されます。</p>
+
+  <h2>スプレッドシート</h2>
+  <label>客数予測シート（URL または ID）<span class="req">必須</span></label>
+  <input type="text" id="sheetId" placeholder="https://docs.google.com/spreadsheets/d/XXXX/edit... または XXXX">
+  <p class="hint">「時間帯別客数予測 v2」形式のシート。URLを貼り付ければIDは自動で取り出します。
+    日付タブ名は <code>MMDD (曜)</code> 形式（例: <code>0718 (土)</code>）である必要があります。</p>
+
+  <label>タスクシート（URL または ID）<span class="opt">任意</span></label>
+  <input type="text" id="taskSheetId" placeholder="空欄ならパネルにタスク欄を表示しません">
+  <p class="hint">月次/週次タスク定義のシート。1列目が <code>ID</code> のヘッダー行から下を読みます。</p>
+
+  <label>タスク定義タブの gid<span class="opt">任意</span></label>
+  <input type="text" id="taskSheetGid" class="narrow" placeholder="0">
+  <p class="hint">タスクシートURLの <code>#gid=</code> の数字。最初のタブなら 0 のままでOK。</p>
+
+  <h2>らくしふのグループ (genre) 分類</h2>
+  <label>フロアの genre_id</label>
+  <input type="text" id="genresF" class="narrow" placeholder="2">
+  <label>キッチンの genre_id</label>
+  <input type="text" id="genresK" class="narrow" placeholder="3">
+  <p class="hint">複数あればカンマ区切り。ここに無いgenre（社員枠など）は人数比較の対象外になります。調べ方は下の「genre_id の調べ方」参照。</p>
+
+  <h2>スタッフ</h2>
+  <label>正社員の氏名<span class="opt">任意</span></label>
+  <textarea id="regularStaff" placeholder="山田太郎, 鈴木花子（カンマまたは改行区切り）"></textarea>
+  <p class="hint">ここに載せた人のMGT/TRer/TRee時間は「MGT」、それ以外の人のは「cMGT」行に計上されます。氏名の空白は無視して照合します。</p>
+
+  <button id="save">保存</button><span id="status"></span>
+
+  <details>
+    <summary>genre_id の調べ方</summary>
+    <p>らくしふのシフト編集画面で、グループ絞り込みを「フロアのみ」にしたときのURLに付く
+      <code>g=</code> の数字がフロアのgenre_id（例: <code>...schedules?s=945&amp;g=2&amp;...</code> → 2）。
+      同様に「キッチンのみ」で調べます。複数表示中はgの数だけ並びます。</p>
+  </details>
+
+  <details>
+    <summary>シートが取得できないとき</summary>
+    <p>シート取得はブラウザのGoogleログインCookieを使います（APIキー不要）。
+      「シート取得失敗」が出る場合は、Chromeで対象シートを開ける状態か（閲覧権限・ログイン）を確認してください。</p>
+  </details>
+</body>
+<script src="options.js"></script>
+</html>

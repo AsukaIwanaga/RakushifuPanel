@@ -1,14 +1,31 @@
 // らくしふ 客数予測パネル
 // - シート「時間帯別客数予測 v2」の日付シート (例: "0718 (土)") から LE / REQ / LABOR% を取得して表示
 // - シフト確定 未処理日を今日〜月末で監視
+// - 店舗ごとの値（シートID・genre分類・正社員名）は設定画面から (chrome.storage.sync)
 
-(() => {
+(async () => {
   'use strict';
 
   // ===== 設定 =====
-  const SHEET_ID = '1nP4a6MdEbGJAxvUfYZHtfXn-1EAA7oIwSvFdFa0GMXE';
-  const TASK_SHEET_ID = '1Np93smWUpSheCj1aKu9ZGmoOLQRJ1XALy02YxfGp9lw'; // 月次タスク一覧
-  const TASK_SHEET_GID = 0;
+  // 店舗固有の値はハードコードせず設定画面で入力する。ここはキーとデフォルトのみ。
+  const DEFAULTS = {
+    sheetId: '',       // 客数予測シートID（必須）
+    taskSheetId: '',   // タスクシートID（空ならタスク欄を非表示）
+    taskSheetGid: '0', // タスク定義タブの gid
+    genresF: '2',      // フロアの genre_id（カンマ区切り可）
+    genresK: '3',      // キッチンの genre_id（カンマ区切り可）
+    regularStaff: '',  // 正社員名（カンマ/改行区切り）
+  };
+  const cfg = await new Promise((resolve) => {
+    try { chrome.storage.sync.get(DEFAULTS, (v) => resolve(v || { ...DEFAULTS })); }
+    catch { resolve({ ...DEFAULTS }); }
+  });
+  const csvInts = (s) => String(s || '').split(/[^0-9]+/).filter(Boolean).map(Number);
+  const csvNames = (s) => String(s || '').split(/[,、\n]/).map((x) => x.replace(/\s+/g, '')).filter(Boolean);
+
+  const SHEET_ID = String(cfg.sheetId || '').trim();
+  const TASK_SHEET_ID = String(cfg.taskSheetId || '').trim();
+  const TASK_SHEET_GID = parseInt(cfg.taskSheetGid, 10) || 0;
   const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
   const HOURS = Array.from({ length: 18 }, (_, i) => i + 6); // 6:00 - 23:00
 
@@ -20,12 +37,12 @@
     { rowLabel: 'REQ（FK）',  head: 'REQ FK', cls: '' },
     { rowLabel: 'REQ（SUM）', head: 'REQ計',  cls: 'sum' },
   ];
-  // らくしふ実シフトの genre_id → F/K 分類（GT吉祥寺元町通: 2=フロア, 3=キッチン。
-  // 17=社員(REGULAR)・4=未使用 はクルーREQの比較対象外）
-  const GENRES_F = [2];
-  const GENRES_K = [3];
+  // らくしふ実シフトの genre_id → F/K 分類（例: 2=フロア, 3=キッチン）。
+  // ここに無い genre（社員・未使用枠など）はクルーREQの比較対象外
+  const GENRES_F = csvInts(cfg.genresF);
+  const GENRES_K = csvInts(cfg.genresK);
   // 正社員（この人のMGT/TRer/TRee時間は MGT H、その他の人のは CREW MGT H に計上）
-  const REGULAR_STAFF = ['岩永飛鳥'];
+  const REGULAR_STAFF = csvNames(cfg.regularStaff);
   // 業務割振タスク名 → カウント先。F/K/FK=振替、BU系=キッチン扱い、
   // MGT/TRer/TRee=OP Hに数えず MGT系へ（正社員→MGT、その他→cMGT）
   const moveGroup = (name, isRegular) => {
@@ -155,7 +172,8 @@
     const q = new URLSearchParams();
     q.set('page_ctx_name', 'admin');
     q.set('store_id', storeId);
-    for (const g of (genreIds.length ? genreIds : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    const fallbackGenres = [...GENRES_F, ...GENRES_K].map(String);
+    for (const g of (genreIds.length ? genreIds : fallbackGenres)) q.append('genre_ids[]', g);
     q.set('start_date', ymd(date));
     q.set('end_date', ymd(date));
     q.set('is_staff_print_page', 'false');
@@ -379,6 +397,10 @@
       }
       .allok { color: #2c6e49; font-weight: 600; }
       .err { color: #b02a2a; }
+      .setup-btn {
+        border: 1px solid #2c6e49; background: #eef4f0; color: #2c6e49;
+        border-radius: 5px; cursor: pointer; padding: 4px 12px; font-size: 12px; margin-top: 4px;
+      }
       .muted { color: #888; font-size: 11px; }
       .tasks .task { display: flex; gap: 6px; padding: 2px 0; border-bottom: 1px dotted #eee; align-items: flex-start; }
       .tasks .task .tid {
@@ -441,6 +463,20 @@
   async function renderSheet() {
     $('#dateLabel').textContent =
       `${targetDate.getMonth() + 1}/${targetDate.getDate()} (${WEEKDAYS[targetDate.getDay()]})`;
+    if (!SHEET_ID) {
+      $('#stats').innerHTML = '<span class="err">初期設定が必要です（客数予測シートIDが未設定）</span>';
+      $('#tableWrap').innerHTML = '';
+      const btn = document.createElement('button');
+      btn.textContent = '拡張機能の設定を開く';
+      btn.className = 'setup-btn';
+      btn.addEventListener('click', () => {
+        if (!alive()) return contextLost();
+        try { chrome.runtime.sendMessage({ type: 'openOptions' }); } catch {}
+      });
+      $('#tableWrap').appendChild(btn);
+      renderTasks();
+      return;
+    }
     $('#stats').innerHTML = '<span class="muted">読込中…</span>';
     $('#tableWrap').innerHTML = '';
 
@@ -531,6 +567,11 @@
   }
 
   async function renderTasks() {
+    if (!TASK_SHEET_ID) { // タスクシート未設定の店舗ではセクションごと出さない
+      $('#tasksTitle').style.display = 'none';
+      $('#tasks').style.display = 'none';
+      return;
+    }
     const el = $('#tasks');
     $('#taskDate').textContent = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
     try {
@@ -580,6 +621,15 @@
       el.innerHTML = `<span class="err">取得失敗: ${e.message}</span>`;
     }
   }
+
+  // 設定変更を検知して知らせる。自動リロードはしない（シフト編集中のデータ保護）
+  try {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'sync' || !Object.keys(changes).some((k) => k in DEFAULTS)) return;
+      $('#stats').innerHTML =
+        '<span class="err">設定が変更されました。ページを再読み込みすると反映されます</span>';
+    });
+  } catch {}
 
   // URL変化 (日付移動・ビュー切替) を監視してパネルの対象日を追従
   timers.push(setInterval(() => {
