@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "らくしふ 客数予測パネル",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "らくしふ編集画面に時間帯別客数予測シート（LE/REQ/LABOR%）・当日の月次タスクを表示し、シフト未確定日を監視する",
   "host_permissions": [
     "https://docs.google.com/*",
