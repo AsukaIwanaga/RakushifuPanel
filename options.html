@@ -18,6 +18,18 @@
     }
     input.narrow { width: 120px; }
     input.pct { width: 60px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; }
+    .fixed-row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+    .fixed-row input, .fixed-row select { padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; }
+    .fixed-row .fx-name { width: 130px; }
+    .fixed-row .fx-n { width: 55px; }
+    .fixed-row .fx-del {
+      border: 1px solid #e8b4b4; background: #fff; color: #b02a2a;
+      border-radius: 5px; cursor: pointer; padding: 3px 8px; font-size: 12px;
+    }
+    #addFixed {
+      border: 1px solid #2c6e49; background: #eef4f0; color: #2c6e49;
+      border-radius: 5px; cursor: pointer; padding: 4px 12px; font-size: 13px; margin-top: 4px;
+    }
     input[type="radio"] { margin-right: 6px; }
     #rakushifuOpts { background: #f8faf9; border-radius: 8px; padding: 4px 14px 10px; margin-top: 8px; }
     textarea { height: 60px; }
@@ -58,10 +70,11 @@
      客数 <input type="number" id="kY" class="pct" step="1" min="1"> 名につき1人</p>
 
   <label>固定作業（客数に関係なく必要な作業）<span class="opt">任意</span></label>
-  <textarea id="fixedTasks" placeholder="オープン 6:00-8:00 F 1&#10;締め 21:30-23:00 K 1&#10;ST 11:00-14:00 FK 1"></textarea>
-  <p class="hint">1行に1件「名前 開始-終了 F/K/FK 人数」（人数省略時は1）。FK=どちらのグループでも
-    可の人員（合計の必要人数にだけ加算）。入力するとパネルに「固定」「必要計」行が増え、
-    不足判定・ヒートバーが固定込み（実 − 必要計）になります。30分単位もOK（0.5人として配分）。</p>
+  <div id="fixedList"></div>
+  <button type="button" id="addFixed">＋ 作業を追加</button>
+  <p class="hint">オープン・締め・ST（スタンバイ）など。「どちらでも」=F/Kどちらの人員でも
+    可（合計の必要人数にだけ加算）。登録するとパネルに「固定」「必要計」行が増え、
+    不足判定・ヒートバーが固定込み（実 − 必要計）になります。時刻は30分単位OK（0.5人として配分）。</p>
 
   <label>客数フィールド名</label>
   <input type="text" id="leFieldName" class="narrow" placeholder="修正客数">

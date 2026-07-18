@@ -1,5 +1,5 @@
 // 設定画面: chrome.storage.sync に保存。content.js の DEFAULTS とキーを揃えること。
-const TEXT_FIELDS = ['leFieldName', 'fixedTasks', 'tasksF', 'tasksK', 'tasksFK', 'tasksMgt',
+const TEXT_FIELDS = ['leFieldName', 'tasksF', 'tasksK', 'tasksFK', 'tasksMgt',
                      'genresF', 'genresK', 'regularStaff'];
 const NUM_FIELDS = ['fP2', 'fP1', 'fN1', 'fY', 'kP2', 'kP1', 'kN1', 'kY', 'fillTh', 'surplusWarn'];
 const CHECK_FIELDS = ['showHeatbar', 'showReqRow', 'showWeekBadges'];
@@ -15,9 +15,73 @@ const DEFAULTS = {
 
 const $ = (id) => document.getElementById(id);
 
+// ===== 固定作業の行エディタ =====
+// 保存形式は content.js と同じテキスト（1行1件「名前 HH:MM-HH:MM F|K|FK 人数」）
+const pad2 = (n) => String(n).padStart(2, '0');
+const toHHMM = (t) => { // "6:00"/"6" → time input用 "06:00"
+  const m = /^(\d{1,2})(?::(\d{2}))?$/.exec(String(t || '').trim());
+  return m ? `${pad2(m[1])}:${m[2] || '00'}` : '';
+};
+
+function parseFixedTasks(src) {
+  return String(src || '').split('\n').map((line) => {
+    const t = line.trim().split(/\s+/);
+    if (t.length < 3) return null;
+    const m = /^(.+?)[-〜~](.+)$/.exec(t[1]);
+    if (!m) return null;
+    const grp = (t[2] || '').toUpperCase();
+    if (!['F', 'K', 'FK'].includes(grp)) return null;
+    return { name: t[0], s: toHHMM(m[1]), e: toHHMM(m[2]), grp, n: t[3] || '1' };
+  }).filter(Boolean);
+}
+
+function addFixedRow(task = { name: '', s: '', e: '', grp: 'F', n: '1' }) {
+  const div = document.createElement('div');
+  div.className = 'fixed-row';
+  div.innerHTML =
+    `<input type="text" class="fx-name" placeholder="作業名（締め 等）">` +
+    `<input type="time" class="fx-s" step="1800">` +
+    `<span>〜</span>` +
+    `<input type="time" class="fx-e" step="1800">` +
+    `<select class="fx-grp">` +
+    `  <option value="F">フロア</option>` +
+    `  <option value="K">キッチン</option>` +
+    `  <option value="FK">どちらでも</option>` +
+    `</select>` +
+    `<input type="number" class="fx-n" step="0.5" min="0.5" title="人数">` +
+    `<span>人</span>` +
+    `<button type="button" class="fx-del" title="この行を削除">✕ 削除</button>`;
+  div.querySelector('.fx-name').value = task.name;
+  div.querySelector('.fx-s').value = task.s;
+  div.querySelector('.fx-e').value = task.e;
+  div.querySelector('.fx-grp').value = task.grp;
+  div.querySelector('.fx-n').value = task.n;
+  div.querySelector('.fx-del').addEventListener('click', () => div.remove());
+  $('fixedList').appendChild(div);
+}
+
+function serializeFixedTasks() {
+  const lines = [];
+  for (const row of document.querySelectorAll('#fixedList .fixed-row')) {
+    const name = row.querySelector('.fx-name').value.trim().replace(/\s+/g, '_');
+    const s = row.querySelector('.fx-s').value;
+    const e = row.querySelector('.fx-e').value;
+    const grp = row.querySelector('.fx-grp').value;
+    const n = parseFloat(row.querySelector('.fx-n').value);
+    if (!name || !s || !e) continue; // 未入力の行は保存しない
+    lines.push(`${name} ${s}-${e} ${grp} ${Number.isFinite(n) && n > 0 ? n : 1}`);
+  }
+  return lines.join('\n');
+}
+
+$('addFixed').addEventListener('click', () => addFixedRow());
+
+// ===== 読み込み・保存 =====
 const fill = (cfg) => {
   for (const f of [...TEXT_FIELDS, ...NUM_FIELDS]) $(f).value = cfg[f] ?? '';
   for (const f of CHECK_FIELDS) $(f).checked = cfg[f] !== '0';
+  $('fixedList').innerHTML = '';
+  parseFixedTasks(cfg.fixedTasks).forEach(addFixedRow);
 };
 
 chrome.storage.sync.get(DEFAULTS, fill);
@@ -28,7 +92,7 @@ $('save').addEventListener('click', () => {
     const v = parseFloat($(id).value);
     return String(Number.isFinite(v) ? v : d);
   };
-  const cfg = {};
+  const cfg = { fixedTasks: serializeFixedTasks() };
   for (const f of TEXT_FIELDS) cfg[f] = $(f).value.trim();
   cfg.leFieldName = cfg.leFieldName || '修正客数';
   cfg.genresF = cfg.genresF || '2';
