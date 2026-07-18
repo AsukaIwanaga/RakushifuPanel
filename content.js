@@ -602,8 +602,13 @@
   }
 
   function scBuildNewForm() {
-    const srcs = (scState?.sources || ['WowTalk', '口頭', '電話', 'その他']);
+    const srcs = [...(scState?.sources || ['WowTalk', '口頭', '電話', 'その他'])];
+    if (!srcs.includes('店舗判断')) srcs.push('店舗判断'); // 店舗発パターン用
     $('#scNewForm').innerHTML =
+      `<select id="scNewKind">` +
+      `<option value="crew">クルー発（休み・時間変更の希望）</option>` +
+      `<option value="store">店舗発（LE・作成方針による打診）</option>` +
+      `</select>` +
       `<input id="scNewTarget" placeholder="対象者 (例: 高橋心さん)">` +
       `<input id="scNewDate" placeholder="対象日 (例: 7/26)">` +
       `<input id="scNewChange" placeholder="変更内容">` +
@@ -611,6 +616,64 @@
       `<select id="scNewSource">${srcs.map((s) => `<option>${esc(s)}</option>`).join('')}</select>` +
       `<input id="scNewMemo" placeholder="メモ (空欄可)">` +
       `<button id="scNewCreate">作成</button>`;
+    // 区分に応じて依頼者・sourceを自動補完（クルー発=対象者本人 / 店舗発=自分）
+    const applyKind = () => {
+      const store = $('#scNewKind').value === 'store';
+      if (store) {
+        $('#scNewRequester').value = REGULAR_STAFF[0] || '';
+        $('#scNewSource').value = '店舗判断';
+      } else {
+        $('#scNewRequester').value = ($('#scNewTarget').value || '').replace(/\s+/g, '');
+        const sel = $('#scNewSource');
+        if ([...sel.options].some((o) => o.value === 'WowTalk')) sel.value = 'WowTalk';
+      }
+    };
+    $('#scNewKind').addEventListener('change', applyKind);
+    $('#scNewTarget').addEventListener('input', () => {
+      if ($('#scNewKind').value === 'crew') {
+        $('#scNewRequester').value = ($('#scNewTarget').value || '').replace(/\s+/g, '');
+      }
+    });
+    applyKind();
+  }
+
+  // 名前右の「＋」ボタンから、対象者・対象日プリセットで新規起票フォームを開く
+  function scOpenNewFor(name) {
+    shiftPanel.classList.add('open');
+    localStorage.setItem('rfShiftOpen', '1');
+    repositionShiftPanel();
+    if (!$('#scNewForm').innerHTML) scBuildNewForm();
+    $('#scNewForm').style.display = '';
+    $('#scNewTarget').value = name.replace(/\s+/g, '');
+    $('#scNewDate').value = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
+    if ($('#scNewKind').value === 'crew') {
+      $('#scNewRequester').value = name.replace(/\s+/g, '');
+    }
+    $('#scNewChange').focus();
+    scRefresh();
+  }
+
+  function updateReqButtons() {
+    if (isPrintPage) return;
+    for (const nameEl of document.querySelectorAll('.user-cell .name')) {
+      const row = nameEl.closest('.row') || nameEl.parentElement;
+      if (!row || row.querySelector('.rf-req-btn')) continue;
+      const name = (nameEl.textContent || '').trim();
+      if (!name) continue;
+      const btn = document.createElement('button');
+      btn.className = 'rf-req-btn';
+      btn.textContent = '＋';
+      btn.title = `${name} のシフト変更依頼を起票`;
+      btn.style.cssText = 'flex:none;margin-left:3px;width:17px;height:17px;line-height:15px;padding:0;' +
+        'border:1px solid #b9a3dd;border-radius:4px;background:#f4effb;color:#6b46a8;' +
+        'font-weight:700;cursor:pointer;font-size:12px;';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        scOpenNewFor(name);
+      });
+      nameEl.after(btn);
+    }
   }
 
   $('#shiftToggle').addEventListener('click', () => {
@@ -1130,6 +1193,7 @@
     if (lastStrip && !document.querySelector('.rf-heat-strip')) updateStrips(lastStrip.catDiffs, lastStrip.tip);
     if (lastLE && !document.querySelector('.rf-le-row, .rf-le-row-p')) updateLERows(lastLE.le, lastLE.reqPack);
     if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks();
+    updateReqButtons(); // 再描画で消えた＋ボタンの張り直し(既存行はスキップ)
     if (location.href === lastHref) return;
     lastHref = location.href;
     const d = parseYmd(urlParams().from || '');
@@ -1149,6 +1213,7 @@
   renderSheet();
   renderUnconfirmed();
   scRefresh(); // バッジ表示のためダイアログ閉でも件数を取る
+  updateReqButtons();
   timers.push(setInterval(() => {
     if (!alive()) return contextLost();
     renderUnconfirmed();
