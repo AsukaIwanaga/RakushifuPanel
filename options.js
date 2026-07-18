@@ -2,13 +2,13 @@
 const TEXT_FIELDS = ['leFieldName', 'tasksF', 'tasksK', 'tasksFK', 'tasksMgt',
                      'genresF', 'genresK', 'regularStaff'];
 const NUM_FIELDS = ['fP2', 'fP1', 'fN1', 'fY', 'kP2', 'kP1', 'kN1', 'kY',
-                    'totP2', 'totP1', 'totN1', 'totY', 'fillTh', 'surplusWarn'];
+                    'totP2', 'totP1', 'totN1', 'totY', 'fkGap', 'fillTh', 'surplusWarn'];
 const CHECK_FIELDS = ['showHeatbar', 'showReqRow', 'showWeekBadges'];
 const DEFAULTS = {
   leFieldName: '修正客数',
   fP2: '0', fP1: '30', fN1: '0', fY: '20',
   kP2: '0', kP1: '20', kN1: '0', kY: '20',
-  totP2: '0', totP1: '50', totN1: '0', totY: '10',
+  totP2: '0', totP1: '50', totN1: '0', totY: '10', fkGap: '1',
   fixedTasks: '', genresF: '2', genresK: '3', regularStaff: '',
   fillTh: '1', surplusWarn: '2',
   tasksF: 'F', tasksK: 'K, BU*', tasksFK: 'FK', tasksMgt: 'MGT, TRer, TRee',
@@ -103,6 +103,7 @@ $('save').addEventListener('click', () => {
   if (parseFloat(cfg.fY) < 1) cfg.fY = '1';
   if (parseFloat(cfg.kY) < 1) cfg.kY = '1';
   if (parseFloat(cfg.totY) < 0) cfg.totY = '0'; // 0=FK判定無効
+  if (parseFloat(cfg.fkGap) < 0.5) cfg.fkGap = '0.5';
 
   if (parseFloat(cfg.fillTh) < 0) cfg.fillTh = '0';
   if (parseFloat(cfg.surplusWarn) < 0.5) cfg.surplusWarn = '0.5';

@@ -96,10 +96,12 @@
       <td><input type="number" id="totY" step="1" min="0"> 名</td>
     </tr>
   </table>
+  <p>FKを立てる条件: 全体REQ − (REQ F＋REQ K) が
+    <input type="number" id="fkGap" class="pct" step="0.5" min="0.5"> 人以上の時間帯</p>
   <p class="hint">%列 = その時間帯の客数に上乗せする前後時間帯の客数の割合。<br>
     <b>REQ FK</b>（フロア/キッチンどちらにも入れる人員）は、「全体」行で計算した
-    店全体の必要人数に対して REQ F＋REQ K の合計が下回る時間帯に <b>1人</b> 立ちます
-    （既定: 一時間前50%・10名につき1人。0名にするとFK判定なし）。
+    店全体の必要人数に対して REQ F＋REQ K の合計が上記の人数以上足りない時間帯に
+    <b>1人</b> 立ちます（端数の差では立ちません。全体を0名にするとFK判定なし）。
     REQ FK は REQ計・不足判定に含まれ、実FKを足してもトータルに足りない場合に不足になります。</p>
 
   <label>固定作業（客数に関係なく必要な作業）<span class="opt">任意</span></label>

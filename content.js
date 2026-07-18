@@ -13,6 +13,7 @@
     fP2: '0', fP1: '30', fN1: '0', fY: '20', // フロア: 二時間前%/一時間前%/一時間後%/客数◯名につき1人
     kP2: '0', kP1: '20', kN1: '0', kY: '20', // キッチン: 同上
     totP2: '0', totP1: '50', totN1: '0', totY: '10', // 全体(FK判定用)。y=0で無効
+    fkGap: '1',        // FKが立つ条件: 全体REQ−(F+K) がこれ以上の時間帯のみ
     fixedTasks: '',    // 固定作業: 1行1件「名前 開始-終了 F|K|FK 人数」(例: 締め 21:30-23:00 K 1)
     genresF: '2',      // フロアの genre_id（カンマ区切り可）
     genresK: '3',      // キッチンの genre_id（カンマ区切り可）
@@ -43,6 +44,8 @@
     // 全体: FK判定用の独立計算。REQ F+REQ K がこれを下回る時間帯に FK=1人。y=0で無効
     T: { p2: numOr(cfg.totP2, 0), p1: numOr(cfg.totP1, 50), n1: numOr(cfg.totN1, 0), y: Math.max(0, numOr(cfg.totY, 10)) },
   };
+  // FKを立てる差のしきい値（端数の差では立てない）
+  const FK_GAP = Math.max(0.1, numOr(cfg.fkGap, 1));
   const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
   const HOURS = Array.from({ length: 18 }, (_, i) => i + 6); // 6:00 - 23:00
 
@@ -183,10 +186,10 @@
     const req = (c) => HOURS.map((h) =>
       r1((at(h) + c.p1 / 100 * at(h - 1) + c.p2 / 100 * at(h - 2) + c.n1 / 100 * at(h + 1)) / c.y));
     const reqF = req(LOAD.F), reqK = req(LOAD.K);
-    // REQ FK: 全体REQ(独立計算)に対して F+K の合計が下回る時間帯に1人（本人指定ルール）
+    // REQ FK: 全体REQ(独立計算)に対して F+K の合計が FK_GAP 人以上下回る時間帯に1人
     const reqTot = LOAD.T.y > 0 ? req(LOAD.T) : null;
     const reqFK = reqTot
-      ? HOURS.map((_, i) => (reqTot[i] - (reqF[i] + reqK[i]) > 0.05 ? 1 : 0))
+      ? HOURS.map((_, i) => (reqTot[i] - (reqF[i] + reqK[i]) >= FK_GAP - 1e-9 ? 1 : 0))
       : null;
     const reqSum = HOURS.map((_, i) => r1(reqF[i] + reqK[i] + (reqFK ? reqFK[i] : 0)));
     // 行キーごとの {hours[], total} に詰めて描画側へ（0は空欄表示）
