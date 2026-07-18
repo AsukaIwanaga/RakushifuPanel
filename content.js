@@ -438,6 +438,55 @@
   });
   applyTasksFold();
 
+  // ===== らくしふ画面上の不足ヒートバー =====
+  // OneDay表示の時間軸ヘッダー(.time-header)直下に、時間帯別の 実計−REQ計 を行として差し込む。
+  // 表示中の日とパネルの対象日が一致するOneDayのときだけ出す。
+  function updateStrip(diffs, tipFor) {
+    const old = document.getElementById('rf-heat-strip');
+    const p = new URLSearchParams(location.search);
+    const header = document.querySelector('.time-header');
+    const fromD = parseYmd(p.get('from') || '');
+    const show = header && p.get('u') === 'OneDay' && diffs &&
+      fromD && ymd(fromD) === ymd(targetDate);
+    if (!show) { old?.remove(); return; }
+    const strip = old || document.createElement('div');
+    strip.id = 'rf-heat-strip';
+    strip.innerHTML = '';
+    strip.style.cssText =
+      'display:flex;height:16px;font:700 10px/16px -apple-system,"Hiragino Sans",sans-serif;text-align:center;';
+    for (const c of header.children) {
+      const t = (c.textContent || '').trim();
+      const h = /^\d{1,2}$/.test(t) ? +t : null;
+      const i = h !== null ? HOURS.indexOf(h) : -1;
+      const cell = document.createElement('div');
+      cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
+      const d = i >= 0 ? diffs[i] : undefined;
+      if (d !== undefined && d !== null) {
+        if (d < 0) {
+          cell.textContent = d;
+          cell.style.cssText += 'background:#d64545;color:#fff;border-radius:3px;';
+        } else {
+          cell.textContent = d > 0 ? `+${d}` : '0';
+          cell.style.cssText += 'color:#9aa8b5;';
+        }
+        if (tipFor) cell.title = tipFor(i);
+      }
+      strip.appendChild(cell);
+    }
+    if (!old || !old.isConnected) header.after(strip);
+  }
+
+  // ページ本体のシフト保存(page_hook.jsが検知)→少し待って再計算
+  let editRefreshTimer = null;
+  window.addEventListener('message', (ev) => {
+    if (ev.source !== window || ev.data?.__rfPanel !== 'dataChanged') return;
+    clearTimeout(editRefreshTimer);
+    editRefreshTimer = setTimeout(() => {
+      if (!alive()) return contextLost();
+      renderSheet();
+    }, 800);
+  });
+
   async function renderSheet() {
     $('#dateLabel').textContent =
       `${targetDate.getMonth() + 1}/${targetDate.getDate()} (${WEEKDAYS[targetDate.getDay()]})`;
@@ -451,6 +500,7 @@
     if (res.error) {
       $('#stats').innerHTML = `<span class="err">${res.error}: ${res.sheetName}</span>`;
       renderTasks(); // 日付シートが無い日でもタスク欄は独立して更新する
+      updateStrip(null);
       return;
     }
     const { header, hourly } = extractSheetData(res.rows);
@@ -527,6 +577,9 @@
 
     $('#tableWrap').innerHTML = `<table>${headRow}${bodyRows}${actualRows}${diffRow}</table>` +
       (actual?.error ? `<div class="err">実人数取得失敗: ${actual.error}</div>` : '');
+    updateStrip(diffs, (i) =>
+      `${HOURS[i]}時: 実${actual?.total?.[i] ?? '-'} / REQ${(req?.hours?.[i] || '0')}` +
+      ` (F ${actual?.F?.[i] ?? '-'}/${reqF?.hours?.[i] || '0'}, K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'})`);
     renderTasks();
   }
 
@@ -601,9 +654,9 @@
     if (!alive()) return contextLost();
     renderUnconfirmed();
   }, CONFIRM_POLL_MS));
-  // シフト編集の反映を追うため、パネルが開いている間は実人数込みで定期更新
+  // 定期更新（画面上のヒートバーはパネルの開閉に関係なく維持する）
   timers.push(setInterval(() => {
     if (!alive()) return contextLost();
-    if (panel.classList.contains('open')) renderSheet();
+    renderSheet();
   }, 2 * 60 * 1000));
 })();
