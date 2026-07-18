@@ -26,6 +26,8 @@
     table.coef th { background: #f4f7f5; font-weight: 600; }
     table.coef tr > th:first-child { text-align: left; }
     table.coef input { width: 56px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; }
+    .radio-inline { display: inline; font-weight: 400; margin-right: 12px; white-space: nowrap; }
+    .fk-opt { background: #f8faf9; border-radius: 6px; padding: 8px 12px; margin: 4px 0; }
     .fixed-row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
     .fixed-row input, .fixed-row select { padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; }
     .fixed-row .fx-name { width: 130px; }
@@ -96,13 +98,34 @@
       <td><input type="number" id="totY" step="1" min="0"> 名</td>
     </tr>
   </table>
-  <p>FKを立てる条件: 全体REQ − (REQ F＋REQ K) が
-    <input type="number" id="fkGap" class="pct" step="0.5" min="0.5"> 人以上の時間帯</p>
-  <p class="hint">%列 = その時間帯の客数に上乗せする前後時間帯の客数の割合。<br>
-    <b>REQ FK</b>（フロア/キッチンどちらにも入れる人員）は、「全体」行で計算した
-    店全体の必要人数に対して REQ F＋REQ K の合計が上記の人数以上足りない時間帯に
-    <b>1人</b> 立ちます（端数の差では立ちません。全体を0名にするとFK判定なし）。
-    REQ FK は REQ計・不足判定に含まれ、実FKを足してもトータルに足りない場合に不足になります。</p>
+  <p class="hint">%列 = その時間帯の客数に上乗せする前後時間帯の客数の割合。
+    「全体」行は下のFK計算（全体との差方式）でのみ使います。</p>
+
+  <label>REQ FK（どちらでも人員）の計算方法</label>
+  <p>
+    <label class="radio-inline"><input type="radio" name="fkMode" value="gap" id="fkModeGap"> 全体との差（既定）</label>
+    <label class="radio-inline"><input type="radio" name="fkMode" value="th" id="fkModeTh"> 客数しきい値</label>
+    <label class="radio-inline"><input type="radio" name="fkMode" value="ratio" id="fkModeRatio"> 客数比例</label>
+    <label class="radio-inline"><input type="radio" name="fkMode" value="off" id="fkModeOff"> 使わない</label>
+  </p>
+  <div class="fk-opt" id="fkOptGap">
+    全体REQ（上の表の「全体」行で計算）− (REQ F＋REQ K) が
+    <input type="number" id="fkGap" class="pct" step="0.5" min="0.5"> 人以上の時間帯に立てる
+  </div>
+  <div class="fk-opt" id="fkOptTh">
+    時間帯の修正客数が <input type="number" id="fkThLe" class="pct" step="5" min="1"> 名以上の時間帯に立てる
+  </div>
+  <div class="fk-opt" id="fkOptRatio">
+    二時間前 <input type="number" id="fkP2" class="pct" step="1"> % ・
+    一時間前 <input type="number" id="fkP1" class="pct" step="1"> % ・
+    一時間後 <input type="number" id="fkN1" class="pct" step="1"> % ／
+    客数 <input type="number" id="fkY" class="pct" step="1" min="1"> 名につき1人（F/Kと同じ式・小数で出ます）
+  </div>
+  <div class="fk-opt" id="fkCountWrap">
+    立てる人数: <input type="number" id="fkCount" class="pct" step="0.5" min="0.5"> 人
+  </div>
+  <p class="hint">REQ FK は REQ計・必要計・不足判定に含まれ、
+    実FKを足してもトータルに足りない場合に不足になります。FK固定作業（ST等）はさらに加算。</p>
 
   <label>固定作業（客数に関係なく必要な作業）<span class="opt">任意</span></label>
   <div id="fixedList"></div>

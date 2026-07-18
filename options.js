@@ -2,13 +2,18 @@
 const TEXT_FIELDS = ['leFieldName', 'tasksF', 'tasksK', 'tasksFK', 'tasksMgt',
                      'genresF', 'genresK', 'regularStaff'];
 const NUM_FIELDS = ['fP2', 'fP1', 'fN1', 'fY', 'kP2', 'kP1', 'kN1', 'kY',
-                    'totP2', 'totP1', 'totN1', 'totY', 'fkGap', 'fillTh', 'surplusWarn'];
+                    'totP2', 'totP1', 'totN1', 'totY',
+                    'fkGap', 'fkThLe', 'fkCount', 'fkP2', 'fkP1', 'fkN1', 'fkY',
+                    'fillTh', 'surplusWarn'];
 const CHECK_FIELDS = ['showHeatbar', 'showReqRow', 'showWeekBadges'];
+const FK_MODES = ['gap', 'th', 'ratio', 'off'];
 const DEFAULTS = {
   leFieldName: '修正客数',
   fP2: '0', fP1: '30', fN1: '0', fY: '20',
   kP2: '0', kP1: '20', kN1: '0', kY: '20',
-  totP2: '0', totP1: '50', totN1: '0', totY: '10', fkGap: '1',
+  totP2: '0', totP1: '50', totN1: '0', totY: '10',
+  fkMode: 'gap', fkGap: '1', fkThLe: '60', fkCount: '1',
+  fkP2: '0', fkP1: '0', fkN1: '0', fkY: '40',
   fixedTasks: '', genresF: '2', genresK: '3', regularStaff: '',
   fillTh: '1', surplusWarn: '2',
   tasksF: 'F', tasksK: 'K, BU*', tasksFK: 'FK', tasksMgt: 'MGT, TRer, TRee',
@@ -78,10 +83,27 @@ function serializeFixedTasks() {
 
 $('addFixed').addEventListener('click', () => addFixedRow());
 
+// ===== REQ FK 計算方法の切替（選択に応じてパラメータ欄を出し分け） =====
+const fkModeValue = () =>
+  document.querySelector('input[name="fkMode"]:checked')?.value || 'gap';
+function updateFkVis() {
+  const mode = fkModeValue();
+  $('fkOptGap').style.display = mode === 'gap' ? '' : 'none';
+  $('fkOptTh').style.display = mode === 'th' ? '' : 'none';
+  $('fkOptRatio').style.display = mode === 'ratio' ? '' : 'none';
+  $('fkCountWrap').style.display = (mode === 'gap' || mode === 'th') ? '' : 'none';
+}
+for (const r of document.querySelectorAll('input[name="fkMode"]')) {
+  r.addEventListener('change', updateFkVis);
+}
+
 // ===== 読み込み・保存 =====
 const fill = (cfg) => {
   for (const f of [...TEXT_FIELDS, ...NUM_FIELDS]) $(f).value = cfg[f] ?? '';
   for (const f of CHECK_FIELDS) $(f).checked = cfg[f] !== '0';
+  const mode = FK_MODES.includes(cfg.fkMode) ? cfg.fkMode : 'gap';
+  document.querySelector(`input[name="fkMode"][value="${mode}"]`).checked = true;
+  updateFkVis();
   $('fixedList').innerHTML = '';
   parseFixedTasks(cfg.fixedTasks).forEach(addFixedRow);
 };
@@ -102,8 +124,12 @@ $('save').addEventListener('click', () => {
   for (const f of NUM_FIELDS) cfg[f] = numOr(f, DEFAULTS[f]);
   if (parseFloat(cfg.fY) < 1) cfg.fY = '1';
   if (parseFloat(cfg.kY) < 1) cfg.kY = '1';
-  if (parseFloat(cfg.totY) < 0) cfg.totY = '0'; // 0=FK判定無効
+  cfg.fkMode = fkModeValue();
+  if (parseFloat(cfg.totY) < 0) cfg.totY = '0';
   if (parseFloat(cfg.fkGap) < 0.5) cfg.fkGap = '0.5';
+  if (parseFloat(cfg.fkThLe) < 1) cfg.fkThLe = '1';
+  if (parseFloat(cfg.fkCount) < 0.5) cfg.fkCount = '0.5';
+  if (parseFloat(cfg.fkY) < 1) cfg.fkY = '1';
 
   if (parseFloat(cfg.fillTh) < 0) cfg.fillTh = '0';
   if (parseFloat(cfg.surplusWarn) < 0.5) cfg.surplusWarn = '0.5';
