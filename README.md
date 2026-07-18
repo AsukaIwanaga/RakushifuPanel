@@ -13,6 +13,11 @@
 
 対象日はらくしふURLの `from=` に自動追従。パネルの ◀ ▶ で独立して前後の日も見られる。
 
+## ダウンロード
+
+- `git clone https://github.com/AsukaIwanaga/RakushifuPanel.git`
+- または GitHubページの **Code → Download ZIP** で取得して展開
+
 ## インストール（自分専用・ストア不要）
 
 1. Chromeで `chrome://extensions` を開く
