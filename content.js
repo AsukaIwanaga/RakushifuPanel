@@ -438,6 +438,65 @@
   });
   applyTasksFold();
 
+  // ===== 週間アサイン（人別: 週N日/Nh を名前横にバッジ表示） =====
+  let lastWeekStats = null;
+  async function fetchWeekStats(date) {
+    const p = new URLSearchParams(location.search);
+    const storeId = p.get('s');
+    if (!storeId) return null;
+    const d = new Date(date), dow = (d.getDay() + 6) % 7; // 月曜始まり
+    const mon = new Date(d); mon.setDate(d.getDate() - dow);
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    const q = new URLSearchParams();
+    q.set('page_ctx_name', 'admin');
+    q.set('store_id', storeId);
+    for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    q.set('start_date', ymd(mon));
+    q.set('end_date', ymd(sun));
+    q.set('is_staff_print_page', 'false');
+    const r = await fetch('/ajax/admin/v2/schedules?' + q, {
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    const um = Object.fromEntries((j.users || []).map((u) => [u.id, (u.name || '').replace(/\s+/g, '')]));
+    const per = {}; // 名前 -> {days:Set, mins}
+    for (const sh of j.instructed || []) {
+      if (sh.off || sh.is_deleted) continue;
+      if (sh.date < ymd(mon) || sh.date > ymd(sun)) continue; // APIの前後日パディング除去
+      const nm = um[sh.user_id];
+      if (!nm) continue;
+      let mins = sh.end_as_min - sh.start_as_min;
+      for (const rt of sh.rest_times || []) {
+        mins -= Math.max(0, (rt.end_hour * 60 + rt.end_minute) - (rt.start_hour * 60 + rt.start_minute));
+      }
+      const st = (per[nm] ||= { days: new Set(), mins: 0 });
+      st.days.add(sh.date);
+      st.mins += Math.max(0, mins);
+    }
+    return per;
+  }
+
+  function updateWeekBadges(per) {
+    if (!per) return;
+    for (const nameEl of document.querySelectorAll('.user-cell .name')) {
+      const nm = (nameEl.textContent || '').replace(/\s+/g, '');
+      const st = per[nm];
+      let b = nameEl.parentElement?.querySelector('.rf-week-badge');
+      if (!st) { b?.remove(); continue; }
+      if (!b) {
+        b = document.createElement('span');
+        b.className = 'rf-week-badge';
+        b.style.cssText = 'margin-left:4px;font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+          'color:#2c6e49;background:#eef4f0;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
+        nameEl.after(b);
+      }
+      b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h`;
+      b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）`;
+    }
+  }
+
   // ===== らくしふ画面上の不足ヒートバー =====
   // OneDay表示の時間軸ヘッダー(.time-header)直下に、時間帯別の 実計−REQ計 を行として差し込む。
   // 表示中の日とパネルの対象日が一致するOneDayのときだけ出す。
@@ -580,6 +639,10 @@
     updateStrip(diffs, (i) =>
       `${HOURS[i]}時: 実${actual?.total?.[i] ?? '-'} / REQ${(req?.hours?.[i] || '0')}` +
       ` (F ${actual?.F?.[i] ?? '-'}/${reqF?.hours?.[i] || '0'}, K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'})`);
+    // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
+    fetchWeekStats(targetDate)
+      .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
+      .catch(() => {});
     renderTasks();
   }
 
@@ -637,6 +700,8 @@
   // URL変化 (日付移動・ビュー切替) を監視してパネルの対象日を追従
   timers.push(setInterval(() => {
     if (!alive()) return contextLost();
+    // Vueの再描画でバッジが消えた場合の張り直し（軽量）
+    if (lastWeekStats) updateWeekBadges(lastWeekStats);
     if (location.href === lastHref) return;
     lastHref = location.href;
     const d = parseYmd(urlParams().from || '');
