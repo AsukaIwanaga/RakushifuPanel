@@ -17,6 +17,9 @@
       border: 1px solid #ccc; border-radius: 5px; font-size: 13px; font-family: inherit;
     }
     input.narrow { width: 120px; }
+    input.pct { width: 60px; padding: 4px 6px; border: 1px solid #ccc; border-radius: 5px; font-size: 13px; }
+    input[type="radio"] { margin-right: 6px; }
+    #rakushifuOpts { background: #f8faf9; border-radius: 8px; padding: 4px 14px 10px; margin-top: 8px; }
     textarea { height: 60px; }
     .hint { color: #888; font-size: 11px; margin: 2px 0 0; }
     .req { color: #b02a2a; font-size: 11px; margin-left: 4px; }
@@ -37,8 +40,38 @@
   <h1>📊 らくしふ 客数予測パネル — 設定</h1>
   <p>店舗ごとに異なる値をここで設定します。保存後、らくしふのページを再読み込みすると反映されます。</p>
 
+  <h2>計算方法</h2>
+  <label><input type="radio" name="calcMode" value="rakushifu" id="calcModeRakushifu">
+    らくしふ客数方式（推奨・設定不要で動く）</label>
+  <p class="hint">らくしふ画面の「修正客数」を LE とし、下の負担率から REQ（必要人数）を計算します。</p>
+  <label><input type="radio" name="calcMode" value="sheet" id="calcModeSheet">
+    スプレッドシート方式</label>
+  <p class="hint">「時間帯別客数予測 v2」形式のシートから LE / REQ 行を読みます（シートIDが必須）。</p>
+
+  <div id="rakushifuOpts">
+    <label>客数フィールド名</label>
+    <input type="text" id="leFieldName" class="narrow" placeholder="修正客数">
+    <p class="hint">らくしふ日別ビュー上部の行名。見つからない場合、パネルにエラーと
+      利用可能な名前一覧（DevToolsコンソール）が出ます。</p>
+
+    <label>負担率・必要人数（フロア）</label>
+    <p>二時間前 <input type="number" id="fP2" class="pct" step="1"> % ・
+       一時間前 <input type="number" id="fP1" class="pct" step="1"> % ・
+       一時間後 <input type="number" id="fN1" class="pct" step="1"> % ／
+       客数 <input type="number" id="fY" class="pct" step="1" min="1"> 名につき1人</p>
+
+    <label>負担率・必要人数（キッチン）</label>
+    <p>二時間前 <input type="number" id="kP2" class="pct" step="1"> % ・
+       一時間前 <input type="number" id="kP1" class="pct" step="1"> % ・
+       一時間後 <input type="number" id="kN1" class="pct" step="1"> % ／
+       客数 <input type="number" id="kY" class="pct" step="1" min="1"> 名につき1人</p>
+    <p class="hint">その時間の客数に、前後の時間帯の客数×%を上乗せした「負担込み客数」を
+      人数で割って REQ を出します。例: 一時間前50%・20名/人 で 12時LE94・11時LE71 →
+      (94 + 71×0.5) ÷ 20 = 6.5人。</p>
+  </div>
+
   <h2>スプレッドシート</h2>
-  <label>客数予測シート（URL または ID）<span class="req">必須</span></label>
+  <label>客数予測シート（URL または ID）<span class="opt">シート方式のとき必須</span></label>
   <input type="text" id="sheetId" placeholder="https://docs.google.com/spreadsheets/d/XXXX/edit... または XXXX">
   <p class="hint">「時間帯別客数予測 v2」形式のシート。URLを貼り付ければIDは自動で取り出します。
     日付タブ名は <code>MMDD (曜)</code> 形式（例: <code>0718 (土)</code>）である必要があります。</p>

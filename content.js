@@ -1,7 +1,8 @@
 // らくしふ 客数予測パネル
-// - シート「時間帯別客数予測 v2」の日付シート (例: "0718 (土)") から LE / REQ / LABOR% を取得して表示
+// - LE/REQ: らくしふの「修正客数」から負担率モデルで計算（らくしふ客数方式・デフォルト）
+//   またはシート「時間帯別客数予測 v2」の日付シート (例: "0718 (土)") から取得（シート方式）
 // - シフト確定 未処理日を今日〜月末で監視
-// - 店舗ごとの値（シートID・genre分類・正社員名）は設定画面から (chrome.storage.sync)
+// - 店舗ごとの値（計算係数・シートID・genre分類・正社員名）は設定画面から (chrome.storage.sync)
 
 (async () => {
   'use strict';
@@ -9,7 +10,11 @@
   // ===== 設定 =====
   // 店舗固有の値はハードコードせず設定画面で入力する。ここはキーとデフォルトのみ。
   const DEFAULTS = {
-    sheetId: '',       // 客数予測シートID（必須）
+    calcMode: 'rakushifu', // 'rakushifu'=修正客数から計算 / 'sheet'=シートのLE/REQ行
+    leFieldName: '修正客数', // らくしふカスタム指標のフィールド名（会社により異なる場合に変更）
+    fP2: '0', fP1: '50', fN1: '0', fY: '20', // フロア: 二時間前%/一時間前%/一時間後%/客数◯名につき1人
+    kP2: '0', kP1: '50', kN1: '0', kY: '20', // キッチン: 同上
+    sheetId: '',       // 客数予測シートID（シート方式のとき必須）
     taskSheetId: '',   // タスクシートID（空ならタスク欄を非表示）
     taskSheetGid: '0', // タスク定義タブの gid
     genresF: '2',      // フロアの genre_id（カンマ区切り可）
@@ -26,6 +31,14 @@
   const SHEET_ID = String(cfg.sheetId || '').trim();
   const TASK_SHEET_ID = String(cfg.taskSheetId || '').trim();
   const TASK_SHEET_GID = parseInt(cfg.taskSheetGid, 10) || 0;
+  const CALC_MODE = cfg.calcMode === 'sheet' ? 'sheet' : 'rakushifu';
+  const LE_FIELD = String(cfg.leFieldName || '').trim() || '修正客数';
+  const numOr = (v, d) => { const n = parseFloat(v); return Number.isFinite(n) ? n : d; };
+  // 負担率モデルの係数（F/K別）: load = LE + p1%×1h前 + p2%×2h前 + n1%×1h後、REQ = load / y
+  const LOAD = {
+    F: { p2: numOr(cfg.fP2, 0), p1: numOr(cfg.fP1, 50), n1: numOr(cfg.fN1, 0), y: Math.max(1, numOr(cfg.fY, 20)) },
+    K: { p2: numOr(cfg.kP2, 0), p1: numOr(cfg.kP1, 50), n1: numOr(cfg.kN1, 0), y: Math.max(1, numOr(cfg.kY, 20)) },
+  };
   const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
   const HOURS = Array.from({ length: 18 }, (_, i) => i + 6); // 6:00 - 23:00
 
@@ -146,6 +159,86 @@
         : null;
     }
     return { header, hourly };
+  }
+
+  // ===== らくしふ客数方式: カスタム指標（修正客数など）→ LE/REQ 計算 =====
+  // /typed/api/admin/metrics/custom_fields が name/term_mode:hour で時間帯別値を返す
+  // (2026-07-18 実機検証済み。IDは会社依存のため名前でマッチ)
+  let custFieldCache = {}; // ymd -> {フィールド名: {total, at(min)}}
+  async function fetchCustomerFields(date) {
+    const key = ymd(date);
+    if (custFieldCache[key]) return custFieldCache[key];
+    const p = new URLSearchParams(location.search);
+    const storeId = p.get('s');
+    if (!storeId) throw new Error('store_id 不明（URLに s= がありません）');
+    // store_scope の指標なので genre はどれでも同値。表示中の先頭 genre を使う
+    const genreId = p.getAll('g')[0] || String([...GENRES_F, ...GENRES_K][0] ?? 2);
+    const q = new URLSearchParams({
+      store_id: storeId, genre_id: genreId, from: key, to: key, display_mode: 'day',
+    });
+    const r = await fetch('/typed/api/admin/metrics/custom_fields?' + q, {
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (!r.ok) throw new Error(`客数API HTTP ${r.status}`);
+    const j = await r.json();
+    const fields = {};
+    for (const f of j.results || []) {
+      const v = (f.values || [])[0];
+      const map = {};
+      for (const b of v?.breakdowns || []) {
+        if (Number.isFinite(b.value)) map[b.start_minutes] = b.value;
+      }
+      fields[(f.name || '').trim()] = {
+        total: v && v.value != null ? v.value : null,
+        at: (min) => map[min] || 0,
+      };
+    }
+    custFieldCache[key] = fields;
+    return fields;
+  }
+
+  // 負担込み客数 = LE[h] + p1%×LE[h-1] + p2%×LE[h-2] + n1%×LE[h+1]、REQ = ÷y (小数1桁)
+  function buildComputedHourly(fields) {
+    const le = fields[LE_FIELD];
+    if (!le) {
+      console.warn('[客数予測パネル] 客数フィールドが見つかりません。利用可能:', Object.keys(fields));
+      throw new Error(`「${LE_FIELD}」フィールドが見つかりません（設定で名前を確認）`);
+    }
+    const r1 = (v) => Math.round(v * 10) / 10;
+    const at = (h) => le.at(h * 60); // breakdowns は 6:00(360)〜30:00 の分キー・範囲外は0
+    const req = (c) => HOURS.map((h) =>
+      r1((at(h) + c.p1 / 100 * at(h - 1) + c.p2 / 100 * at(h - 2) + c.n1 / 100 * at(h + 1)) / c.y));
+    const reqF = req(LOAD.F), reqK = req(LOAD.K);
+    const reqSum = HOURS.map((_, i) => r1(reqF[i] + reqK[i]));
+    // シート方式の extractSheetData と同形状 {hours[], total} に詰め、以降の描画を共通化
+    const mk = (arr, total) => ({
+      hours: arr.map((v) => (v === 0 ? '' : String(v))),
+      total: total != null ? String(total) : String(r1(arr.reduce((a, b) => a + b, 0))),
+    });
+    const hourly = {
+      'LE': mk(HOURS.map(at), le.total),
+      'REQ（F）': mk(reqF),
+      'REQ（K）': mk(reqK),
+      'REQ（FK）': null, // 計算モデルにFKの概念は無い（実FKは表示のみ・赤判定なし）
+      'REQ（SUM）': mk(reqSum),
+    };
+    const chips = [];
+    if (le.total != null) chips.push([LE_FIELD + '計', le.total]);
+    const py = fields['前年客数'];
+    if (py && py.total) {
+      chips.push(['前年客数計', py.total]);
+      if (le.total != null) chips.push(['前年比', `${r1((le.total / py.total) * 100)}%`]);
+    }
+    return { hourly, chips };
+  }
+
+  async function fetchComputed(date) {
+    try {
+      return buildComputedHourly(await fetchCustomerFields(date));
+    } catch (e) {
+      return { error: e.message };
+    }
   }
 
   // ===== らくしふ実シフト → 時間帯別実人数 =====
@@ -445,7 +538,8 @@
   $('#prev').addEventListener('click', () => { targetDate.setDate(targetDate.getDate() - 1); renderSheet(); });
   $('#next').addEventListener('click', () => { targetDate.setDate(targetDate.getDate() + 1); renderSheet(); });
   $('#reload').addEventListener('click', () => {
-    taskRowsCache = null; // タスクシートも再取得
+    taskRowsCache = null;  // タスクシートも再取得
+    custFieldCache = {};   // 修正客数も再取得
     renderSheet();
     renderUnconfirmed();
   });
@@ -614,6 +708,7 @@
     clearTimeout(editRefreshTimer);
     editRefreshTimer = setTimeout(() => {
       if (!alive()) return contextLost();
+      custFieldCache = {}; // 画面での修正客数編集も拾う
       renderSheet();
     }, 800);
   });
@@ -621,8 +716,8 @@
   async function renderSheet() {
     $('#dateLabel').textContent =
       `${targetDate.getMonth() + 1}/${targetDate.getDate()} (${WEEKDAYS[targetDate.getDay()]})`;
-    if (!SHEET_ID) {
-      $('#stats').innerHTML = '<span class="err">初期設定が必要です（客数予測シートIDが未設定）</span>';
+    if (CALC_MODE === 'sheet' && !SHEET_ID) {
+      $('#stats').innerHTML = '<span class="err">シート方式には客数予測シートIDの設定が必要です</span>';
       $('#tableWrap').innerHTML = '';
       const btn = document.createElement('button');
       btn.textContent = '拡張機能の設定を開く';
@@ -639,21 +734,30 @@
     $('#tableWrap').innerHTML = '';
 
     const [res, actual] = await Promise.all([
-      fetchSheet(targetDate),
+      CALC_MODE === 'sheet' ? fetchSheet(targetDate) : fetchComputed(targetDate),
       fetchActual(targetDate).catch((e) => ({ error: e.message })),
     ]);
     if (res.error) {
-      $('#stats').innerHTML = `<span class="err">${res.error}: ${res.sheetName}</span>`;
+      $('#stats').innerHTML =
+        `<span class="err">${res.error}${res.sheetName ? `: ${res.sheetName}` : ''}</span>`;
       renderTasks(); // 日付シートが無い日でもタスク欄は独立して更新する
       updateStrips(null);
       updateLERows(null);
       return;
     }
-    const { header, hourly } = extractSheetData(res.rows);
-
-    $('#stats').innerHTML = HEADER_LABELS
-      .map((l) => `<span class="chip">${l} <b>${header[l] || '-'}</b></span>`)
-      .join('');
+    let hourly;
+    if (CALC_MODE === 'sheet') {
+      const ext = extractSheetData(res.rows);
+      hourly = ext.hourly;
+      $('#stats').innerHTML = HEADER_LABELS
+        .map((l) => `<span class="chip">${l} <b>${ext.header[l] || '-'}</b></span>`)
+        .join('');
+    } else {
+      hourly = res.hourly;
+      $('#stats').innerHTML = (res.chips || [])
+        .map(([l, v]) => `<span class="chip">${l} <b>${v}</b></span>`)
+        .join('') || '<span class="muted">客数データなし</span>';
+    }
 
     // 時間を横軸に: 列 = 6:00〜23:00 + 計、行 = LE / REQ F / REQ K / REQ計
     const nowHour = new Date().getHours();
@@ -679,7 +783,10 @@
         `<th class="${nowCls(h)}${shortAt(i) ? ' short-mark' : ''}">${h}</th>`).join('') +
       `<th class="total">計</th></tr>`;
 
-    const bodyRows = HOURLY_COLS.map((c) => {
+    const panelCols = CALC_MODE === 'sheet'
+      ? HOURLY_COLS
+      : HOURLY_COLS.filter((c) => c.rowLabel !== 'REQ（FK）');
+    const bodyRows = panelCols.map((c) => {
       const data = hourly[c.rowLabel];
       const cells = HOURS.map((h, i) =>
         `<td class="${nowCls(h)}">${data ? (data.hours[i] || '') : '?'}</td>`).join('');
@@ -739,7 +846,8 @@
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/REQ)`;
     updateStrips(catDiffs, tip);
-    updateLERows(hourly['LE']);
+    // らくしふ方式ではLE=画面の修正客数そのものなので行注入は不要（シート方式のみ）
+    updateLERows(CALC_MODE === 'sheet' ? hourly['LE'] : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
     fetchWeekStats(targetDate)
       .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
