@@ -583,19 +583,21 @@
         (scMatchesDay(c, targetDate) || (!c.is_done && !(c.target_date || '').trim())));
       if (!rel.length) continue;
       const pending = rel.filter((c) => !c.is_done);
+      const box = badgeBox(nameEl);
+      if (!box) continue;
       const mark = document.createElement('span');
       mark.className = 'rf-sc-mark';
       if (pending.length) {
         mark.textContent = `🔄依頼${pending.length > 1 ? pending.length : ''}`;
-        mark.style.cssText = 'margin-left:4px;font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+        mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#b02a2a;background:#fdecec;border:1px solid #e8b4b4;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
       } else {
         mark.textContent = '✔変更済';
-        mark.style.cssText = 'margin-left:4px;font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+        mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#1e7a44;background:#e8f5ec;border:1px solid #b5d9c3;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
       }
       mark.title = rel.map((c) => `${c.is_done ? '✅' : '未了'} ${c.title}`).join('\n');
-      nameEl.after(mark);
+      box.appendChild(mark);
     }
   }
 
@@ -734,19 +736,35 @@
     return per;
   }
 
+  // バッジ類は名前と同じ行に入れると名前が省略されて消えるため、名前の下の専用行に置く
+  function badgeBox(nameEl) {
+    const row = nameEl.closest('.row') || nameEl.parentElement;
+    if (!row || !row.parentElement) return null;
+    let box = [...row.parentElement.children].find((e) => e.classList?.contains('rf-badges'));
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'rf-badges';
+      box.style.cssText = 'display:flex;flex-wrap:wrap;gap:2px 3px;margin-top:1px;';
+      row.after(box);
+    }
+    return box;
+  }
+
   function updateWeekBadges(per) {
     if (!per || isPrintPage) return; // 印刷画面にはバッジを出さない（紙に載せない）
     for (const nameEl of document.querySelectorAll('.user-cell .name')) {
       const nm = (nameEl.textContent || '').replace(/\s+/g, '');
       const st = per[nm];
-      let b = nameEl.parentElement?.querySelector('.rf-week-badge');
+      const box = badgeBox(nameEl);
+      if (!box) continue;
+      let b = box.querySelector('.rf-week-badge');
       if (!st) { b?.remove(); continue; }
       if (!b) {
         b = document.createElement('span');
         b.className = 'rf-week-badge';
-        b.style.cssText = 'margin-left:4px;font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+        b.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#2c6e49;background:#eef4f0;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
-        nameEl.after(b);
+        box.appendChild(b);
       }
       b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h`;
       b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）`;
