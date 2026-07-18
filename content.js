@@ -6,13 +6,14 @@
   'use strict';
 
   // ===== 設定 =====
-  const SHEET_ID = '1nP4a6MdEbGJAxvUfYZHtfXn-1EAA7oIwSvFdFa0GMXE';
+  // LE/REQ のデータ元 = SLS/LBR LE Maker (apps/KyakusuYosoku)。data.json+params.jsonを
+  // 取得し engine.js の computeDay で計算する（旧: スプシ「時間帯別客数予測 v2」）
   const TASK_SHEET_ID = '1Np93smWUpSheCj1aKu9ZGmoOLQRJ1XALy02YxfGp9lw'; // 月次タスク一覧
   const TASK_SHEET_GID = 0;
   const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
   const HOURS = Array.from({ length: 18 }, (_, i) => i + 6); // 6:00 - 23:00
 
-  // シート側の行ラベル (G列) → パネルの列。表示したい項目はここを編集
+  // パネルの時間帯行（keyはcomputeDay出力の行ラベル）
   const HOURLY_COLS = [
     { rowLabel: 'LE',        head: 'LE',     cls: 'le' },
     { rowLabel: 'REQ（F）',   head: 'REQ F',  cls: '' },
@@ -36,11 +37,8 @@
     if (['MGT', 'TRer', 'TRee'].includes(name)) return isRegular ? 'MGT' : 'cMGT';
     return null;
   };
-  // ヘッダー統計 (シート上部: ラベルG列 / 値J列)
+  // パネル上部の統計チップ
   const HEADER_LABELS = ['LABOR%', 'LABOR H', 'SALES', 'SBP'];
-
-  // シートのCSVでの列位置: G列=index6 がラベル、6:00の値=index7 … 23:00=index24、合計=index26、ヘッダー値=index9
-  const COL_LABEL = 6, COL_HOUR0 = 7, COL_TOTAL = 26, COL_HEADER_VAL = 9;
 
   const CONFIRM_POLL_MS = 5 * 60 * 1000; // 未確定チェックの間隔
   const URL_WATCH_MS = 1500;
@@ -53,7 +51,6 @@
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
     return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
   };
-  const sheetNameFor = (d) => `${pad2(d.getMonth() + 1)}${pad2(d.getDate())} (${WEEKDAYS[d.getDay()]})`;
 
   function parseCSV(text) {
     const rows = [];
@@ -95,41 +92,54 @@
     $('#unconfirmed').innerHTML = '';
   }
 
-  function fetchSheet(date) {
-    const sheetName = sheetNameFor(date);
-    return new Promise((resolve) => {
-      if (!alive()) return resolve({ error: '拡張更新済み・要ページ再読込', sheetName });
-      try {
-        chrome.runtime.sendMessage({ type: 'fetchSheetCsv', sheetId: SHEET_ID, sheetName }, (res) => {
-          if (chrome.runtime.lastError || !res) {
-            resolve({ error: chrome.runtime.lastError?.message || '応答なし', sheetName });
-          } else if (!res.ok || !res.text || res.text.trim().startsWith('<')) {
-            // ログイン切れ or シートなし → HTMLが返る
-            resolve({ error: `シート取得失敗 (${res.status ?? res.error})`, sheetName });
-          } else {
-            resolve({ rows: parseCSV(res.text), sheetName });
-          }
-        });
-      } catch {
-        resolve({ error: '拡張更新済み・要ページ再読込', sheetName });
-      }
-    });
+  // SLS/LBR LE Maker から data.json / params.json を取得（セッション内キャッシュ）
+  let leMakerCache = null;
+  const leMakerGet = (path) => new Promise((resolve) => {
+    if (!alive()) return resolve(null);
+    try {
+      chrome.runtime.sendMessage({ type: 'leMaker', path }, (r) => resolve(r || null));
+    } catch { resolve(null); }
+  });
+  async function loadLEMaker() {
+    if (leMakerCache) return leMakerCache;
+    const [d, p] = await Promise.all([leMakerGet('/data.json'), leMakerGet('/params.json')]);
+    if (!d || !d.ok || !d.text) throw new Error(d?.error || 'LE Makerに接続不可');
+    leMakerCache = { data: JSON.parse(d.text), params: p && p.ok && p.text ? JSON.parse(p.text) : {} };
+    return leMakerCache;
   }
 
-  function extractSheetData(rows) {
-    const header = {};
-    for (const r of rows.slice(0, 6)) {
-      const label = (r[COL_LABEL] || '').trim();
-      if (HEADER_LABELS.includes(label)) header[label] = (r[COL_HEADER_VAL] || '').trim();
-    }
-    const hourly = {};
-    for (const col of HOURLY_COLS) {
-      const r = rows.find((row) => (row[COL_LABEL] || '').trim() === col.rowLabel);
-      hourly[col.rowLabel] = r
-        ? { hours: HOURS.map((h) => (r[COL_HOUR0 + (h - 6)] || '').trim()), total: (r[COL_TOTAL] || '').trim() }
-        : null;
-    }
-    return { header, hourly };
+  // computeDay の出力を、旧extractSheetData互換の {header, hourly} に変換
+  function fetchSheet(date) {
+    const label = `${date.getMonth() + 1}/${date.getDate()}`;
+    return loadLEMaker().then(({ data, params }) => {
+      const eng = globalThis.__leEngine;
+      if (!eng) return { error: 'engine未読込・要ページ再読込', sheetName: label };
+      const iso = ymd(date);
+      const serial = String(eng.isoToSerial(iso));
+      if (!data.dates || !(serial in data.dates)) {
+        return { error: 'LE Maker範囲外の日付', sheetName: label };
+      }
+      const r = eng.computeDay(data, params, iso);
+      const R = r.rows, S = r.summary;
+      // LE: 0も「0」表示（整数丸め）。REQ: 0は空欄（旧シート挙動）
+      const leArr = HOURS.map((h, i) => String(Math.round(R.le[i] || 0)));
+      const reqArr = (a) => HOURS.map((h, i) => (a[i] ? String(Math.round(a[i] * 10) / 10) : ''));
+      const sumStr = (a) => String(Math.round(a.reduce((x, y) => x + y, 0)));
+      const hourly = {
+        'LE': { hours: leArr, total: String(Math.round(S.leSum)) },
+        'REQ（F）': { hours: reqArr(R.reqF), total: sumStr(R.reqF) },
+        'REQ（K）': { hours: reqArr(R.reqK), total: sumStr(R.reqK) },
+        'REQ（FK）': { hours: reqArr(R.reqFK), total: sumStr(R.reqFK) },
+        'REQ（SUM）': { hours: reqArr(R.reqSum), total: sumStr(R.reqSum) },
+      };
+      const header = {
+        'LABOR%': `${(S.laborPct * 100).toFixed(1)}%`,
+        'LABOR H': String(Math.round(S.totalH)),
+        'SALES': String(Math.round(S.salesSum)),
+        'SBP': String(Math.round(S.sbp)),
+      };
+      return { header, hourly, sheetName: label, isAct: r.act };
+    }).catch((e) => ({ error: String(e.message || e), sheetName: label }));
   }
 
   // ===== らくしふ実シフト → 時間帯別実人数 =====
@@ -491,7 +501,9 @@
 
   // 対象日はらくしふ画面(URLのfrom=)に完全追従（独自の日付移動は廃止）
   $('#reload').addEventListener('click', () => {
-    taskRowsCache = null; // タスクシートも再取得
+    taskRowsCache = null;   // タスクシートも再取得
+    leMakerCache = null;    // LE Maker のdata/paramsも取り直す
+    storeTaskMapCache = null;
     renderSheet();
     renderUnconfirmed();
   });
@@ -1044,12 +1056,12 @@
     ]);
     if (res.error) {
       $('#stats').innerHTML = `<span class="err">${res.error}: ${res.sheetName}</span>`;
-      renderTasks(); // 日付シートが無い日でもタスク欄は独立して更新する
+      renderTasks(); // 取得不可でもタスク欄は独立して更新する
       updateStrips(null);
       updateLERows(null);
       return;
     }
-    const { header, hourly } = extractSheetData(res.rows);
+    const { header, hourly } = res;
 
     $('#stats').innerHTML = HEADER_LABELS
       .map((l) => `<span class="chip">${l} <b>${header[l] || '-'}</b></span>`)

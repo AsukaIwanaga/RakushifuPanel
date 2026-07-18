@@ -3,8 +3,16 @@
 // WorkLogWebサーバ (Tailscaleアドレス限定バインド) への中継。
 // content script からは mixed content で直接叩けないため SW 経由にする。
 const SHIFT_API_BASE = 'http://100.103.183.30:8765';
+// SLS/LBR LE Maker (apps/KyakusuYosoku・LE/REQのデータ元)。同Mac常駐 0.0.0.0:8788。
+const LEMAKER_BASE = 'http://127.0.0.1:8788';
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'leMaker') {
+    fetch(LEMAKER_BASE + msg.path)
+      .then((r) => r.text().then((text) => sendResponse({ ok: r.ok, status: r.status, text })))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
   if (msg.type === 'shiftApi') {
     fetch(SHIFT_API_BASE + msg.path, msg.payload
       ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(msg.payload) }

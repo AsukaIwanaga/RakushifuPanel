@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "らくしふ 客数予測パネル",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "description": "らくしふ編集画面に時間帯別客数予測シート（LE/REQ/LABOR%）・当日の月次タスクを表示し、シフト未確定日を監視する",
   "host_permissions": [
     "https://docs.google.com/*",
     "https://sken-rakushifu-mg.go.akamai-access.com/*",
-    "http://100.103.183.30:8765/*"
+    "http://100.103.183.30:8765/*",
+    "http://127.0.0.1:8788/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -14,7 +15,7 @@
   "content_scripts": [
     {
       "matches": ["https://sken-rakushifu-mg.go.akamai-access.com/admin/v2/schedules*"],
-      "js": ["content.js"],
+      "js": ["engine.js", "content.js"],
       "run_at": "document_idle"
     },
     {
