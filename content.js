@@ -24,6 +24,16 @@
   // 17=社員(REGULAR)・4=未使用 はクルーREQの比較対象外）
   const GENRES_F = [2];
   const GENRES_K = [3];
+  // 正社員（この人のMGT/TRer/TRee時間は MGT H、その他の人のは CREW MGT H に計上）
+  const REGULAR_STAFF = ['岩永飛鳥'];
+  // 業務割振タスク名 → カウント先。F/K/FK=振替、BU系=キッチン扱い、
+  // MGT/TRer/TRee=OP Hに数えず MGT系へ（正社員→MGT、その他→cMGT）
+  const moveGroup = (name, isRegular) => {
+    if (name === 'F' || name === 'K' || name === 'FK') return name;
+    if (/^BU/.test(name || '')) return 'K';
+    if (['MGT', 'TRer', 'TRee'].includes(name)) return isRegular ? 'MGT' : 'cMGT';
+    return null;
+  };
   // ヘッダー統計 (シート上部: ラベルG列 / 値J列)
   const HEADER_LABELS = ['LABOR%', 'LABOR H', 'SALES', 'SBP'];
 
@@ -172,46 +182,54 @@
     };
 
     const zero = () => HOURS.map(() => 0);
-    const act = { F: zero(), K: zero(), FK: zero(), total: zero() };
-    // 重複対策（らくしふ上で黄色ベース表示になるケース）: 先に登録された方＝本来として先勝ちで数え、
-    // 同一人物は1時間あたり最大1.0人。タスク重複区間も二重カウントしない。
+    const act = { F: zero(), K: zero(), FK: zero(), MGT: zero(), cMGT: zero(), total: zero() };
+    // 正社員判定（MGT/TRer/TRee の計上先の振り分けに使用）
+    const regularIds = new Set((j.users || [])
+      .filter((u) => REGULAR_STAFF.includes((u.name || '').replace(/\s+/g, '')))
+      .map((u) => u.id));
+    const dateStr = ymd(date);
+    // 重複対策: APIは前後日のシフトも返すため対象日でフィルタ（必須）。
+    // 万一の真の重複登録にも、同一人物1時間=最大1.0人の上限で保険。
     const userHour = {}; // user_id -> 時間帯ごとの計上済み人時
     const shifts = (j.instructed || [])
-      .filter((sh) => !sh.off && !sh.is_deleted && String(sh.attending_store_id) === String(storeId))
+      .filter((sh) => sh.date === dateStr && !sh.off && !sh.is_deleted &&
+                      String(sh.attending_store_id) === String(storeId))
       .sort((a, b) => a.user_id - b.user_id || a.id - b.id);
     for (const sh of shifts) {
       const g = sh.attending_genre_id;
       const grp = GENRES_F.includes(g) ? 'F' : GENRES_K.includes(g) ? 'K' : null;
-      if (!grp) continue; // 社員(REGULAR)等はクルーREQ比較の対象外
+      if (!grp) continue; // 社員(REGULAR)のgenre等はクルーREQ比較の対象外
 
-      // F/K/FK 振替タスク区間（シフト範囲にクリップ・開始順で先勝ち）
+      // 振替タスク区間（シフト範囲にクリップ・開始順で先勝ち）
+      const isReg = regularIds.has(sh.user_id);
       const moves = (sh.instructed_schedule_store_tasks || [])
-        .map((t) => ({ name: taskMap[t.store_task_id], id: t.id,
+        .map((t) => ({ grp: moveGroup(taskMap[t.store_task_id], isReg), id: t.id,
                        s: Math.max(t.start_time_as_min, sh.start_as_min),
                        e: Math.min(t.end_time_as_min, sh.end_as_min) }))
-        .filter((t) => ['F', 'K', 'FK'].includes(t.name) && t.e > t.s)
+        .filter((t) => t.grp && t.e > t.s)
         .sort((a, b) => a.s - b.s || a.id - b.id);
 
       const uh = (userHour[sh.user_id] ||= HOURS.map(() => 0));
       HOURS.forEach((h, i) => {
         let total = net(sh, sh.start_as_min, sh.end_as_min, h);
-        total = Math.min(total, Math.max(0, 1 - uh[i])); // シフト重複: 1人1時間まで
+        total = Math.min(total, Math.max(0, 1 - uh[i])); // 重複登録時: 1人1時間まで
         if (total === 0) return;
         uh[i] += total;
-        let moved = 0;
+        let alloc = 0, mgt = 0;
         for (const mv of moves) {
-          const m = Math.min(net(sh, mv.s, mv.e, h), total - moved); // タスク重複: 先勝ち
+          const m = Math.min(net(sh, mv.s, mv.e, h), total - alloc); // タスク重複: 先勝ち
           if (m <= 0) continue;
-          act[mv.name][i] += m;
-          moved += m;
+          act[mv.grp][i] += m;
+          alloc += m;
+          if (mv.grp === 'MGT' || mv.grp === 'cMGT') mgt += m;
         }
-        act[grp][i] += Math.max(0, total - moved); // 振替以外は所属グループ
-        act.total[i] += total;
+        act[grp][i] += Math.max(0, total - alloc); // 振替以外は所属グループ
+        act.total[i] += total - mgt;               // 実計(OP H)はMGT系を除く
       });
     }
     const r1 = (v) => Math.round(v * 10) / 10;
     act.sum = {};
-    for (const k of ['F', 'K', 'FK', 'total']) {
+    for (const k of ['F', 'K', 'FK', 'MGT', 'cMGT', 'total']) {
       act.sum[k] = r1(act[k].reduce((a, b) => a + b, 0));
       act[k] = act[k].map(r1);
     }
@@ -348,10 +366,12 @@
       tr.act td { color: #6b21a8; }
       tr.act td.row-head { color: #6b21a8; }
       tr.act td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
+      tr.mgt td, tr.mgt td.row-head { color: #999; font-weight: 400; }
       tr.diff td { border-top: 2px solid #999; color: #999; }
       tr.diff td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
       th.short-mark { background: #d64545; color: #fff; }
       .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 12px; }
+      .section-title.fold { cursor: pointer; user-select: none; }
       .unconfirmed { display: flex; flex-wrap: wrap; gap: 4px; }
       .unconfirmed .day {
         background: #fdecec; color: #b02a2a; border: 1px solid #e8b4b4;
@@ -381,7 +401,7 @@
       </div>
       <div id="stats" class="stats"></div>
       <div id="tableWrap"></div>
-      <div class="section-title">タスク 月次/週次/要請（<span id="taskDate">-</span>）</div>
+      <div class="section-title fold" id="tasksTitle"><span id="taskFold">▾</span> タスク 月次/週次/要請（<span id="taskDate">-</span>）</div>
       <div id="tasks" class="tasks muted">読込中…</div>
       <div class="section-title">シフト確定 未処理日（今日〜月末）</div>
       <div id="unconfirmed" class="unconfirmed muted">確認中…</div>
@@ -407,6 +427,19 @@
     renderSheet();
     renderUnconfirmed();
   });
+
+  // タスクセクションの折りたたみ（タイトルクリックで開閉・状態は記憶）
+  function applyTasksFold() {
+    const hidden = localStorage.getItem('rfTasksHidden') === '1';
+    $('#tasks').style.display = hidden ? 'none' : '';
+    $('#taskFold').textContent = hidden ? '▸' : '▾';
+  }
+  $('#tasksTitle').addEventListener('click', () => {
+    const hidden = localStorage.getItem('rfTasksHidden') === '1';
+    localStorage.setItem('rfTasksHidden', hidden ? '0' : '1');
+    applyTasksFold();
+  });
+  applyTasksFold();
 
   // タスクの完了トグル（チェック＝取り消し線、再チェックで復活）
   $('#tasks').addEventListener('change', (ev) => {
@@ -486,7 +519,10 @@
         actRow(actual.F, reqF, '実F', actual.sum.F, ' act-first') +
         actRow(actual.K, reqK, '実K', actual.sum.K) +
         actRow(actual.FK, hourly['REQ（FK）'], '実FK', actual.sum.FK) +
-        actRow(actual.total, req, '実計', actual.sum.total);
+        actRow(actual.total, req, '実計', actual.sum.total) +
+        // MGT系はOP H外の参考表示（実計・不足には入らない）
+        (actual.sum.MGT > 0 ? actRow(actual.MGT, null, 'MGT', actual.sum.MGT, ' mgt') : '') +
+        (actual.sum.cMGT > 0 ? actRow(actual.cMGT, null, 'cMGT', actual.sum.cMGT, ' mgt') : '');
 
       if (diffs) {
         const cells = HOURS.map((h, i) => {
