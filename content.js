@@ -152,25 +152,35 @@
 
     const zero = () => HOURS.map(() => 0);
     const act = { F: zero(), K: zero(), FK: zero(), total: zero() };
-    for (const sh of j.instructed || []) {
-      if (sh.off || sh.is_deleted) continue;
-      if (String(sh.attending_store_id) !== String(storeId)) continue; // 他店ヘルプ出勤は除外
+    // 重複対策（らくしふ上で黄色ベース表示になるケース）: 先に登録された方＝本来として先勝ちで数え、
+    // 同一人物は1時間あたり最大1.0人。タスク重複区間も二重カウントしない。
+    const userHour = {}; // user_id -> 時間帯ごとの計上済み人時
+    const shifts = (j.instructed || [])
+      .filter((sh) => !sh.off && !sh.is_deleted && String(sh.attending_store_id) === String(storeId))
+      .sort((a, b) => a.user_id - b.user_id || a.id - b.id);
+    for (const sh of shifts) {
       const g = sh.attending_genre_id;
       const grp = GENRES_F.includes(g) ? 'F' : GENRES_K.includes(g) ? 'K' : null;
       if (!grp) continue; // 社員(REGULAR)等はクルーREQ比較の対象外
 
-      // F/K/FK 振替タスク区間（シフト範囲にクリップ）
+      // F/K/FK 振替タスク区間（シフト範囲にクリップ・開始順で先勝ち）
       const moves = (sh.instructed_schedule_store_tasks || [])
-        .map((t) => ({ name: taskMap[t.store_task_id], s: Math.max(t.start_time_as_min, sh.start_as_min),
+        .map((t) => ({ name: taskMap[t.store_task_id], id: t.id,
+                       s: Math.max(t.start_time_as_min, sh.start_as_min),
                        e: Math.min(t.end_time_as_min, sh.end_as_min) }))
-        .filter((t) => ['F', 'K', 'FK'].includes(t.name) && t.e > t.s);
+        .filter((t) => ['F', 'K', 'FK'].includes(t.name) && t.e > t.s)
+        .sort((a, b) => a.s - b.s || a.id - b.id);
 
+      const uh = (userHour[sh.user_id] ||= HOURS.map(() => 0));
       HOURS.forEach((h, i) => {
-        const total = net(sh, sh.start_as_min, sh.end_as_min, h);
+        let total = net(sh, sh.start_as_min, sh.end_as_min, h);
+        total = Math.min(total, Math.max(0, 1 - uh[i])); // シフト重複: 1人1時間まで
         if (total === 0) return;
+        uh[i] += total;
         let moved = 0;
         for (const mv of moves) {
-          const m = net(sh, mv.s, mv.e, h);
+          const m = Math.min(net(sh, mv.s, mv.e, h), total - moved); // タスク重複: 先勝ち
+          if (m <= 0) continue;
           act[mv.name][i] += m;
           moved += m;
         }
