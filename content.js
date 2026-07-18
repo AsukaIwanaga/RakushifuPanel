@@ -43,6 +43,8 @@
   const GENRES_K = csvInts(cfg.genresK);
   // 正社員（この人のMGT/TRer/TRee時間は MGT H、その他の人のは CREW MGT H に計上）
   const REGULAR_STAFF = csvNames(cfg.regularStaff);
+  // 過剰人員の警告しきい値（これ以上のプラスは人件費浪費としてオレンジ表示）
+  const SURPLUS_WARN = 2;
   // 業務割振タスク名 → カウント先。F/K/FK=振替、BU系=キッチン扱い、
   // MGT/TRer/TRee=OP Hに数えず MGT系へ（正社員→MGT、その他→cMGT）
   const moveGroup = (name, isRegular) => {
@@ -387,6 +389,7 @@
       tr.mgt td, tr.mgt td.row-head { color: #999; font-weight: 400; }
       tr.diff td { border-top: 2px solid #999; color: #999; }
       tr.diff td.short { background: #fdecec; color: #b02a2a; font-weight: 700; }
+      tr.diff td.over { background: #fdf3e3; color: #b06d00; font-weight: 700; }
       th.short-mark { background: #d64545; color: #fff; }
       .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 12px; }
       .section-title.fold { cursor: pointer; user-select: none; }
@@ -520,42 +523,88 @@
     }
   }
 
-  // ===== らくしふ画面上の不足ヒートバー =====
-  // OneDay表示の時間軸ヘッダー(.time-header)直下に、時間帯別の 実計−REQ計 を行として差し込む。
+  // ===== らくしふ画面上の不足ヒートバー（フロア/キッチン別） =====
+  // 各セクションの時間軸ヘッダー(.time-header)直下に、そのセクションの 実−REQ を行として差し込む。
+  // フロアセクション=F、キッチンセクション=K。不足=赤、SURPLUS_WARN以上のプラス=オレンジ(浪費警告)。
   // 表示中の日とパネルの対象日が一致するOneDayのときだけ出す。
-  function updateStrip(diffs, tipFor) {
-    const old = document.getElementById('rf-heat-strip');
+  let lastStrip = null; // {catDiffs, tip} Vue再描画後の張り直し用
+  let lastLE = null;
+  const onOneDayTarget = () => {
     const p = new URLSearchParams(location.search);
-    const header = document.querySelector('.time-header');
     const fromD = parseYmd(p.get('from') || '');
-    const show = header && p.get('u') === 'OneDay' && diffs &&
-      fromD && ymd(fromD) === ymd(targetDate);
-    if (!show) { old?.remove(); return; }
-    const strip = old || document.createElement('div');
-    strip.id = 'rf-heat-strip';
-    strip.innerHTML = '';
-    strip.style.cssText =
-      'display:flex;height:16px;font:700 10px/16px -apple-system,"Hiragino Sans",sans-serif;text-align:center;';
-    for (const c of header.children) {
-      const t = (c.textContent || '').trim();
-      const h = /^\d{1,2}$/.test(t) ? +t : null;
-      const i = h !== null ? HOURS.indexOf(h) : -1;
-      const cell = document.createElement('div');
-      cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
-      const d = i >= 0 ? diffs[i] : undefined;
-      if (d !== undefined && d !== null) {
-        if (d < 0) {
-          cell.textContent = d;
-          cell.style.cssText += 'background:#d64545;color:#fff;border-radius:3px;';
-        } else {
-          cell.textContent = d > 0 ? `+${d}` : '0';
-          cell.style.cssText += 'color:#9aa8b5;';
+    return p.get('u') === 'OneDay' && fromD && ymd(fromD) === ymd(targetDate);
+  };
+
+  function updateStrips(catDiffs, tipFor) {
+    document.querySelectorAll('.rf-heat-strip').forEach((e) => e.remove());
+    lastStrip = catDiffs ? { catDiffs, tip: tipFor } : null;
+    if (!catDiffs || !onOneDayTarget()) return;
+    // セクション見出し(フロア/キッチン)→ 直後の time-header を対応付け
+    const titles = [...document.querySelectorAll('*')]
+      .filter((e) => e.children.length === 0 && /^(フロア|キッチン)$/.test((e.textContent || '').trim()));
+    const headers = [...document.querySelectorAll('.time-header')];
+    const used = new Set();
+    for (const t of titles) {
+      const cat = t.textContent.trim() === 'フロア' ? 'F' : 'K';
+      const header = headers.find((hd) => !used.has(hd) &&
+        (t.compareDocumentPosition(hd) & Node.DOCUMENT_POSITION_FOLLOWING));
+      if (!header || !catDiffs[cat]) continue;
+      used.add(header);
+      const strip = document.createElement('div');
+      strip.className = 'rf-heat-strip';
+      strip.style.cssText =
+        'display:flex;height:16px;font:700 10px/16px -apple-system,"Hiragino Sans",sans-serif;text-align:center;';
+      for (const c of header.children) {
+        const txt = (c.textContent || '').trim();
+        const h = /^\d{1,2}$/.test(txt) ? +txt : null;
+        const i = h !== null ? HOURS.indexOf(h) : -1;
+        const cell = document.createElement('div');
+        cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
+        const d = i >= 0 ? catDiffs[cat][i] : undefined;
+        if (d !== undefined && d !== null) {
+          if (d < 0) {
+            cell.textContent = d;
+            cell.style.cssText += 'background:#d64545;color:#fff;border-radius:3px;';
+          } else if (d >= SURPLUS_WARN) {
+            cell.textContent = `+${d}`;
+            cell.style.cssText += 'background:#e8940c;color:#fff;border-radius:3px;';
+          } else {
+            cell.textContent = d > 0 ? `+${d}` : '0';
+            cell.style.cssText += 'color:#9aa8b5;';
+          }
+          if (tipFor) cell.title = tipFor(i);
         }
-        if (tipFor) cell.title = tipFor(i);
+        strip.appendChild(cell);
       }
-      strip.appendChild(cell);
+      header.after(strip);
     }
-    if (!old || !old.isConnected) header.after(strip);
+  }
+
+  // ===== 前年客数・修正客数の下に LE客数 行を注入 =====
+  function updateLERows(le) {
+    document.querySelectorAll('.rf-le-row').forEach((e) => e.remove());
+    lastLE = le || null;
+    if (!le || !onOneDayTarget()) return;
+    const labels = [...document.querySelectorAll('th.metrics-row-header')]
+      .filter((th) => (th.textContent || '').includes('修正客数'));
+    for (const th of labels) {
+      const tr = th.closest('tr');
+      if (!tr) continue;
+      const clone = tr.cloneNode(true);
+      clone.classList.add('rf-le-row');
+      const cth = clone.querySelector('th.metrics-row-header');
+      if (cth) cth.innerHTML = `<span style="font-weight:700;color:#1a5fb4;">LE客数 (合計: ${le.total || '-'})</span>`;
+      // 時刻6..24の19セルが並ぶコンテナを探して値を差し替え
+      const rowCells = [...clone.querySelectorAll('*')].find((e) => e.children.length === 19);
+      if (rowCells) {
+        [...rowCells.children].forEach((cell, idx) => {
+          cell.textContent = idx < HOURS.length ? (le.hours[idx] || '') : '';
+          cell.style.color = '#1a5fb4';
+          cell.style.fontWeight = '700';
+        });
+      }
+      tr.after(clone);
+    }
   }
 
   // ページ本体のシフト保存(page_hook.jsが検知)→少し待って再計算
@@ -596,7 +645,8 @@
     if (res.error) {
       $('#stats').innerHTML = `<span class="err">${res.error}: ${res.sheetName}</span>`;
       renderTasks(); // 日付シートが無い日でもタスク欄は独立して更新する
-      updateStrip(null);
+      updateStrips(null);
+      updateLERows(null);
       return;
     }
     const { header, hourly } = extractSheetData(res.rows);
@@ -663,7 +713,8 @@
           const d = diffs[i];
           if (d === null) return `<td class="${nowCls(h)}"></td>`;
           const txt = d < 0 ? d : (d > 0 ? `+${d}` : '±0');
-          return `<td class="${nowCls(h)}${d < 0 ? ' short' : ''}">${txt}</td>`;
+          const cls = d < 0 ? ' short' : (d >= SURPLUS_WARN ? ' over' : '');
+          return `<td class="${nowCls(h)}${cls}">${txt}</td>`;
         }).join('');
         const totalD = Math.round((actual.sum.total - num(req?.total)) * 10) / 10;
         diffRow = `<tr class="diff"><td class="row-head">不足</td>${cells}` +
@@ -673,9 +724,22 @@
 
     $('#tableWrap').innerHTML = `<table>${headRow}${bodyRows}${actualRows}${diffRow}</table>` +
       (actual?.error ? `<div class="err">実人数取得失敗: ${actual.error}</div>` : '');
-    updateStrip(diffs, (i) =>
-      `${HOURS[i]}時: 実${actual?.total?.[i] ?? '-'} / REQ${(req?.hours?.[i] || '0')}` +
-      ` (F ${actual?.F?.[i] ?? '-'}/${reqF?.hours?.[i] || '0'}, K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'})`);
+    // 画面上のヒートバー: F/K別の差分（FKと計はツールチップで見せる）
+    const reqFK = hourly['REQ（FK）'];
+    const mkDiff = (arr, reqRow) => (hasActual && arr) ? HOURS.map((h, i) => {
+      if (!reqRow?.hours?.[i] && !arr[i]) return null;
+      return Math.round((arr[i] - num(reqRow?.hours?.[i])) * 10) / 10;
+    }) : null;
+    const catDiffs = hasActual ? {
+      F: mkDiff(actual.F, reqF), K: mkDiff(actual.K, reqK), FK: mkDiff(actual.FK, reqFK),
+    } : null;
+    const tip = (i) =>
+      `${HOURS[i]}時  F ${actual?.F?.[i] ?? '-'}/${reqF?.hours?.[i] || '0'}` +
+      ` ・ K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'}` +
+      ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
+      ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/REQ)`;
+    updateStrips(catDiffs, tip);
+    updateLERows(hourly['LE']);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
     fetchWeekStats(targetDate)
       .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
@@ -751,8 +815,10 @@
   // URL変化 (日付移動・ビュー切替) を監視してパネルの対象日を追従
   timers.push(setInterval(() => {
     if (!alive()) return contextLost();
-    // Vueの再描画でバッジが消えた場合の張り直し（軽量）
+    // Vueの再描画でバッジ/バー/LE行が消えた場合の張り直し（軽量）
     if (lastWeekStats) updateWeekBadges(lastWeekStats);
+    if (lastStrip && !document.querySelector('.rf-heat-strip')) updateStrips(lastStrip.catDiffs, lastStrip.tip);
+    if (lastLE && !document.querySelector('.rf-le-row')) updateLERows(lastLE);
     if (location.href === lastHref) return;
     lastHref = location.href;
     const d = parseYmd(urlParams().from || '');
