@@ -347,38 +347,39 @@
       }
       #shiftPanel {
         position: fixed; right: 62px; top: 64px; z-index: 2147483647;
-        width: 430px; max-width: calc(100vw - 24px);
+        width: 490px; max-width: calc(100vw - 24px);
         max-height: calc(100vh - 80px); overflow-y: auto;
         background: #fff; border: 1px solid #ccc; border-radius: 10px;
-        box-shadow: 0 4px 20px rgba(0,0,0,.25); padding: 10px; display: none;
-        font-size: 13px; color: #222;
+        box-shadow: 0 4px 20px rgba(0,0,0,.25); padding: 12px; display: none;
+        font-size: 15px; color: #222;
       }
       #shiftPanel.open { display: block; }
-      .sc-head { display: flex; gap: 5px; align-items: center; margin-bottom: 8px; }
-      .sc-head b { flex: 1; font-size: 14px; }
+      .sc-head { display: flex; gap: 5px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+      .sc-head b { flex: 1; font-size: 16px; }
       .sc-head button {
         border: 1px solid #ccc; background: #f5f5f5; border-radius: 5px;
-        cursor: pointer; padding: 3px 9px; font-size: 12px;
+        cursor: pointer; padding: 4px 10px; font-size: 14px;
       }
       .sc-head button.on { background: #6b46a8; color: #fff; border-color: #6b46a8; }
-      .sc-card { border: 1px solid #e2e2e2; border-radius: 8px; padding: 6px 9px; margin-bottom: 7px; }
+      .sc-card { border: 1px solid #e2e2e2; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
       .sc-card.done { opacity: .55; }
-      .sc-title { font-weight: 700; }
+      .sc-title { font-weight: 700; font-size: 15px; }
       .sc-title .undone { color: #b02a2a; }
-      .sc-meta { color: #888; font-size: 11px; font-weight: 400; }
-      .sc-checks { display: flex; flex-wrap: wrap; gap: 3px 12px; margin: 5px 0; }
-      .sc-checks label { font-size: 12px; display: flex; gap: 4px; align-items: center; cursor: pointer; }
-      .sc-notes { color: #777; font-size: 11px; margin: 3px 0; }
-      .sc-note-input { display: flex; gap: 4px; margin-top: 3px; }
-      .sc-note-input input { flex: 1; border: 1px solid #ccc; border-radius: 4px; padding: 3px 7px; font-size: 12px; }
+      .sc-meta { color: #888; font-size: 13px; font-weight: 400; }
+      .sc-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0; }
+      .sc-checks label { font-size: 14px; display: flex; gap: 5px; align-items: center; cursor: pointer; }
+      .sc-checks input { width: 15px; height: 15px; }
+      .sc-notes { color: #777; font-size: 13px; margin: 3px 0; }
+      .sc-note-input { display: flex; gap: 4px; margin-top: 4px; }
+      .sc-note-input input { flex: 1; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; font-size: 14px; }
       .sc-note-input button, #scNewForm button {
         border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer;
-        padding: 2px 9px; font-size: 12px;
+        padding: 3px 10px; font-size: 14px;
       }
       #scNewForm { border: 1px dashed #b9a3dd; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
       #scNewForm input, #scNewForm select {
-        width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 3px 7px;
-        font-size: 12px; margin-bottom: 4px; background: #fff;
+        width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px;
+        font-size: 14px; margin-bottom: 4px; background: #fff;
       }
       @media print { #shiftToggle, #shiftPanel { display: none !important; } }
       #panel {
@@ -444,6 +445,7 @@
       <div class="sc-head">
         <b>シフト変更依頼</b>
         <button id="scFilterOpen" class="on">未完了</button>
+        <button id="scFilterDay">この日</button>
         <button id="scFilterAll">すべて</button>
         <button id="scNewBtn">＋新規</button>
         <button id="scReload">更新</button>
@@ -508,8 +510,16 @@
   });
 
   const shiftPanel = $('#shiftPanel');
-  let scShowAll = false;
+  let scFilter = 'open'; // 'open' | 'day' | 'all'
   let scState = null;
+
+  // 案件の対象日 (例 "7/23", "07-23") が指定日と一致するか
+  const scMatchesDay = (c, d) => {
+    const m = /(\d{1,2})\s*[\/月\-]\s*(\d{1,2})/.exec(c.target_date || '');
+    return !!m && +m[1] === d.getMonth() + 1 && +m[2] === d.getDate();
+  };
+  // 名前の正規化（空白と敬称を除いて突き合わせ）
+  const normName = (s) => String(s || '').replace(/\s+/g, '').replace(/(さん|くん|ちゃん)$/, '');
 
   function scCard(c) {
     const checks = SC_CHECKS.map(([k, lbl]) =>
@@ -530,21 +540,62 @@
     </div>`;
   }
 
-  async function scRefresh() {
+  function scRenderList() {
     const el = $('#scList');
+    if (!scState) return;
+    const cases = scState.cases || [];
+    const open = cases.filter((c) => !c.is_done);
+    $('#scFilterDay').textContent = `この日(${targetDate.getMonth() + 1}/${targetDate.getDate()})`;
+    const list = scFilter === 'all' ? cases
+      : scFilter === 'day' ? cases.filter((c) => scMatchesDay(c, targetDate))
+      : open;
+    el.innerHTML = list.map(scCard).join('') ||
+      `<span class="muted">${scFilter === 'day' ? 'この日の依頼なし' : '未完了なし 🎉'}</span>`;
+    const b = $('#shiftBadge');
+    b.textContent = open.length;
+    b.style.display = open.length ? 'block' : 'none';
+  }
+
+  async function scRefresh() {
     const r = await shiftApi('/api/shift/state');
     if (!r.ok) {
-      el.innerHTML = `<span class="err">サーバに繋がりません（${esc(r.error || r.data?.error || '')}）。` +
+      $('#scList').innerHTML =
+        `<span class="err">サーバに繋がりません（${esc(r.error || r.data?.error || '')}）。` +
         'Tailscale と WorkLogWeb の起動を確認</span>';
       return;
     }
     scState = r.data;
-    const open = (scState.cases || []).filter((c) => !c.is_done);
-    const list = scShowAll ? (scState.cases || []) : open;
-    el.innerHTML = list.map(scCard).join('') || '<span class="muted">未完了なし 🎉</span>';
-    const b = $('#shiftBadge');
-    b.textContent = open.length;
-    b.style.display = open.length ? 'block' : 'none';
+    scRenderList();
+    updateShiftMarks();
+  }
+
+  // ===== シフト表の名前横に変更依頼マーク（依頼中=赤 / 変更済=緑）。印刷画面には出さない =====
+  function updateShiftMarks() {
+    if (isPrintPage || !scState) return;
+    document.querySelectorAll('.rf-sc-mark').forEach((e) => e.remove());
+    const cases = scState.cases || [];
+    for (const nameEl of document.querySelectorAll('.user-cell .name')) {
+      const nm = normName(nameEl.textContent);
+      if (!nm) continue;
+      // この人の案件: 表示日一致、または日付未記入の未完了案件
+      const rel = cases.filter((c) => normName(c.target) === nm &&
+        (scMatchesDay(c, targetDate) || (!c.is_done && !(c.target_date || '').trim())));
+      if (!rel.length) continue;
+      const pending = rel.filter((c) => !c.is_done);
+      const mark = document.createElement('span');
+      mark.className = 'rf-sc-mark';
+      if (pending.length) {
+        mark.textContent = `🔄依頼${pending.length > 1 ? pending.length : ''}`;
+        mark.style.cssText = 'margin-left:4px;font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+          'color:#b02a2a;background:#fdecec;border:1px solid #e8b4b4;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
+      } else {
+        mark.textContent = '✔変更済';
+        mark.style.cssText = 'margin-left:4px;font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+          'color:#1e7a44;background:#e8f5ec;border:1px solid #b5d9c3;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
+      }
+      mark.title = rel.map((c) => `${c.is_done ? '✅' : '未了'} ${c.title}`).join('\n');
+      nameEl.after(mark);
+    }
   }
 
   function scBuildNewForm() {
@@ -569,16 +620,16 @@
   repositionShiftPanel();
 
   $('#scReload').addEventListener('click', scRefresh);
-  $('#scFilterOpen').addEventListener('click', () => {
-    scShowAll = false;
-    $('#scFilterOpen').classList.add('on'); $('#scFilterAll').classList.remove('on');
-    scRefresh();
-  });
-  $('#scFilterAll').addEventListener('click', () => {
-    scShowAll = true;
-    $('#scFilterAll').classList.add('on'); $('#scFilterOpen').classList.remove('on');
-    scRefresh();
-  });
+  const scSetFilter = (f) => {
+    scFilter = f;
+    $('#scFilterOpen').classList.toggle('on', f === 'open');
+    $('#scFilterDay').classList.toggle('on', f === 'day');
+    $('#scFilterAll').classList.toggle('on', f === 'all');
+    scRenderList();
+  };
+  $('#scFilterOpen').addEventListener('click', () => scSetFilter('open'));
+  $('#scFilterDay').addEventListener('click', () => scSetFilter('day'));
+  $('#scFilterAll').addEventListener('click', () => scSetFilter('all'));
   $('#scNewBtn').addEventListener('click', () => {
     const f = $('#scNewForm');
     const show = f.style.display === 'none';
@@ -1049,14 +1100,20 @@
   // URL変化 (日付移動・ビュー切替) を監視してパネルの対象日を追従
   timers.push(setInterval(() => {
     if (!alive()) return contextLost();
-    // Vueの再描画でバッジ/バー/LE行が消えた場合の張り直し（軽量）
+    // Vueの再描画でバッジ/バー/LE行/依頼マークが消えた場合の張り直し（軽量）
     if (lastWeekStats) updateWeekBadges(lastWeekStats);
     if (lastStrip && !document.querySelector('.rf-heat-strip')) updateStrips(lastStrip.catDiffs, lastStrip.tip);
     if (lastLE && !document.querySelector('.rf-le-row, .rf-le-row-p')) updateLERows(lastLE.le, lastLE.reqPack);
+    if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks();
     if (location.href === lastHref) return;
     lastHref = location.href;
     const d = parseYmd(urlParams().from || '');
-    if (d && ymd(d) !== ymd(targetDate)) { targetDate = d; renderSheet(); }
+    if (d && ymd(d) !== ymd(targetDate)) {
+      targetDate = d;
+      renderSheet();
+      scRenderList();      // 「この日」フィルタと依頼マークを新しい日付へ追従
+      updateShiftMarks();
+    }
   }, URL_WATCH_MS));
 
   // 過去のチェック機能(v1.5.x)が残したlocalStorageキーを掃除
