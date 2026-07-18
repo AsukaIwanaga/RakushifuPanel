@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "らくしふ 客数予測パネル",
+  "version": "1.0.0",
+  "description": "らくしふ編集画面に時間帯別客数予測シート（LE/REQ/LABOR%）を表示し、シフト未確定日を監視する",
+  "host_permissions": [
+    "https://docs.google.com/*",
+    "https://sken-rakushifu-mg.go.akamai-access.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://sken-rakushifu-mg.go.akamai-access.com/admin/v2/schedules*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
