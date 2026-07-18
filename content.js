@@ -588,7 +588,10 @@
       const mark = document.createElement('span');
       mark.className = 'rf-sc-mark';
       if (pending.length) {
-        mark.textContent = `🔄依頼${pending.length > 1 ? pending.length : ''}`;
+        // 進捗を反映: 1件なら チェック数/6、複数なら件数
+        mark.textContent = pending.length === 1
+          ? `🔄依頼 ${pending[0].checked_count}/6`
+          : `🔄依頼${pending.length}件`;
         mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#b02a2a;background:#fdecec;border:1px solid #e8b4b4;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
       } else {
@@ -596,7 +599,8 @@
         mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#1e7a44;background:#e8f5ec;border:1px solid #b5d9c3;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
       }
-      mark.title = rel.map((c) => `${c.is_done ? '✅' : '未了'} ${c.title}`).join('\n');
+      mark.title = rel.map((c) =>
+        `${c.is_done ? '✅' : `未了(${c.checked_count}/6)`} ${c.title}`).join('\n');
       box.appendChild(mark);
     }
   }
