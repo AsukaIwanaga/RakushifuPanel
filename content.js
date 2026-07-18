@@ -471,9 +471,18 @@
   let targetDate = parseYmd(urlParams().from || '') || new Date();
   let lastHref = location.href;
 
+  // 📊パネルと🔁ダイアログが同時に開いても被らないよう、🔁側を左に避ける
+  function repositionShiftPanel() {
+    const sp = $('#shiftPanel');
+    sp.style.right = panel.classList.contains('open')
+      ? `${12 + panel.offsetWidth + 8}px`
+      : '62px';
+  }
+
   $('#toggle').addEventListener('click', () => {
     panel.classList.toggle('open');
     localStorage.setItem('rfPanelOpen', panel.classList.contains('open') ? '1' : '0');
+    repositionShiftPanel();
   });
   if (localStorage.getItem('rfPanelOpen') === '1') panel.classList.add('open');
 
@@ -553,9 +562,11 @@
   $('#shiftToggle').addEventListener('click', () => {
     shiftPanel.classList.toggle('open');
     localStorage.setItem('rfShiftOpen', shiftPanel.classList.contains('open') ? '1' : '0');
+    repositionShiftPanel();
     if (shiftPanel.classList.contains('open')) scRefresh();
   });
   if (localStorage.getItem('rfShiftOpen') === '1') { shiftPanel.classList.add('open'); }
+  repositionShiftPanel();
 
   $('#scReload').addEventListener('click', scRefresh);
   $('#scFilterOpen').addEventListener('click', () => {
