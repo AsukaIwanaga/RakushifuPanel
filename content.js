@@ -514,6 +514,7 @@
         <b id="dateLabel">-</b>
         <button id="next">▶</button>
         <button id="reload" class="accent">更新</button>
+        <button id="openOpts" title="設定（負担率・係数など）">⚙</button>
       </div>
       <div id="stats" class="stats"></div>
       <div id="tableWrap"></div>
@@ -543,6 +544,10 @@
     custFieldCache = {};   // 修正客数も再取得
     renderSheet();
     renderUnconfirmed();
+  });
+  $('#openOpts').addEventListener('click', () => {
+    if (!alive()) return contextLost();
+    try { chrome.runtime.sendMessage({ type: 'openOptions' }); } catch {}
   });
 
   // タスクセクションの折りたたみ（タイトルクリックで開閉・状態は記憶）
