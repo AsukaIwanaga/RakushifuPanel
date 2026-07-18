@@ -438,7 +438,7 @@
         <b id="dateLabel">-</b>
         <button id="next">▶</button>
         <button id="reload" class="accent">更新</button>
-        <button id="openOpts" title="設定（負担率・係数など）">⚙</button>
+        <button id="openOpts" title="設定（負担率・係数など）">設定</button>
       </div>
       <div id="stats" class="stats"></div>
       <div id="tableWrap"></div>
