@@ -623,6 +623,7 @@
   $('#scReload').addEventListener('click', scRefresh);
   const scSetFilter = (f) => {
     scFilter = f;
+    localStorage.setItem('rfScFilter', f); // 日付遷移(フルリロード)しても選択を引き継ぐ
     $('#scFilterOpen').classList.toggle('on', f === 'open');
     $('#scFilterDay').classList.toggle('on', f === 'day');
     $('#scFilterAll').classList.toggle('on', f === 'all');
@@ -631,6 +632,9 @@
   $('#scFilterOpen').addEventListener('click', () => scSetFilter('open'));
   $('#scFilterDay').addEventListener('click', () => scSetFilter('day'));
   $('#scFilterAll').addEventListener('click', () => scSetFilter('all'));
+  // 前回のフィルタ選択を復元
+  const savedScFilter = localStorage.getItem('rfScFilter');
+  if (savedScFilter && ['open', 'day', 'all'].includes(savedScFilter)) scSetFilter(savedScFilter);
   $('#scNewBtn').addEventListener('click', () => {
     const f = $('#scNewForm');
     const show = f.style.display === 'none';
