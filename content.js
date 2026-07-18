@@ -327,6 +327,8 @@
     <style>
       :host { all: initial; }
       * { box-sizing: border-box; font-family: -apple-system, "Hiragino Sans", sans-serif; }
+      /* 印刷時はパネルとボタンを紙に出さない（注入した行だけ印刷される） */
+      @media print { #toggle, #panel { display: none !important; } }
       #toggle {
         position: fixed; right: 12px; top: 12px; z-index: 2147483646;
         width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
@@ -567,9 +569,48 @@
   }
 
   // ===== 前年客数・修正客数の下に LE客数 行と 必要人数(REQ計) 行を注入 =====
+  const isPrintPage = location.pathname.includes('/schedules/print');
+
+  // 印刷画面用: .custom-field-rows(前年/修正客数)へ行を追加。
+  // グループはDOM順=編集画面のセクション順(フロア→キッチン)前提で F/K を割当
+  function updatePrintRows(le, reqPack) {
+    document.querySelectorAll('.rf-le-row-p, .rf-req-row-p').forEach((e) => e.remove());
+    if (!le || !onOneDayTarget()) return;
+    const groups = [...document.querySelectorAll('.custom-field-rows')].filter((g) => g.children.length > 0);
+    groups.forEach((g, gi) => {
+      const proto = [...g.children].find((r) =>
+        (r.querySelector('.header')?.textContent || '').includes('修正客数')) || g.lastElementChild;
+      if (!proto) return;
+      const mk = (cls, label, vals, color, total) => {
+        const clone = proto.cloneNode(true);
+        clone.classList.add(cls);
+        const head = clone.querySelector('.header');
+        if (head) {
+          head.innerHTML = `<span style="font-weight:700;color:${color};">${label}</span>` +
+            `<span style="color:${color};">合計: ${total || '-'}</span>`;
+        }
+        const cells = [...clone.children].filter((c) => !c.classList.contains('header'));
+        cells.forEach((cell, idx) => {
+          cell.textContent = idx < HOURS.length ? (vals[idx] || '') : '';
+          cell.style.color = color;
+          cell.style.fontWeight = '700';
+        });
+        g.appendChild(clone);
+      };
+      mk('rf-le-row-p', 'LE客数', le.hours, '#1a5fb4', le.total);
+      if (gi === 0) {
+        if (reqPack?.f) mk('rf-req-row-p', '必要F', reqPack.f.hours, '#2c6e49', reqPack.f.total);
+      } else {
+        if (reqPack?.k) mk('rf-req-row-p', '必要K', reqPack.k.hours, '#2c6e49', reqPack.k.total);
+      }
+      if (reqPack?.fk) mk('rf-req-row-p', '必要FK', reqPack.fk.hours, '#0e7490', reqPack.fk.total);
+    });
+  }
+
   function updateLERows(le, reqPack) {
-    document.querySelectorAll('.rf-le-row, .rf-req-row').forEach((e) => e.remove());
     lastLE = le ? { le, reqPack } : null;
+    if (isPrintPage) { updatePrintRows(le, reqPack); return; }
+    document.querySelectorAll('.rf-le-row, .rf-req-row').forEach((e) => e.remove());
     if (!le || !onOneDayTarget()) return;
     const labels = [...document.querySelectorAll('th.metrics-row-header')]
       .filter((th) => (th.textContent || '').includes('修正客数'));
@@ -821,7 +862,7 @@
     // Vueの再描画でバッジ/バー/LE行が消えた場合の張り直し（軽量）
     if (lastWeekStats) updateWeekBadges(lastWeekStats);
     if (lastStrip && !document.querySelector('.rf-heat-strip')) updateStrips(lastStrip.catDiffs, lastStrip.tip);
-    if (lastLE && !document.querySelector('.rf-le-row')) updateLERows(lastLE.le, lastLE.reqPack);
+    if (lastLE && !document.querySelector('.rf-le-row, .rf-le-row-p')) updateLERows(lastLE.le, lastLE.reqPack);
     if (location.href === lastHref) return;
     lastHref = location.href;
     const d = parseYmd(urlParams().from || '');
