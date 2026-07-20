@@ -433,6 +433,14 @@
       tr.diff td.over-lite { color: #1e7a44; font-weight: 700; }  /* 0<余剰<1: 白地に緑字 */
       th.short-mark { background: #d64545; color: #fff; }
       .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 13px; }
+      .section-title #draftSend { margin-left: 6px; font-size: 11px; padding: 0 8px; border-radius: 5px;
+        border: 1px solid #ccc; background: #fff; cursor: pointer; }
+      .section-title #draftOpen { font-weight: 400; font-size: 11px; margin-left: 4px; color: #2c6e49; }
+      .draft .dli { padding: 1px 0; font-size: 12px; }
+      .draft .dtag { display: inline-block; width: 24px; text-align: center; border-radius: 4px;
+        color: #fff; font-size: 10px; font-weight: 700; margin-right: 5px; }
+      .draft .dtag.F { background: #2563eb; } .draft .dtag.K { background: #d97706; }
+      .draft .dtag.FK { background: #0e7490; }
       .section-title.fold { cursor: pointer; user-select: none; }
       .unconfirmed { display: flex; flex-wrap: wrap; gap: 4px; }
       .unconfirmed .day {
@@ -476,6 +484,11 @@
       <div id="tasks" class="tasks muted">読込中…</div>
       <div class="section-title">シフト確定 未処理日（今日〜月末）</div>
       <div id="unconfirmed" class="unconfirmed muted">確認中…</div>
+      <div class="section-title">シフト原案
+        <button id="draftSend" title="表示中の月の希望シフトをShiftDraftへ送る">希望送信</button>
+        <a id="draftOpen" href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener">開く↗</a>
+      </div>
+      <div id="draft" class="draft muted">-</div>
     </div>
   `;
 
@@ -1106,6 +1119,7 @@
     if (res.error) {
       $('#stats').innerHTML = `<span class="err">${res.error}: ${res.sheetName}</span>`;
       renderTasks(); // 取得不可でもタスク欄は独立して更新する
+      renderDraft().catch(() => {});
       updateStrips(null);
       updateLERows(null);
       return;
@@ -1212,6 +1226,7 @@
       .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
       .catch(() => {});
     renderTasks();
+    renderDraft().catch(() => {});
   }
 
   async function renderTasks() {
@@ -1265,6 +1280,69 @@
     }
   }
 
+  // ===== シフト原案 (ShiftDraft・apps/ShiftDraft ポート8790) =====
+  // 希望送信=表示月のdesiredを同一オリジンfetchしSW経由でPOST（Akamai認証は拡張が肩代わり）。
+  // 原案はShiftDraft側で編集し、ここでは対象日の中身を読むだけ（らくしふへは書き込まない）。
+  const draftApi = (path, payload) => new Promise((resolve) => {
+    if (!alive()) return resolve(null);
+    try { chrome.runtime.sendMessage({ type: 'draftApi', path, payload }, resolve); } catch { resolve(null); }
+  });
+
+  async function sendWishes() {
+    const el = $('#draft');
+    const p = new URLSearchParams(location.search);
+    const storeId = p.get('s');
+    if (!storeId) { el.innerHTML = '<span class="err">store_id 不明</span>'; return; }
+    const genreIds = p.getAll('g');
+    const y = targetDate.getFullYear(), mo = targetDate.getMonth();
+    const start = `${y}-${pad2(mo + 1)}-01`;
+    const end = ymd(new Date(y, mo + 1, 0));
+    el.innerHTML = `<span class="muted">${mo + 1}月の希望を取得中…</span>`;
+    try {
+      const q = new URLSearchParams();
+      q.set('page_ctx_name', 'admin');
+      q.set('store_id', storeId);
+      for (const g of (genreIds.length ? genreIds : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+      q.set('start_date', start);
+      q.set('end_date', end);
+      q.set('is_staff_print_page', 'false');
+      const r = await fetch('/ajax/admin/v2/schedules?' + q, {
+        credentials: 'include',
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      if (!r.ok) throw new Error(`シフトAPI HTTP ${r.status}`);
+      const j = await r.json();
+      const month = start.slice(0, 7);
+      const res = await draftApi('/api/wishes', {
+        meta: { month, store_id: storeId, captured_at: new Date().toISOString().slice(0, 19) },
+        desired: j.desired || [], instructed: j.instructed || [],
+        rest_times: j.rest_times || [], users: j.users || [],
+      });
+      if (!res || !res.ok) throw new Error((res && (res.error || (res.data || {}).msg)) || 'ShiftDraft未達');
+      el.innerHTML = `<span class="allok">✓ ${month} 希望${res.data.desired}件を送信しました</span>`;
+    } catch (e) {
+      el.innerHTML = `<span class="err">送信失敗: ${e.message}</span>`;
+    }
+  }
+
+  async function renderDraft() {
+    const el = $('#draft');
+    if (!el) return;
+    const r = await draftApi('/api/draft-day?date=' + ymd(targetDate));
+    if (!r || !r.ok) {
+      el.innerHTML = '<span class="muted">ShiftDraft未達（Mac mini稼働とTailscaleを確認）</span>';
+      return;
+    }
+    const list = r.data.assignments || [];
+    const t = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+    el.innerHTML = list.length
+      ? list.map((a) =>
+          `<div class="dli"><span class="dtag ${a.genre}">${a.genre}</span>${a.name} ${t(a.s)}-${t(a.e)}` +
+          (a.rest ? `（休 ${t(a.rest[0])}-${t(a.rest[1])}）` : '') + (a.locked ? ' 🔒' : '') + '</div>')
+        .join('')
+      : '<span class="muted">この日の原案なし</span>';
+  }
+
   // URL変化 (日付移動・ビュー切替) を監視してパネルの対象日を追従
   timers.push(setInterval(() => {
     if (!alive()) return contextLost();
@@ -1290,6 +1368,7 @@
     const k = localStorage.key(i);
     if (k && k.startsWith('rfDone:')) localStorage.removeItem(k);
   }
+  $('#draftSend').addEventListener('click', sendWishes);
   renderSheet();
   renderUnconfirmed();
   scRefresh(); // バッジ表示のためダイアログ閉でも件数を取る

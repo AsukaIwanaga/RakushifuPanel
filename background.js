@@ -7,6 +7,8 @@ const SHIFT_API_BASE = 'http://100.103.183.30:8765';
 // Tailscaleアドレスで参照する（Mac mini自身からも到達可能）。
 // これにより同じコードのままMacBookからもMac mini上の同一データを見る＝データは常に一致する。
 const LEMAKER_BASE = 'http://100.103.183.30:8788';
+// ShiftDraft (apps/ShiftDraft・シフト原案ワークベンチ)。Mac mini常駐 Tailscale:8790。
+const DRAFT_API_BASE = 'http://100.103.183.30:8790';
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // 自己更新（MacBook運用）: launchdのgit pullでファイルだけ新しくなった状態を検出する。
@@ -25,6 +27,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'leMaker') {
     fetch(LEMAKER_BASE + msg.path)
       .then((r) => r.text().then((text) => sendResponse({ ok: r.ok, status: r.status, text })))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+  if (msg.type === 'draftApi') {
+    fetch(DRAFT_API_BASE + msg.path, msg.payload
+      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(msg.payload) }
+      : {})
+      .then((r) => r.json().then((data) => sendResponse({ ok: r.ok, data })))
       .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
