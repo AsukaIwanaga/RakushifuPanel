@@ -3,8 +3,10 @@
 // WorkLogWebサーバ (Tailscaleアドレス限定バインド) への中継。
 // content script からは mixed content で直接叩けないため SW 経由にする。
 const SHIFT_API_BASE = 'http://100.103.183.30:8765';
-// SLS/LBR LE Maker (apps/KyakusuYosoku・LE/REQのデータ元)。同Mac常駐 0.0.0.0:8788。
-const LEMAKER_BASE = 'http://127.0.0.1:8788';
+// SLS/LBR LE Maker (apps/KyakusuYosoku・LE/REQのデータ元)。Mac mini常駐 0.0.0.0:8788。
+// Tailscaleアドレスで参照する（Mac mini自身からも到達可能）。
+// これにより同じコードのままMacBookからもMac mini上の同一データを見る＝データは常に一致する。
+const LEMAKER_BASE = 'http://100.103.183.30:8788';
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'leMaker') {
