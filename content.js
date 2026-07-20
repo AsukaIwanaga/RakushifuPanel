@@ -626,6 +626,16 @@
     }
   }
 
+  // 表示中の日を対象日欄の既定値に使う（"7/21" 形式）
+  const scDateStr = () => `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
+
+  // 新規フォームを閉じる。入力は破棄し、次回は白紙＋当日プリセットで開き直す
+  const scCloseNewForm = () => {
+    const f = $('#scNewForm');
+    f.style.display = 'none';
+    f.innerHTML = '';
+  };
+
   function scBuildNewForm() {
     const srcs = [...(scState?.sources || ['WowTalk', '口頭', '電話', 'その他'])];
     if (!srcs.includes('店舗判断')) srcs.push('店舗判断'); // 店舗発パターン用
@@ -640,7 +650,9 @@
       `<input id="scNewRequester" placeholder="依頼者 (空欄可)">` +
       `<select id="scNewSource">${srcs.map((s) => `<option>${esc(s)}</option>`).join('')}</select>` +
       `<input id="scNewMemo" placeholder="メモ (空欄可)">` +
-      `<button id="scNewCreate">作成</button>`;
+      `<button id="scNewCreate">作成</button>` +
+      `<button id="scNewCancel">キャンセル</button>`;
+    $('#scNewDate').value = scDateStr(); // 対象日は表示中の日を既定に（編集可）
     // 区分に応じて依頼者・sourceを自動補完（クルー発=対象者本人 / 店舗発=自分）
     const applyKind = () => {
       const store = $('#scNewKind').value === 'store';
@@ -727,9 +739,10 @@
   if (savedScFilter && ['open', 'day', 'all'].includes(savedScFilter)) scSetFilter(savedScFilter);
   $('#scNewBtn').addEventListener('click', () => {
     const f = $('#scNewForm');
-    const show = f.style.display === 'none';
-    if (show && !f.innerHTML) scBuildNewForm();
-    f.style.display = show ? '' : 'none';
+    if (f.style.display !== 'none') { scCloseNewForm(); return; } // 開いていれば閉じる
+    if (!f.innerHTML) scBuildNewForm();
+    $('#scNewDate').value = scDateStr(); // 開くたびに表示中の日へ合わせる
+    f.style.display = '';
   });
 
   shiftPanel.addEventListener('change', async (ev) => {
@@ -760,10 +773,10 @@
       });
       t.disabled = false;
       if (!r.ok) { alert(`作成失敗: ${r.error || r.data?.error || ''}`); return; }
-      $('#scNewForm').style.display = 'none';
-      $('#scNewForm').innerHTML = '';
+      scCloseNewForm();
       scRefresh();
     }
+    if (t.id === 'scNewCancel') scCloseNewForm();
   });
   shiftPanel.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && ev.target.matches('.sc-note-input input')) {
