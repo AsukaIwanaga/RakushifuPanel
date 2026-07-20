@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- MacBook用: RakushifuPanel を15分ごとに git pull する。
+     ~/Library/LaunchAgents/ に置いて launchctl load する（手順は README 参照）。 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.iwanaga.rakushifu-pull</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>REPO_PATH/scripts/auto-pull.sh</string>
+  </array>
+
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>REPO_PATH/scripts/auto-pull.log</string>
+  <key>StandardErrorPath</key>
+  <string>REPO_PATH/scripts/auto-pull.log</string>
+</dict>
+</plist>

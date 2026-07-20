@@ -467,6 +467,7 @@
     <div id="panel">
       <div class="nav">
         <b id="dateLabel">-</b>
+        <button id="rfUpdate" style="display:none"></button>
         <button id="reload" class="accent">更新</button>
       </div>
       <div id="stats" class="stats"></div>
@@ -507,6 +508,32 @@
     renderSheet();
     renderUnconfirmed();
   });
+
+  // ===== 拡張の自己更新（MacBook運用: launchdがgit pull → ここで気付いて反映） =====
+  // ディスク上のmanifestが実行中の版と違えば、pull済みの新版がまだ有効になっていない。
+  // ボタンは拡張とページの両方を再読込するため、シフト編集中に不意に走らないよう
+  // 自動では絶対に実行せず、押した時だけ動かす（ラベルにも再読込することを明記）。
+  const rfUpdate = $('#rfUpdate');
+  async function checkExtUpdate() {
+    const r = await new Promise((res) => {
+      try { chrome.runtime.sendMessage({ type: 'extVersion' }, (x) => res(x || null)); }
+      catch { res(null); } // 拡張リロード直後などcontextが無効な場合
+    });
+    if (!r || !r.ok || !r.disk) return;
+    const stale = r.disk !== r.running;
+    rfUpdate.style.display = stale ? '' : 'none';
+    if (stale) {
+      rfUpdate.textContent = `⬆ v${r.disk} に更新`;
+      rfUpdate.title = `実行中 v${r.running} → ディスク上 v${r.disk}。`
+        + '押すと拡張とこのページを再読込します（編集中の内容は失われます）';
+    }
+  }
+  rfUpdate.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'extReload' });
+    location.reload(); // 拡張を入れ替えただけでは、このページの旧content scriptは死んだまま
+  });
+  checkExtUpdate();
+  setInterval(checkExtUpdate, 10 * 60 * 1000);
 
   // ===== シフト変更依頼ダイアログ（WorkLogWebサーバ = ShiftChangeアプリと同一データ） =====
   const SC_CHECKS = [

@@ -27,6 +27,33 @@
 3. 「パッケージ化されていない拡張機能を読み込む」→ このフォルダ (`~/RakushifuPanel`) を選択
 4. らくしふの編集画面を開く（またはリロード）→ 右下に📊ボタンが出る
 
+## 2台運用（Mac mini / MacBook）
+
+データ元（LE Maker `:8788` とシフトAPI `:8765`）はどちらも **Mac mini上の1箇所**を
+Tailscaleアドレスで参照する。コピーを持たないので、2台の表示は常に一致する。
+→ MacBookで使うにはTailscaleが起動していること（Mac miniは常時起動設定済み）。
+
+### MacBookでの初回セットアップ
+
+```sh
+git clone https://github.com/AsukaIwanaga/RakushifuPanel.git ~/RakushifuPanel
+sh ~/RakushifuPanel/scripts/setup-macbook.sh   # 15分ごとの自動pullを登録
+```
+
+あとは下の「インストール」と同じ手順でChromeに読み込む。
+
+### 更新のしかた
+
+`scripts/auto-pull.sh` がlaunchdで15分ごとに `git pull` する（ファイルが新しくなるだけ）。
+新版がディスクに来ると、パネル上部に **`⬆ vX.Y.Z に更新`** ボタンが出る。
+押すと拡張とページを再読込して反映される。
+
+自動では絶対に再読込しない。**シフト編集中に不意にページが飛ぶのを避けるため**、
+いつ反映するかは押した人が決める（＝押すと編集中の内容は失われる）。
+
+ログ: `scripts/auto-pull.log`。ローカルを直接編集していると `--ff-only` で
+pullが止まるので、そのときはログにエラーが残る。
+
 ## 仕組み
 
 - シート取得: `docs.google.com` の gviz CSVエンドポイントを、ブラウザのGoogleログイン

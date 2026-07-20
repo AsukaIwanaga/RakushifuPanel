@@ -9,6 +9,19 @@ const SHIFT_API_BASE = 'http://100.103.183.30:8765';
 const LEMAKER_BASE = 'http://100.103.183.30:8788';
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // 自己更新（MacBook運用）: launchdのgit pullでファイルだけ新しくなった状態を検出する。
+  // ディスク上のmanifest.json（=pull後の版）と、実行中の版を比べる。
+  if (msg.type === 'extVersion') {
+    fetch(chrome.runtime.getURL('manifest.json') + '?t=' + Date.now())
+      .then((r) => r.json())
+      .then((m) => sendResponse({
+        ok: true, disk: m.version, running: chrome.runtime.getManifest().version,
+      }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+  // 未パッケージ拡張のreloadはディスクから読み直すので、pull済みの新版が有効になる
+  if (msg.type === 'extReload') { chrome.runtime.reload(); return false; }
   if (msg.type === 'leMaker') {
     fetch(LEMAKER_BASE + msg.path)
       .then((r) => r.text().then((text) => sendResponse({ ok: r.ok, status: r.status, text })))
