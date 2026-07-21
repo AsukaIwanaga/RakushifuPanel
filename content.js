@@ -936,7 +936,9 @@
   // 各セクションの時間軸ヘッダー(.time-header)直下に、そのセクションの 実−REQ を行として差し込む。
   // フロアセクション=F、キッチンセクション=K。不足=赤、SURPLUS_WARN以上のプラス=オレンジ(浪費警告)。
   // 表示中の日とパネルの対象日が一致するOneDayのときだけ出す。
-  let lastStrip = null; // {catDiffs, tip} Vue再描画後の張り直し用
+  let lastStrip = null; // {catDiffs, tip, catActs} Vue再描画後の張り直し用
+  // 現在人数ストリップの段構成と色（上から順に描画）
+  const ACT_STRIPS = [['F', '#6b21a8'], ['K', '#b45309'], ['FK', '#0e7490']];
   let lastLE = null;
   const onOneDayTarget = () => {
     const p = new URLSearchParams(location.search);
@@ -993,26 +995,32 @@
       }
       header.after(strip);
 
-      // 充足ギャップの直下に、そのセクションの現在人数(実F/実K)を同じ形で出す。
+      // 充足ギャップの直下に、現在人数を F/K/FK の3段で出す（本人指定・両セクション共通）。
       // ギャップが「あと何人」なら、こちらは「いま何人」。判定色は付けない（ギャップ側の役目）。
-      const acts = catActs && catActs[cat];
-      if (!acts) continue;
-      const actStrip = document.createElement('div');
-      actStrip.className = 'rf-heat-strip rf-act-strip';
-      actStrip.style.cssText = strip.style.cssText + 'color:#6b21a8;';
-      for (const c of header.children) {
-        const txt = (c.textContent || '').trim();
-        const h = /^\d{1,2}$/.test(txt) ? +txt : null;
-        const i = h !== null ? HOURS.indexOf(h) : -1;
-        const cell = document.createElement('div');
-        cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
-        if (i >= 0 && acts[i]) {
-          cell.textContent = String(acts[i]);
-          if (tipFor) cell.title = tipFor(i);
+      // この帯には行ラベルを置く余地がない（左端はらくしふ側の列）ため、
+      // 注入行と同系色で見分ける: F=紫 / K=琥珀 / FK=ティール（必要FKと同色）。
+      let prev = strip;
+      for (const [key, color] of ACT_STRIPS) {
+        const acts = catActs && catActs[key];
+        if (!acts) continue;
+        const s = document.createElement('div');
+        s.className = 'rf-heat-strip rf-act-strip';
+        s.style.cssText = strip.style.cssText + `color:${color};`;
+        for (const c of header.children) {
+          const txt = (c.textContent || '').trim();
+          const h = /^\d{1,2}$/.test(txt) ? +txt : null;
+          const i = h !== null ? HOURS.indexOf(h) : -1;
+          const cell = document.createElement('div');
+          cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
+          if (i >= 0 && acts[i]) {
+            cell.textContent = String(acts[i]);
+            cell.title = `実${key} ${acts[i]}` + (tipFor ? `\n${tipFor(i)}` : '');
+          }
+          s.appendChild(cell);
         }
-        actStrip.appendChild(cell);
+        prev.after(s);
+        prev = s;
       }
-      strip.after(actStrip);
     }
   }
 
@@ -1249,7 +1257,7 @@
       ` ・ K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'}` +
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/REQ)`;
-    updateStrips(catDiffs, tip, hasActual ? { F: actual.F, K: actual.K } : null);
+    updateStrips(catDiffs, tip, hasActual ? { F: actual.F, K: actual.K, FK: actual.FK } : null);
     updateLERows(hourly['LE'], { sum: req, f: reqF, k: reqK, fk: reqFK },
       hasActual ? actual : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
