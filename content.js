@@ -957,7 +957,7 @@
   };
 
   function updateStrips(catDiffs, tipFor, catActs) {
-    document.querySelectorAll('.rf-heat-strip').forEach((e) => e.remove());
+    document.querySelectorAll('.rf-heat-strip, .rf-strip-label').forEach((e) => e.remove());
     lastStrip = catDiffs ? { catDiffs, tip: tipFor, catActs } : null;
     if (!catDiffs || !onOneDayTarget()) return;
     // セクション見出し(フロア/キッチン)→ 直後の time-header を対応付け
@@ -976,22 +976,31 @@
       strip.style.cssText =
         'display:flex;height:16px;font:700 10px/16px -apple-system,"Hiragino Sans",sans-serif;' +
         'text-align:center;position:relative;overflow:visible;';
-      // 行ラベル。帯の左“外側”(right:100%)に置くと、らくしふのタイムラインが
-      // 横スクロール領域でoverflowに切られて見えなくなる(v1.27で実機NG)。
-      // そこで幅0のstickyホルダを先頭に入れ、中のspanを右へはみ出させる:
-      //   幅0 = 時刻列との1:1の対応がズレない / sticky = 横スクロールしても左端に残る
-      // 代償として左端の1列(6時付近)に重なるため、下地を白くして数字と混ざらないようにする。
+      // 行ラベルは「時刻の左にある固定列のTH」の中に入れる。
+      // 経緯: 帯の左外側へ絶対配置(v1.27)は見えず、帯の内側(v1.29)は6時の数字に重なった。
+      // 実DOMを調べたところ overflow は全て visible で、原因は重なり順だった:
+      //   左列 th.top-left-corner-sticky は z-index:1100・背景不透明、
+      //   帯のある th.timeline-sticky は z-index:1000 → 左に出したラベルが左列の背面に回る。
+      // よって左列のTHへ入れる。THはsticky=配置済み要素なので絶対配置の基準になる。
+      // 縦位置は帯を挿入した後に実測して合わせる（TH内部の高さが時刻ヘッダーと違うため）。
+      const leftTh = header.closest('tr') && header.closest('tr').querySelector('th');
+      // THは中身を上下中央に置くため、帯を足して行が伸びると「指定順/スタッフ並替」が
+      // 下がってきてラベルと衝突する。上寄せにして衝突を防ぐ（実機で確認済み）。
+      if (leftTh) leftTh.style.verticalAlign = 'top';
       const addLabel = (el, text, color) => {
-        const holder = document.createElement('div');
-        holder.style.cssText = 'position:sticky;left:0;width:0;flex:none;overflow:visible;z-index:2;';
-        const lb = document.createElement('span');
+        if (!leftTh) return;
+        const lb = document.createElement('div');
+        lb.className = 'rf-strip-label';
         lb.textContent = text;
-        lb.style.cssText = 'display:inline-block;padding:0 3px;white-space:nowrap;' +
-          `background:rgba(255,255,255,.92);color:${color};font-weight:700;`;
-        holder.appendChild(lb);
-        el.appendChild(holder); // 必ず先頭（この時点ではまだ時刻セルを足していない）
+        lb.style.cssText = 'position:absolute;left:8px;height:16px;white-space:nowrap;' +
+          `font:700 10px/16px -apple-system,"Hiragino Sans",sans-serif;color:${color};`;
+        leftTh.appendChild(lb);
+        // 帯がレイアウトされてから位置を確定させる
+        requestAnimationFrame(() => {
+          const top = el.getBoundingClientRect().top - leftTh.getBoundingClientRect().top;
+          lb.style.top = `${Math.round(top)}px`;
+        });
       };
-      addLabel(strip, `差${cat}`, '#6b7280');
       for (const c of header.children) {
         const txt = (c.textContent || '').trim();
         const h = /^\d{1,2}$/.test(txt) ? +txt : null;
@@ -1021,6 +1030,7 @@
         strip.appendChild(cell);
       }
       header.after(strip);
+      addLabel(strip, `差${cat}`, '#6b7280');
 
       // 充足ギャップの直下に、現在人数を F/K/FK の3段で出す（本人指定・両セクション共通）。
       // ギャップが「あと何人」なら、こちらは「いま何人」。判定色は付けない（ギャップ側の役目）。
@@ -1033,7 +1043,6 @@
         const s = document.createElement('div');
         s.className = 'rf-heat-strip rf-act-strip';
         s.style.cssText = strip.style.cssText + `color:${ACT_STRIP_COLOR};`;
-        addLabel(s, label, ACT_STRIP_COLOR);
         for (const c of header.children) {
           const txt = (c.textContent || '').trim();
           const h = /^\d{1,2}$/.test(txt) ? +txt : null;
@@ -1047,6 +1056,7 @@
           s.appendChild(cell);
         }
         prev.after(s);
+        addLabel(s, label, ACT_STRIP_COLOR);
         prev = s;
       }
     }
