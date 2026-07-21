@@ -944,9 +944,11 @@
   // 表示中の日とパネルの対象日が一致するOneDayのときだけ出す。
   let lastStrip = null; // {catDiffs, tip, catActs} Vue再描画後の張り直し用
   // 現在人数ストリップの段構成と色（上から順に描画）
-  // [actualのキー, 色, 見出し]。TRは研修中の人数（TRer+TRee）で、見出しは本人指定の「TR」
-  const ACT_STRIPS = [['F', '#6b21a8', '実F'], ['K', '#b45309', '実K'],
-                      ['FK', '#0e7490', '実FK'], ['TR', '#be185d', 'TR']];
+  // [actualのキー, 見出し]。TRは研修中の人数（TRer+TRee）で、見出しは本人指定の「TR」。
+  // 数字に色は付けない（本人指定）。見出しが付いた時点で識別用の色分けは不要になり、
+  // 色は充足ギャップ側の不足/過剰の意味だけに残す。
+  const ACT_STRIPS = [['F', '実F'], ['K', '実K'], ['FK', '実FK'], ['TR', 'TR']];
+  const ACT_STRIP_COLOR = '#374151'; // 数字・見出しとも中立色
   let lastLE = null;
   const onOneDayTarget = () => {
     const p = new URLSearchParams(location.search);
@@ -1025,13 +1027,13 @@
       // この帯には行ラベルを置く余地がない（左端はらくしふ側の列）ため、
       // 注入行と同系色で見分ける: F=紫 / K=琥珀 / FK=ティール（必要FKと同色）。
       let prev = strip;
-      for (const [key, color, label] of ACT_STRIPS) {
+      for (const [key, label] of ACT_STRIPS) {
         const acts = catActs && catActs[key];
         if (!acts) continue;
         const s = document.createElement('div');
         s.className = 'rf-heat-strip rf-act-strip';
-        s.style.cssText = strip.style.cssText + `color:${color};`;
-        addLabel(s, label, color);
+        s.style.cssText = strip.style.cssText + `color:${ACT_STRIP_COLOR};`;
+        addLabel(s, label, ACT_STRIP_COLOR);
         for (const c of header.children) {
           const txt = (c.textContent || '').trim();
           const h = /^\d{1,2}$/.test(txt) ? +txt : null;
