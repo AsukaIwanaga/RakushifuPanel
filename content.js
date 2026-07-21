@@ -938,17 +938,26 @@
     }
   }
 
-  // ===== らくしふ画面上の不足ヒートバー（フロア/キッチン別） =====
-  // 各セクションの時間軸ヘッダー(.time-header)直下に、そのセクションの 実−REQ を行として差し込む。
-  // フロアセクション=F、キッチンセクション=K。不足=赤、SURPLUS_WARN以上のプラス=オレンジ(浪費警告)。
+  // ===== らくしふ画面上のヒートバー（実人数と不足） =====
+  // 各セクションの時間軸ヘッダー(.time-header)直下に、実人数と 実−REQ を行として差し込む。
+  // フロア・キッチンのどちらでも同じ内容を出す（下の STRIP_ROWS 参照）。
+  // 不足=赤、SURPLUS_WARN以上のプラス=緑(浪費警告)。
   // 表示中の日とパネルの対象日が一致するOneDayのときだけ出す。
   let lastStrip = null; // {catDiffs, tip, catActs} Vue再描画後の張り直し用
-  // 現在人数ストリップの段構成と色（上から順に描画）
-  // [actualのキー, 見出し]。TRは研修中の人数（TRer+TRee）で、見出しは本人指定の「TR」。
-  // 数字に色は付けない（本人指定）。見出しが付いた時点で識別用の色分けは不要になり、
-  // 色は充足ギャップ側の不足/過剰の意味だけに残す。
-  const ACT_STRIPS = [['F', '実F'], ['K', '実K'], ['FK', '実FK'], ['TR', 'TR']];
-  const ACT_STRIP_COLOR = '#374151'; // 数字・見出しとも中立色
+  // 帯の段構成（上から順に描画）。フロア/キッチンのどちらのセクションでも**同じ内容**を出す。
+  // 経緯: 以前は差分だけそのセクションのカテゴリ（フロア=差F / キッチン=差K）だったが、
+  // 「実Fの隣に差F、実Kの隣に差K」で見たいという本人指定（2026-07-21）で全段共通に統一。
+  // どちらのセクションを見ていても F/K 両方の過不足がその場で判断できる。
+  // [種別, データのキー, 見出し]。act=いま何人 / diff=あと何人(実−REQ)。
+  // TRは研修中の人数（TRer+TRee）で、見出しは本人指定の「TR」。
+  // 実数の数字に色は付けない（本人指定）。色は差分の不足/過剰の意味だけに残す。
+  const STRIP_ROWS = [
+    ['act', 'F', '実F'], ['diff', 'F', '差F'],
+    ['act', 'K', '実K'], ['diff', 'K', '差K'],
+    ['act', 'FK', '実FK'], ['act', 'TR', 'TR'],
+  ];
+  const ACT_STRIP_COLOR = '#374151'; // 実数の数字・見出しとも中立色
+  const DIFF_LABEL_COLOR = '#6b7280';
   let lastLE = null;
   const onOneDayTarget = () => {
     const p = new URLSearchParams(location.search);
@@ -983,11 +992,8 @@
     // 実際のセクションは フロア/キッチン/清掃/正社員 の4つ。清掃・正社員はクルーREQの
     // 比較対象外なので帯を出さない。
     for (const header of document.querySelectorAll('.time-header')) {
-      const cat = sectionCatOf(header);
-      if (!cat || !catDiffs[cat]) continue;
-      const strip = document.createElement('div');
-      strip.className = 'rf-heat-strip';
-      strip.style.cssText =
+      if (!sectionCatOf(header)) continue;   // 清掃・正社員はクルーREQの対象外
+      const stripCss =
         'display:flex;height:16px;font:700 10px/16px -apple-system,"Hiragino Sans",sans-serif;' +
         'text-align:center;position:relative;overflow:visible;';
       // 行ラベルは「時刻の左にある固定列のTH」の中に入れる。
@@ -1015,62 +1021,54 @@
           lb.style.top = `${Math.round(top)}px`;
         });
       };
-      for (const c of header.children) {
-        const txt = (c.textContent || '').trim();
-        const h = /^\d{1,2}$/.test(txt) ? +txt : null;
-        const i = h !== null ? HOURS.indexOf(h) : -1;
-        const cell = document.createElement('div');
-        cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
-        const d = i >= 0 ? catDiffs[cat][i] : undefined;
-        if (d !== undefined && d !== null) {
-          // |差分|<1 は軽微 → 塗りつぶさず白地に色文字。±1以上のみ塗りつぶしで強調
-          if (d < 0) {
-            cell.textContent = d;
-            cell.style.cssText += d > -1
-              ? 'color:#d64545;'
-              : 'background:#d64545;color:#fff;border-radius:3px;';
-          } else if (d >= SURPLUS_WARN) {
-            cell.textContent = `+${d}`;
-            cell.style.cssText += 'background:#2e9e5b;color:#fff;border-radius:3px;';
-          } else if (d > 0 && d < 1) {
-            cell.textContent = `+${d}`;
-            cell.style.cssText += 'color:#2e9e5b;';
-          } else {
-            cell.textContent = d > 0 ? `+${d}` : '0';
-            cell.style.cssText += 'color:#9aa8b5;';
-          }
-          if (tipFor) cell.title = tipFor(i);
-        }
-        strip.appendChild(cell);
-      }
-      header.after(strip);
-      addLabel(strip, `差${cat}`, '#6b7280');
-
-      // 充足ギャップの直下に、現在人数を F/K/FK の3段で出す（本人指定・両セクション共通）。
-      // ギャップが「あと何人」なら、こちらは「いま何人」。判定色は付けない（ギャップ側の役目）。
-      // この帯には行ラベルを置く余地がない（左端はらくしふ側の列）ため、
-      // 注入行と同系色で見分ける: F=紫 / K=琥珀 / FK=ティール（必要FKと同色）。
-      let prev = strip;
-      for (const [key, label] of ACT_STRIPS) {
-        const acts = catActs && catActs[key];
-        if (!acts) continue;
+      // 1段ぶんの帯を作る。act=いま何人（中立色）/ diff=あと何人（不足赤・過剰緑）。
+      const makeStrip = (kind, values, label) => {
         const s = document.createElement('div');
-        s.className = 'rf-heat-strip rf-act-strip';
-        s.style.cssText = strip.style.cssText + `color:${ACT_STRIP_COLOR};`;
+        s.className = kind === 'act' ? 'rf-heat-strip rf-act-strip' : 'rf-heat-strip';
+        s.style.cssText = stripCss + (kind === 'act' ? `color:${ACT_STRIP_COLOR};` : '');
         for (const c of header.children) {
           const txt = (c.textContent || '').trim();
           const h = /^\d{1,2}$/.test(txt) ? +txt : null;
           const i = h !== null ? HOURS.indexOf(h) : -1;
           const cell = document.createElement('div');
           cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
-          if (i >= 0 && acts[i]) {
-            cell.textContent = String(acts[i]);
-            cell.title = `${label} ${acts[i]}` + (tipFor ? `\n${tipFor(i)}` : '');
+          const v = i >= 0 ? values[i] : undefined;
+          if (v !== undefined && v !== null && (kind === 'diff' || v)) {
+            if (kind === 'act') {
+              cell.textContent = String(v);
+              cell.title = `${label} ${v}` + (tipFor ? `\n${tipFor(i)}` : '');
+            } else {
+              // |差分|<1 は軽微 → 塗りつぶさず白地に色文字。±1以上のみ塗りつぶしで強調
+              if (v < 0) {
+                cell.textContent = v;
+                cell.style.cssText += v > -1
+                  ? 'color:#d64545;'
+                  : 'background:#d64545;color:#fff;border-radius:3px;';
+              } else if (v >= SURPLUS_WARN) {
+                cell.textContent = `+${v}`;
+                cell.style.cssText += 'background:#2e9e5b;color:#fff;border-radius:3px;';
+              } else if (v > 0 && v < 1) {
+                cell.textContent = `+${v}`;
+                cell.style.cssText += 'color:#2e9e5b;';
+              } else {
+                cell.textContent = v > 0 ? `+${v}` : '0';
+                cell.style.cssText += 'color:#9aa8b5;';
+              }
+              if (tipFor) cell.title = tipFor(i);
+            }
           }
           s.appendChild(cell);
         }
+        return s;
+      };
+
+      let prev = header;
+      for (const [kind, key, label] of STRIP_ROWS) {
+        const values = kind === 'act' ? (catActs && catActs[key]) : catDiffs[key];
+        if (!values) continue;
+        const s = makeStrip(kind, values, label);
         prev.after(s);
-        addLabel(s, label, ACT_STRIP_COLOR);
+        addLabel(s, label, kind === 'act' ? ACT_STRIP_COLOR : DIFF_LABEL_COLOR);
         prev = s;
       }
     }
@@ -1152,7 +1150,7 @@
 
       // 必要人数は F/K/FK を全部、フロア・キッチンの両方に出す（本人指定）。
       // どちらのセクションを見ていても店全体の必要と実が一度に読めるようにするため。
-      // 時刻直下のヒートバー(updateStrips)は従来どおりセクション別のまま。
+      // 時刻直下のヒートバー(updateStrips)も同じ理由で両セクション共通にしてある。
       let anchor = leRow;
       const tipSum = reqPack?.sum ? (i) => `REQ計 ${reqPack.sum.hours[i] || '0'}` : null;
       const addReq = (label, row, color) => {
