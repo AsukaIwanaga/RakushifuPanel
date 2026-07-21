@@ -1438,13 +1438,34 @@
       : '<span class="muted">この日の原案なし</span>';
   }
 
+  // 注入がセクション単位で欠けていないかを見る。
+  // 経緯(2026-07-22): 以前は「.rf-le-row が1つでもあれば張り直さない」判定だったため、
+  // フロアにだけ入った状態でキッチンが後から描画されると永久に埋まらなかった
+  // （らくしふはセクションを遅延描画する。実機のキッチンでLE客数・必要行が出ない不具合）。
+  // 対象セクションの数と実際の注入数を突き合わせて、欠けていれば張り直す。
+  const targetSections = (sel, pick) =>
+    [...document.querySelectorAll(sel)].filter((e) => sectionCatOf(pick ? pick(e) : e));
+  const leRowsIntact = () => {
+    if (isPrintPage) return !!document.querySelector('.rf-le-row-p');
+    const secs = targetSections('th.metrics-row-header', (th) => th.closest('tr') || th)
+      .filter((th) => (th.textContent || '').includes('修正客数'));
+    if (!secs.length) return true;   // まだ描画されていない＝張り直しても入れる先がない
+    return document.querySelectorAll('.rf-le-row').length >= secs.length;
+  };
+  const stripsIntact = () => {
+    const heads = targetSections('.time-header');
+    if (!heads.length) return true;
+    return heads.every((h) => h.nextElementSibling
+      && h.nextElementSibling.classList.contains('rf-heat-strip'));
+  };
+
   // URL変化 (日付移動・ビュー切替) を監視してパネルの対象日を追従
   timers.push(setInterval(() => {
     if (!alive()) return contextLost();
     // Vueの再描画でバッジ/バー/LE行/依頼マークが消えた場合の張り直し（軽量）
     if (lastWeekStats) updateWeekBadges(lastWeekStats);
-    if (lastStrip && !document.querySelector('.rf-heat-strip')) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs);
-    if (lastLE && !document.querySelector('.rf-le-row, .rf-le-row-p')) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act);
+    if (lastStrip && !stripsIntact()) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs);
+    if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act);
     if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks();
     updateReqButtons(); // 再描画で消えた＋ボタンの張り直し(既存行はスキップ)
     if (location.href === lastHref) return;
