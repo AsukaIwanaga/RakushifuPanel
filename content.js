@@ -956,21 +956,35 @@
     return p.get('u') === 'OneDay' && fromD && ymd(fromD) === ymd(targetDate);
   };
 
+  // 要素が属するセクションを「直前の .table-title」で判定し F/K を返す（対象外はnull）。
+  // 旧実装は全要素からテキストが「フロア/キッチン」の葉要素を拾っていたが、同じ文字列が
+  // help-info（ツールチップ）にも現れるため誤検出し、見出しと帯の対応が1つずつズレていた
+  // （実DOMで確認: 見出し6件検出 vs 帯4件）。実際のセクションは
+  // フロア/キッチン/清掃/正社員 の4つで、清掃・正社員はクルーREQの比較対象外。
+  const CAT_OF = { 'フロア': 'F', 'キッチン': 'K' };
+  function sectionCatOf(el) {
+    let sec = null;
+    for (const t of document.querySelectorAll('.table-title')) {
+      if (t.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) {
+        sec = (t.textContent || '').trim();
+      }
+    }
+    return CAT_OF[sec] || null;
+  }
+
   function updateStrips(catDiffs, tipFor, catActs) {
     document.querySelectorAll('.rf-heat-strip, .rf-strip-label').forEach((e) => e.remove());
     lastStrip = catDiffs ? { catDiffs, tip: tipFor, catActs } : null;
     if (!catDiffs || !onOneDayTarget()) return;
-    // セクション見出し(フロア/キッチン)→ 直後の time-header を対応付け
-    const titles = [...document.querySelectorAll('*')]
-      .filter((e) => e.children.length === 0 && /^(フロア|キッチン)$/.test((e.textContent || '').trim()));
-    const headers = [...document.querySelectorAll('.time-header')];
-    const used = new Set();
-    for (const t of titles) {
-      const cat = t.textContent.trim() === 'フロア' ? 'F' : 'K';
-      const header = headers.find((hd) => !used.has(hd) &&
-        (t.compareDocumentPosition(hd) & Node.DOCUMENT_POSITION_FOLLOWING));
-      if (!header || !catDiffs[cat]) continue;
-      used.add(header);
+    // 各 time-header が属するセクションを「直前の .table-title」で決める。
+    // 旧実装は全要素からテキストが「フロア/キッチン」の葉要素を拾っていたが、
+    // 同じ文字列が help-info（ツールチップ）にも出るため誤検出し、見出しと帯の対応が
+    // 1つずつズレていた（実DOMで確認: 見出し6件検出 vs 帯4件）。
+    // 実際のセクションは フロア/キッチン/清掃/正社員 の4つ。清掃・正社員はクルーREQの
+    // 比較対象外なので帯を出さない。
+    for (const header of document.querySelectorAll('.time-header')) {
+      const cat = sectionCatOf(header);
+      if (!cat || !catDiffs[cat]) continue;
       const strip = document.createElement('div');
       strip.className = 'rf-heat-strip';
       strip.style.cssText =
@@ -1109,6 +1123,9 @@
     for (const th of labels) {
       const tr = th.closest('tr');
       if (!tr) continue;
+      // 清掃・正社員セクションにも修正客数行があれば拾ってしまうため、
+      // 帯と同じ判定でフロア/キッチンだけに絞る
+      if (!sectionCatOf(tr)) continue;
       // 修正客数行のクローンにラベルと値を差し替えた行を作る
       const mkRow = (cls, labelHtml, vals, color, tipFn, styleFn) => {
         const clone = tr.cloneNode(true);
