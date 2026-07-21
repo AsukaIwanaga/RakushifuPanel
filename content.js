@@ -944,9 +944,9 @@
     return p.get('u') === 'OneDay' && fromD && ymd(fromD) === ymd(targetDate);
   };
 
-  function updateStrips(catDiffs, tipFor) {
+  function updateStrips(catDiffs, tipFor, catActs) {
     document.querySelectorAll('.rf-heat-strip').forEach((e) => e.remove());
-    lastStrip = catDiffs ? { catDiffs, tip: tipFor } : null;
+    lastStrip = catDiffs ? { catDiffs, tip: tipFor, catActs } : null;
     if (!catDiffs || !onOneDayTarget()) return;
     // セクション見出し(フロア/キッチン)→ 直後の time-header を対応付け
     const titles = [...document.querySelectorAll('*')]
@@ -992,6 +992,27 @@
         strip.appendChild(cell);
       }
       header.after(strip);
+
+      // 充足ギャップの直下に、そのセクションの現在人数(実F/実K)を同じ形で出す。
+      // ギャップが「あと何人」なら、こちらは「いま何人」。判定色は付けない（ギャップ側の役目）。
+      const acts = catActs && catActs[cat];
+      if (!acts) continue;
+      const actStrip = document.createElement('div');
+      actStrip.className = 'rf-heat-strip rf-act-strip';
+      actStrip.style.cssText = strip.style.cssText + 'color:#6b21a8;';
+      for (const c of header.children) {
+        const txt = (c.textContent || '').trim();
+        const h = /^\d{1,2}$/.test(txt) ? +txt : null;
+        const i = h !== null ? HOURS.indexOf(h) : -1;
+        const cell = document.createElement('div');
+        cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
+        if (i >= 0 && acts[i]) {
+          cell.textContent = String(acts[i]);
+          if (tipFor) cell.title = tipFor(i);
+        }
+        actStrip.appendChild(cell);
+      }
+      strip.after(actStrip);
     }
   }
 
@@ -1228,7 +1249,7 @@
       ` ・ K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'}` +
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/REQ)`;
-    updateStrips(catDiffs, tip);
+    updateStrips(catDiffs, tip, hasActual ? { F: actual.F, K: actual.K } : null);
     updateLERows(hourly['LE'], { sum: req, f: reqF, k: reqK, fk: reqFK },
       hasActual ? actual : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
@@ -1360,7 +1381,7 @@
     if (!alive()) return contextLost();
     // Vueの再描画でバッジ/バー/LE行/依頼マークが消えた場合の張り直し（軽量）
     if (lastWeekStats) updateWeekBadges(lastWeekStats);
-    if (lastStrip && !document.querySelector('.rf-heat-strip')) updateStrips(lastStrip.catDiffs, lastStrip.tip);
+    if (lastStrip && !document.querySelector('.rf-heat-strip')) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs);
     if (lastLE && !document.querySelector('.rf-le-row, .rf-le-row-p')) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act);
     if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks();
     updateReqButtons(); // 再描画で消えた＋ボタンの張り直し(既存行はスキップ)
