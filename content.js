@@ -1066,8 +1066,9 @@
         le.hours, '#1a5fb4');
       tr.after(leRow);
 
-      // 必要人数はセクション別: フロア=F+FK / キッチン=K+FK（FKは両方に重複表示）
-      const sec = sectionOf(tr);
+      // 必要人数は F/K/FK を全部、フロア・キッチンの両方に出す（本人指定）。
+      // どちらのセクションを見ていても店全体の必要と実が一度に読めるようにするため。
+      // 時刻直下のヒートバー(updateStrips)は従来どおりセクション別のまま。
       let anchor = leRow;
       const tipSum = reqPack?.sum ? (i) => `REQ計 ${reqPack.sum.hours[i] || '0'}` : null;
       const addReq = (label, row, color) => {
@@ -1093,33 +1094,14 @@
         anchor.after(r);
         anchor = r;
       };
-      if (sec === 'キッチン') {
-        addReq('必要K', reqPack?.k, '#2c6e49');
-        addAct('実K', act?.K, reqPack?.k, act?.sum?.K);
-        addReq('必要FK', reqPack?.fk, '#0e7490');
-        // 実FK: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
-        addAct('実FK', act?.FK, null, act?.sum?.FK);
-      } else if (sec === 'フロア') {
-        addReq('必要F', reqPack?.f, '#2c6e49');
-        addAct('実F', act?.F, reqPack?.f, act?.sum?.F);
-        addReq('必要FK', reqPack?.fk, '#0e7490');
-        addAct('実FK', act?.FK, null, act?.sum?.FK);
-      } else {
-        addReq('必要人数', reqPack?.sum, '#2c6e49'); // セクション判別不能時は計を出す
-        addAct('実計', act?.total, reqPack?.sum, act?.sum?.total);
-      }
+      addReq('必要F', reqPack?.f, '#2c6e49');
+      addAct('実F', act?.F, reqPack?.f, act?.sum?.F);
+      addReq('必要K', reqPack?.k, '#2c6e49');
+      addAct('実K', act?.K, reqPack?.k, act?.sum?.K);
+      addReq('必要FK', reqPack?.fk, '#0e7490');
+      // 実FK: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
+      addAct('実FK', act?.FK, null, act?.sum?.FK);
     }
-  }
-
-  // 行の属するセクション見出し(フロア/キッチン)を特定
-  function sectionOf(el) {
-    const titles = [...document.querySelectorAll('*')]
-      .filter((e) => e.children.length === 0 && /^(フロア|キッチン)$/.test((e.textContent || '').trim()));
-    let best = null;
-    for (const t of titles) {
-      if (t.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) best = t;
-    }
-    return best ? best.textContent.trim() : null;
   }
 
   // ページ本体のシフト保存(page_hook.jsが検知)→少し待って再計算
