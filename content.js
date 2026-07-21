@@ -974,16 +974,22 @@
       strip.style.cssText =
         'display:flex;height:16px;font:700 10px/16px -apple-system,"Hiragino Sans",sans-serif;' +
         'text-align:center;position:relative;overflow:visible;';
-      // 帯の左外側(らくしふの列の上)に行ラベルを置く。帯自体は時刻列と1:1で揃える必要があり
-      // 先頭にセルを足すとズレるため、絶対配置で逃がしている。
+      // 行ラベル。帯の左“外側”(right:100%)に置くと、らくしふのタイムラインが
+      // 横スクロール領域でoverflowに切られて見えなくなる(v1.27で実機NG)。
+      // そこで幅0のstickyホルダを先頭に入れ、中のspanを右へはみ出させる:
+      //   幅0 = 時刻列との1:1の対応がズレない / sticky = 横スクロールしても左端に残る
+      // 代償として左端の1列(6時付近)に重なるため、下地を白くして数字と混ざらないようにする。
       const addLabel = (el, text, color) => {
+        const holder = document.createElement('div');
+        holder.style.cssText = 'position:sticky;left:0;width:0;flex:none;overflow:visible;z-index:2;';
         const lb = document.createElement('span');
         lb.textContent = text;
-        lb.style.cssText = 'position:absolute;right:100%;top:0;padding-right:6px;white-space:nowrap;' +
-          `color:${color};font-weight:700;`;
-        el.appendChild(lb);
+        lb.style.cssText = 'display:inline-block;padding:0 3px;white-space:nowrap;' +
+          `background:rgba(255,255,255,.92);color:${color};font-weight:700;`;
+        holder.appendChild(lb);
+        el.appendChild(holder); // 必ず先頭（この時点ではまだ時刻セルを足していない）
       };
-      addLabel(strip, `過不足${cat}`, '#6b7280');
+      addLabel(strip, `差${cat}`, '#6b7280');
       for (const c of header.children) {
         const txt = (c.textContent || '').trim();
         const h = /^\d{1,2}$/.test(txt) ? +txt : null;
