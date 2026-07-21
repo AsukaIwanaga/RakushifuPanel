@@ -433,9 +433,12 @@
       tr.diff td.over-lite { color: #1e7a44; font-weight: 700; }  /* 0<余剰<1: 白地に緑字 */
       th.short-mark { background: #d64545; color: #fff; }
       .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 13px; }
-      .section-title #draftSend { margin-left: 6px; font-size: 11px; padding: 0 8px; border-radius: 5px;
+      .section-title #draftSend { margin-left: 4px; font-size: 11px; padding: 0 8px; border-radius: 5px;
         border: 1px solid #ccc; background: #fff; cursor: pointer; }
+      .section-title #draftMonth { margin-left: 6px; font-size: 11px; font-weight: 400; padding: 0 2px;
+        border: 1px solid #ccc; border-radius: 5px; background: #fff; }
       .section-title #draftOpen { font-weight: 400; font-size: 11px; margin-left: 4px; color: #2c6e49; }
+      .nav #ver { font-size: 10px; font-weight: 400; margin-left: 4px; }
       .draft .dli { padding: 1px 0; font-size: 12px; }
       .draft .dtag { display: inline-block; width: 24px; text-align: center; border-radius: 4px;
         color: #fff; font-size: 10px; font-weight: 700; margin-right: 5px; }
@@ -477,6 +480,7 @@
         <b id="dateLabel">-</b>
         <button id="rfUpdate" style="display:none"></button>
         <button id="reload" class="accent">更新</button>
+        <span id="ver" class="muted"></span>
       </div>
       <div id="stats" class="stats"></div>
       <div id="tableWrap"></div>
@@ -485,7 +489,8 @@
       <div class="section-title">シフト確定 未処理日（今日〜月末）</div>
       <div id="unconfirmed" class="unconfirmed muted">確認中…</div>
       <div class="section-title">シフト原案
-        <button id="draftSend" title="表示中の月の希望シフトをShiftDraftへ送る">希望送信</button>
+        <select id="draftMonth" title="送信する月（らくしふの表示月とは無関係に選べます）"></select>
+        <button id="draftSend" title="選択した月の希望シフトをShiftDraftへ送る">希望送信</button>
         <a id="draftOpen" href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener">開く↗</a>
       </div>
       <div id="draft" class="draft muted">-</div>
@@ -1294,10 +1299,12 @@
     const storeId = p.get('s');
     if (!storeId) { el.innerHTML = '<span class="err">store_id 不明</span>'; return; }
     const genreIds = p.getAll('g');
-    const y = targetDate.getFullYear(), mo = targetDate.getMonth();
-    const start = `${y}-${pad2(mo + 1)}-01`;
-    const end = ymd(new Date(y, mo + 1, 0));
-    el.innerHTML = `<span class="muted">${mo + 1}月の希望を取得中…</span>`;
+    // 対象月はセレクタから（らくしふの表示月に依存しない。APIは任意期間を取れる）
+    const mv = $('#draftMonth').value;
+    const [y, mo1] = mv.split('-').map(Number);
+    const start = `${mv}-01`;
+    const end = ymd(new Date(y, mo1, 0));
+    el.innerHTML = `<span class="muted">${mv} の希望を取得中…</span>`;
     try {
       const q = new URLSearchParams();
       q.set('page_ctx_name', 'admin');
@@ -1367,6 +1374,20 @@
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const k = localStorage.key(i);
     if (k && k.startsWith('rfDone:')) localStorage.removeItem(k);
+  }
+  // 実行中バージョンを常時表示（更新ボタンが出ない=最新、の判断材料）
+  try { $('#ver').textContent = 'v' + chrome.runtime.getManifest().version; } catch { /* context失効時 */ }
+
+  // 希望送信の対象月: 前月〜3ヶ月先。原案作成は翌月分が通常なので翌月を既定にする
+  {
+    const sel = $('#draftMonth'), now = new Date();
+    for (let d = -1; d <= 3; d++) {
+      const dt = new Date(now.getFullYear(), now.getMonth() + d, 1);
+      const v = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}`;
+      const o = document.createElement('option');
+      o.value = v; o.textContent = v; o.selected = (d === 1);
+      sel.appendChild(o);
+    }
   }
   $('#draftSend').addEventListener('click', sendWishes);
   renderSheet();
