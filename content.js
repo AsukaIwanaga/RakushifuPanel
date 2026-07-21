@@ -964,7 +964,18 @@
       const strip = document.createElement('div');
       strip.className = 'rf-heat-strip';
       strip.style.cssText =
-        'display:flex;height:16px;font:700 10px/16px -apple-system,"Hiragino Sans",sans-serif;text-align:center;';
+        'display:flex;height:16px;font:700 10px/16px -apple-system,"Hiragino Sans",sans-serif;' +
+        'text-align:center;position:relative;overflow:visible;';
+      // 帯の左外側(らくしふの列の上)に行ラベルを置く。帯自体は時刻列と1:1で揃える必要があり
+      // 先頭にセルを足すとズレるため、絶対配置で逃がしている。
+      const addLabel = (el, text, color) => {
+        const lb = document.createElement('span');
+        lb.textContent = text;
+        lb.style.cssText = 'position:absolute;right:100%;top:0;padding-right:6px;white-space:nowrap;' +
+          `color:${color};font-weight:700;`;
+        el.appendChild(lb);
+      };
+      addLabel(strip, `過不足${cat}`, '#6b7280');
       for (const c of header.children) {
         const txt = (c.textContent || '').trim();
         const h = /^\d{1,2}$/.test(txt) ? +txt : null;
@@ -1006,6 +1017,7 @@
         const s = document.createElement('div');
         s.className = 'rf-heat-strip rf-act-strip';
         s.style.cssText = strip.style.cssText + `color:${color};`;
+        addLabel(s, `実${key}`, color);
         for (const c of header.children) {
           const txt = (c.textContent || '').trim();
           const h = /^\d{1,2}$/.test(txt) ? +txt : null;
