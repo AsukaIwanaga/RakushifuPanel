@@ -488,7 +488,7 @@
       <div id="tasks" class="tasks muted">読込中…</div>
       <div class="section-title">シフト確定 未処理日（今日〜月末）</div>
       <div id="unconfirmed" class="unconfirmed muted">確認中…</div>
-      <div class="section-title">シフト原案
+      <div class="section-title">海賊版らくしふ
         <select id="draftMonth" title="送信する月（らくしふの表示月とは無関係に選べます）"></select>
         <button id="draftSend" title="選択した月の希望シフトをShiftDraftへ送る">希望送信</button>
         <a id="draftOpen" href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener">開く↗</a>
