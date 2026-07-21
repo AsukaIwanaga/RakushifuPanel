@@ -195,7 +195,11 @@
     };
 
     const zero = () => HOURS.map(() => 0);
-    const act = { F: zero(), K: zero(), FK: zero(), MGT: zero(), cMGT: zero(), total: zero() };
+    // TR は「いま何人が研修中か」を見るための**参考枠**。MGT/cMGT に含まれたまま
+    // 二重に数える（MGT/cMGTはOP H外という計上ルールに直結しており、そこから
+    // 抜くと人時の数字が変わってしまうため）。実計・不足には一切影響しない。
+    const act = { F: zero(), K: zero(), FK: zero(), MGT: zero(), cMGT: zero(),
+                  TR: zero(), total: zero() };
     // 正社員判定（MGT/TRer/TRee の計上先の振り分けに使用）
     const regularIds = new Set((j.users || [])
       .filter((u) => REGULAR_STAFF.includes((u.name || '').replace(/\s+/g, '')))
@@ -217,6 +221,7 @@
       const isReg = regularIds.has(sh.user_id);
       const moves = (sh.instructed_schedule_store_tasks || [])
         .map((t) => ({ grp: moveGroup(taskMap[t.store_task_id], isReg), id: t.id,
+                       tr: ['TRer', 'TRee'].includes(taskMap[t.store_task_id]),
                        s: Math.max(t.start_time_as_min, sh.start_as_min),
                        e: Math.min(t.end_time_as_min, sh.end_as_min) }))
         .filter((t) => t.grp && t.e > t.s)
@@ -234,6 +239,7 @@
           if (m <= 0) continue;
           act[mv.grp][i] += m;
           alloc += m;
+          if (mv.tr) act.TR[i] += m; // 参考枠（MGT/cMGTと二重計上・実計には不算入）
           if (mv.grp === 'MGT' || mv.grp === 'cMGT') mgt += m;
         }
         act[grp][i] += Math.max(0, total - alloc); // 振替以外は所属グループ
@@ -242,7 +248,7 @@
     }
     const r1 = (v) => Math.round(v * 10) / 10;
     act.sum = {};
-    for (const k of ['F', 'K', 'FK', 'MGT', 'cMGT', 'total']) {
+    for (const k of ['F', 'K', 'FK', 'MGT', 'cMGT', 'TR', 'total']) {
       act.sum[k] = r1(act[k].reduce((a, b) => a + b, 0));
       act[k] = act[k].map(r1);
     }
@@ -938,7 +944,9 @@
   // 表示中の日とパネルの対象日が一致するOneDayのときだけ出す。
   let lastStrip = null; // {catDiffs, tip, catActs} Vue再描画後の張り直し用
   // 現在人数ストリップの段構成と色（上から順に描画）
-  const ACT_STRIPS = [['F', '#6b21a8'], ['K', '#b45309'], ['FK', '#0e7490']];
+  // [actualのキー, 色, 見出し]。TRは研修中の人数（TRer+TRee）で、見出しは本人指定の「TR」
+  const ACT_STRIPS = [['F', '#6b21a8', '実F'], ['K', '#b45309', '実K'],
+                      ['FK', '#0e7490', '実FK'], ['TR', '#be185d', 'TR']];
   let lastLE = null;
   const onOneDayTarget = () => {
     const p = new URLSearchParams(location.search);
@@ -1011,13 +1019,13 @@
       // この帯には行ラベルを置く余地がない（左端はらくしふ側の列）ため、
       // 注入行と同系色で見分ける: F=紫 / K=琥珀 / FK=ティール（必要FKと同色）。
       let prev = strip;
-      for (const [key, color] of ACT_STRIPS) {
+      for (const [key, color, label] of ACT_STRIPS) {
         const acts = catActs && catActs[key];
         if (!acts) continue;
         const s = document.createElement('div');
         s.className = 'rf-heat-strip rf-act-strip';
         s.style.cssText = strip.style.cssText + `color:${color};`;
-        addLabel(s, `実${key}`, color);
+        addLabel(s, label, color);
         for (const c of header.children) {
           const txt = (c.textContent || '').trim();
           const h = /^\d{1,2}$/.test(txt) ? +txt : null;
@@ -1026,7 +1034,7 @@
           cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
           if (i >= 0 && acts[i]) {
             cell.textContent = String(acts[i]);
-            cell.title = `実${key} ${acts[i]}` + (tipFor ? `\n${tipFor(i)}` : '');
+            cell.title = `${label} ${acts[i]}` + (tipFor ? `\n${tipFor(i)}` : '');
           }
           s.appendChild(cell);
         }
@@ -1269,7 +1277,8 @@
       ` ・ K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'}` +
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/REQ)`;
-    updateStrips(catDiffs, tip, hasActual ? { F: actual.F, K: actual.K, FK: actual.FK } : null);
+    updateStrips(catDiffs, tip,
+      hasActual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null);
     updateLERows(hourly['LE'], { sum: req, f: reqF, k: reqK, fk: reqFK },
       hasActual ? actual : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
