@@ -1032,10 +1032,10 @@
     });
   }
 
-  function updateLERows(le, reqPack) {
-    lastLE = le ? { le, reqPack } : null;
+  function updateLERows(le, reqPack, act) {
+    lastLE = le ? { le, reqPack, act } : null;
     if (isPrintPage) { updatePrintRows(le, reqPack); return; }
-    document.querySelectorAll('.rf-le-row, .rf-req-row').forEach((e) => e.remove());
+    document.querySelectorAll('.rf-le-row, .rf-req-row, .rf-act-row').forEach((e) => e.remove());
     if (!le || !onOneDayTarget()) return;
     const labels = [...document.querySelectorAll('th.metrics-row-header')]
       .filter((th) => (th.textContent || '').includes('修正客数'));
@@ -1043,7 +1043,7 @@
       const tr = th.closest('tr');
       if (!tr) continue;
       // 修正客数行のクローンにラベルと値を差し替えた行を作る
-      const mkRow = (cls, labelHtml, vals, color, tipFn) => {
+      const mkRow = (cls, labelHtml, vals, color, tipFn, styleFn) => {
         const clone = tr.cloneNode(true);
         clone.classList.add(cls);
         const cth = clone.querySelector('th.metrics-row-header');
@@ -1056,6 +1056,7 @@
             cell.style.color = color;
             cell.style.fontWeight = '700';
             if (tipFn && idx < HOURS.length) cell.title = tipFn(idx);
+            if (styleFn && idx < HOURS.length) styleFn(cell, idx);
           });
         }
         return clone;
@@ -1077,14 +1078,35 @@
         anchor.after(r);
         anchor = r;
       };
+      // 実人数（いまらくしふ上で組まれている人数）を対応する必要行の直下に出す。
+      // 色・不足判定はパネルの実F/実K行と同じ規則（紫、不足1人以上=赤塗り・1人未満=赤字）。
+      const addAct = (label, arr, reqRow, sumV) => {
+        if (!arr) return;
+        const r = mkRow('rf-act-row',
+          `<span style="font-weight:700;color:#6b21a8;">${label} (合計: ${sumV ?? '-'})</span>`,
+          HOURS.map((h, i) => (arr[i] ? String(arr[i]) : '')), '#6b21a8', null,
+          reqRow ? (cell, i) => {
+            const deficit = num(reqRow.hours[i]) - arr[i];
+            if (deficit >= 1) { cell.style.background = '#fdecec'; cell.style.color = '#b02a2a'; }
+            else if (deficit > 1e-9) cell.style.color = '#b02a2a';
+          } : null);
+        anchor.after(r);
+        anchor = r;
+      };
       if (sec === 'キッチン') {
         addReq('必要K', reqPack?.k, '#2c6e49');
+        addAct('実K', act?.K, reqPack?.k, act?.sum?.K);
         addReq('必要FK', reqPack?.fk, '#0e7490');
+        // 実FK: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
+        addAct('実FK', act?.FK, null, act?.sum?.FK);
       } else if (sec === 'フロア') {
         addReq('必要F', reqPack?.f, '#2c6e49');
+        addAct('実F', act?.F, reqPack?.f, act?.sum?.F);
         addReq('必要FK', reqPack?.fk, '#0e7490');
+        addAct('実FK', act?.FK, null, act?.sum?.FK);
       } else {
         addReq('必要人数', reqPack?.sum, '#2c6e49'); // セクション判別不能時は計を出す
+        addAct('実計', act?.total, reqPack?.sum, act?.sum?.total);
       }
     }
   }
@@ -1225,7 +1247,8 @@
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/REQ)`;
     updateStrips(catDiffs, tip);
-    updateLERows(hourly['LE'], { sum: req, f: reqF, k: reqK, fk: reqFK });
+    updateLERows(hourly['LE'], { sum: req, f: reqF, k: reqK, fk: reqFK },
+      hasActual ? actual : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
     fetchWeekStats(targetDate)
       .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
@@ -1356,7 +1379,7 @@
     // Vueの再描画でバッジ/バー/LE行/依頼マークが消えた場合の張り直し（軽量）
     if (lastWeekStats) updateWeekBadges(lastWeekStats);
     if (lastStrip && !document.querySelector('.rf-heat-strip')) updateStrips(lastStrip.catDiffs, lastStrip.tip);
-    if (lastLE && !document.querySelector('.rf-le-row, .rf-le-row-p')) updateLERows(lastLE.le, lastLE.reqPack);
+    if (lastLE && !document.querySelector('.rf-le-row, .rf-le-row-p')) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act);
     if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks();
     updateReqButtons(); // 再描画で消えた＋ボタンの張り直し(既存行はスキップ)
     if (location.href === lastHref) return;
