@@ -798,8 +798,11 @@
     for (const nameEl of document.querySelectorAll('.user-cell .name')) {
       const nm = normName(nameEl.textContent);
       if (!nm) continue;
-      // この人の案件: 表示日一致、または日付未記入の未完了(オープン)案件
-      const rel = cases.filter((c) => normName(c.target) === nm &&
+      // この人の案件: 表示日一致、または日付未記入の未完了(オープン)案件。
+      // target='全員'(休み募集)は名前バッジは発信者(休みたい人=requester)にだけ出す
+      // （ラインは全行に出すが、バッジ40個は煩いので発信者に集約）。
+      const keyOf = (c) => c.target === '全員' ? normName(c.requester) : normName(c.target);
+      const rel = cases.filter((c) => keyOf(c) === nm &&
         (scMatchesDay(c, targetDate) || (!scClosed(c) && !(c.target_date || '').trim())));
       if (!rel.length) continue;
       const pending = rel.filter((c) => !scClosed(c));
@@ -867,7 +870,8 @@
       const nm = normName(nameEl.textContent);
       if (!nm) continue;
       // 対象=この人・当日一致 or 日付未記入のオープン。状態は完了以外（保留=黄 / 拒否=赤×）
-      const rel = cases.filter((c) => normName(c.target) === nm && !c.is_done &&
+      // target='全員'（休み募集）は全行に出す（本人指定）。
+      const rel = cases.filter((c) => (c.target === '全員' || normName(c.target) === nm) && !c.is_done &&
         (scMatchesDay(c, targetDate) || (!scClosed(c) && !(c.target_date || '').trim())));
       if (!rel.length) continue;
       const track = tr.querySelector('.schedule-row');
@@ -876,10 +880,13 @@
         const [s, e] = reqSpanOf(c) || FULL;
         const top = idx * 6;   // 同じ人に複数依頼があれば縦にずらす
         const rejected = c.is_rejected;
+        const zenin = c.target === '全員';
         // ホバーで状態が分かるように、状態語(依頼中→承諾待ち→反映待ち…)を先頭に出す
         const title = rejected
           ? `🚫 拒否: ${c.title}` + (c.reject_reason ? `（理由: ${c.reject_reason}）` : '')
-          : `🔄 ${scStatusLabel(c)}: ${c.title}`;
+          : zenin
+            ? `🙋 休み募集(${scStatusLabel(c)}): ${c.requester || ''}さんの代わり ${c.change || ''}`.trim()
+            : `🔄 ${scStatusLabel(c)}: ${c.title}`;
         // 当たり判定を稼ぐため要素は少し高め(10px)にし、色帯は上4pxだけ描く(背景グラデ)。
         // ホバーは自前ツールチップ(即時表示)。ネイティブtitleの「?」カーソル＋遅延はやめる。
         const bg = rejected ? '#dc2626' : '#f5c518';
@@ -953,6 +960,8 @@
       `<option value="crew">クルー発（休み・時間変更の希望）</option>` +
       `<option value="store">店舗発（LE・作成方針による打診）</option>` +
       `</select>` +
+      '<label style="display:flex;align-items:center;gap:5px;font-size:13px;margin-bottom:4px">' +
+      '<input type="checkbox" id="scNewZenin" style="width:auto">全員宛（休み募集：代われる人を募集）</label>' +
       `<input id="scNewTarget" placeholder="対象者 (例: 高橋心さん)">` +
       `<input id="scNewDate" placeholder="対象日 (例: 7/26)">` +
       `<input id="scNewChange" placeholder="変更内容">` +
@@ -981,6 +990,14 @@
         $('#scNewRequester').value = ($('#scNewTarget').value || '').replace(/\s+/g, '');
       }
     });
+    // 全員宛（休み募集）: 対象者欄を「休みにしたい人」に読み替える。
+    // 送信時は target='全員'・requester=この人 にする（scNewCreateで処理）。
+    $('#scNewZenin').addEventListener('change', () => {
+      const on = $('#scNewZenin').checked;
+      $('#scNewTarget').placeholder = on ? '休みにしたい人（発信者）' : '対象者 (例: 高橋心さん)';
+      $('#scNewChange').placeholder = on ? '内容 (例: 終日休み希望 / 早上がり)' : '変更内容';
+      $('#scNewRequester').style.display = on ? 'none' : '';
+    });
     applyKind();
   }
 
@@ -1005,7 +1022,7 @@
     const parts = String(tok).split('-');
     return parts.length === 2 ? `${one(parts[0])}-${one(parts[1])}` : one(tok);
   };
-  function wowtalkMessage(target, targetDateStr, change) {
+  function wowtalkMessage(target, targetDateStr, change, requester) {
     const m = /(\d{1,2})\s*[/月]\s*(\d{1,2})/.exec(targetDateStr || '');
     let dateLabel = (targetDateStr || '').trim(), urgent = '';
     if (m) {
@@ -1016,6 +1033,13 @@
       dateLabel = `${mo}月${da}日(${WEEKDAYS[d.getDay()]})`;
       const diff = (d - today) / 86400000;
       if (diff >= 0 && diff <= 7) urgent = '急遽の変更で恐れ入りますが、';
+    }
+    // 全員宛（休み募集）は「代われる人いませんか」の募集メッセージにする
+    if (target === '全員') {
+      const who = (requester || '').trim();
+      return `お疲れ様です。${urgent}${dateLabel}${who ? `の${who}さんのシフト` : ''}について、` +
+        `${change ? `${String(change).trim()}の` : ''}お休み希望が出ています。`
+        + 'どなたか代わっていただける方はいらっしゃいませんでしょうか。';
     }
     const parts = String(change || '').split(/\s*(?:=>|→|->|⇒)\s*/);
     let body;
@@ -1029,11 +1053,12 @@
     return `お疲れ様です。${urgent}${dateLabel}のシフトについて、${body}`;
   }
   // 起票直後に、コピペ用の文言を #scNewForm 内に表示する
-  function scShowWowtalk(target, targetDateStr, change) {
-    const msg = wowtalkMessage(target, targetDateStr, change);
+  function scShowWowtalk(target, targetDateStr, change, requester) {
+    const msg = wowtalkMessage(target, targetDateStr, change, requester);
+    const label = target === '全員' ? `全員宛・休み募集（${esc(requester || '')}）` : esc(target);
     const f = $('#scNewForm');
     f.innerHTML =
-      `<div style="font-weight:700;margin-bottom:4px">📋 WowTalk用の文言（${esc(target)}）</div>` +
+      `<div style="font-weight:700;margin-bottom:4px">📋 WowTalk用の文言（${label}）</div>` +
       `<textarea id="scWtText" style="width:100%;height:96px;border:1px solid #ccc;border-radius:4px;` +
       `padding:6px 8px;font-size:14px;resize:vertical;box-sizing:border-box">${esc(msg)}</textarea>` +
       '<div style="display:flex;gap:4px;margin-top:4px">' +
@@ -1132,17 +1157,22 @@
     }
     if (t.id === 'scNewCreate') {
       t.disabled = true;
-      const target = $('#scNewTarget').value, targetDate = $('#scNewDate').value;
+      const zenin = $('#scNewZenin') && $('#scNewZenin').checked;
+      const person = ($('#scNewTarget').value || '').trim();   // 全員宛では「休みにしたい人」
+      const targetDate = $('#scNewDate').value;
       const change = $('#scNewChange').value;
+      // 全員宛（休み募集）: target='全員' / 発信者=休みたい人。通常は入力どおり。
+      const target = zenin ? '全員' : person;
+      const requester = zenin ? person.replace(/\s+/g, '') : $('#scNewRequester').value;
       const r = await shiftApi('/api/shift/create', {
         target, target_date: targetDate, change,
         req_time: readReqTime($('#scNewForm'), 'scn'),
-        requester: $('#scNewRequester').value,
+        requester,
         source: $('#scNewSource').value, memo: $('#scNewMemo').value,
       });
       t.disabled = false;
       if (!r.ok) { alert(`作成失敗: ${r.error || r.data?.error || ''}`); return; }
-      scShowWowtalk(target, targetDate, change);   // 起票直後にWowTalk用文言を出す
+      scShowWowtalk(target, targetDate, change, requester);   // 起票直後にWowTalk用文言を出す
       scRefresh();
     }
     if (t.id === 'scNewCancel') scCloseNewForm();
@@ -1225,7 +1255,7 @@
       });
       if (!r.ok) { alert(`編集失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
       // まだチェックが1つも付いていない依頼は、更新後の内容でWowTalk文言を出し直す（本人指定）
-      if (noChecks) scShowWowtalk(target, targetDate, change);
+      if (noChecks) scShowWowtalk(target, targetDate, change, cur && cur.requester);
       scRefresh();
     }
   });
