@@ -42,6 +42,7 @@
 
   const CONFIRM_POLL_MS = 5 * 60 * 1000; // 未確定チェックの間隔
   const URL_WATCH_MS = 1500;
+  const DRAFT_POLL_MS = 15000;   // 海賊版原案の自動追従ポーリング間隔（Tailscaleローカルなので軽い）
   const isPrintPage = location.pathname.includes('/schedules/print');
 
   // ===== ユーティリティ =====
@@ -1578,21 +1579,42 @@
     FIX: '#eab308', // クルー固定業務=黄（※同上）
     MGT: '#111827', // マネジメント=黒（※同上）
   };
-  let lastDraftDay = null;  // {iso, byUser: Map<user_id,[seg,...]>}
+  let lastDraftDay = null;  // {iso, byUser: Map<user_id,[seg,...]>, sig}
+
+  // 変化検知用の軽い署名（順不同で安定するようソート）。海賊版で原案を直したら値が変わる。
+  const draftSig = (list) => list
+    .map((a) => `${a.user_id}:${a.s}-${a.e}:${a.genre}:${a.rest ? a.rest.join('-') : ''}`)
+    .sort().join('|');
+
+  async function fetchDraftDay(iso) {
+    const r = await draftApi('/api/draft-day?date=' + iso);
+    const list = (r && r.ok && r.data && Array.isArray(r.data.assignments)) ? r.data.assignments : [];
+    const byUser = new Map();
+    for (const a of list) {
+      if (a.s == null || a.e == null) continue;
+      if (!byUser.has(a.user_id)) byUser.set(a.user_id, []);
+      byUser.get(a.user_id).push(a);
+    }
+    return { byUser, sig: draftSig(list) };
+  }
 
   async function loadDraftDay(iso) {
     if (lastDraftDay && lastDraftDay.iso === iso) return lastDraftDay.byUser;
-    const r = await draftApi('/api/draft-day?date=' + iso);
-    const byUser = new Map();
-    if (r && r.ok && r.data && Array.isArray(r.data.assignments)) {
-      for (const a of r.data.assignments) {
-        if (a.s == null || a.e == null) continue;
-        if (!byUser.has(a.user_id)) byUser.set(a.user_id, []);
-        byUser.get(a.user_id).push(a);
-      }
-    }
-    lastDraftDay = { iso, byUser };
+    const { byUser, sig } = await fetchDraftDay(iso);
+    lastDraftDay = { iso, byUser, sig };
     return byUser;
+  }
+
+  // 海賊版の編集に自動追従: 定期的に取り直し、中身が変わっていたら描き直す（変化なしは何もしない）。
+  // 表示中タブのOneDayのときだけ。ShiftDraftはTailscaleローカルなので短間隔でも軽い。
+  async function pollDraftDay() {
+    if (isPrintPage || !onOneDayTarget()) return;
+    if (document.visibilityState !== 'visible') return;
+    const iso = ymd(targetDate);
+    const { byUser, sig } = await fetchDraftDay(iso);
+    if (lastDraftDay && lastDraftDay.iso === iso && lastDraftDay.sig === sig) return; // 変化なし
+    lastDraftDay = { iso, byUser, sig };
+    updateDraftGhosts().catch(() => {});
   }
 
   async function updateDraftGhosts() {
@@ -1693,6 +1715,12 @@
       updateShiftMarks();
     }
   }, URL_WATCH_MS));
+
+  // 海賊版(ShiftDraft)の原案編集に自動追従する定期ポーリング（変化時のみ描き直し）
+  timers.push(setInterval(() => {
+    if (!alive()) return contextLost();
+    pollDraftDay().catch(() => {});
+  }, DRAFT_POLL_MS));
 
   // 過去のチェック機能(v1.5.x)が残したlocalStorageキーを掃除
   for (let i = localStorage.length - 1; i >= 0; i--) {
