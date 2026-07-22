@@ -1567,7 +1567,8 @@
   //     以前は固定70pxが .schedule-row 基準で行外(row-rel72>行高68)に落ち、ゴーストが1行下＝
   //     隣の人の位置に出て「整合性が取れていない」状態になっていた。
   //     希望(.isDesired)の下に余白があるので、希望は動かさず、その直下へ置く。
-  const GHOST_GEN_COLOR = { F: '#2563eb', K: '#d97706', FK: '#0e7490' };
+  // フロア=緑 / キッチン=橙 / FK=ティール。フロアの青は確定バー(水色)と紛らわしいため緑に（本人指定）。
+  const GHOST_GEN_COLOR = { F: '#2e9e5b', K: '#d97706', FK: '#0e7490' };
   let lastDraftDay = null;  // {iso, byUser: Map<user_id,[seg,...]>}
 
   async function loadDraftDay(iso) {
