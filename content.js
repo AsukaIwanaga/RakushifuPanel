@@ -459,6 +459,8 @@
       .sc-edit-form input { width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; font-size: 14px; margin-bottom: 4px; box-sizing: border-box; }
       .sc-edit-form .sc-edit-do { border: 1px solid #6b46a8; background: #6b46a8; color: #fff; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
       .sc-edit-form .sc-edit-cancel { border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
+      .sc-reqtime { font-size: 13px; color: #444; margin-bottom: 4px; display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+      #scNewForm select.rf-tsel, .sc-edit-form select.rf-tsel { width: auto !important; min-width: 44px; padding: 3px 4px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; margin: 0; background: #fff; }
       .sc-unrej-btn { float: right; border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; font-size: 11px; padding: 1px 6px; }
       .sc-title .rejected { color: #6b7280; }
       .sc-rej-form { display: flex; gap: 4px; margin-top: 4px; }
@@ -665,6 +667,38 @@
   // 「閉じた」案件＝完了 or 拒否。保留(未完了)判定・黄色線・バッジはこれで外す。
   const scClosed = (c) => c.is_done || c.is_rejected;
 
+  // ===== 対象時間の入力ウィジェット（時・分プルダウン・分は既定00）=====
+  // 手打ちが面倒なので、開始/終了を「時」「分」のselectで選ぶ。空欄なら変更内容から自動。
+  const reqHourSel = (cls, sel) => `<select class="rf-tsel ${cls}"><option value="">–</option>` +
+    Array.from({ length: 19 }, (_, i) => i + 6)
+      .map((h) => `<option${String(sel) === String(h) ? ' selected' : ''}>${h}</option>`).join('') +
+    '</select>';
+  const reqMinSel = (cls, sel) => `<select class="rf-tsel ${cls}">` +
+    ['00', '15', '30', '45']
+      .map((m) => `<option${(sel || '00') === m ? ' selected' : ''}>${m}</option>`).join('') +
+    '</select>';
+  // "HH:MM-HH:MM" / "1500-2000" などを {sh,sm,eh,em} に。無ければnull。
+  const reqTimeToHM = (value) => {
+    const m = /(\d{1,2})[:：]?(\d{2})?\s*[-〜～~]\s*(\d{1,2})[:：]?(\d{2})?/.exec(String(value || ''));
+    return m ? { sh: m[1], sm: m[2] || '00', eh: m[3], em: m[4] || '00' } : null;
+  };
+  // 「対象時間 [時]:[分] 〜 [時]:[分]」のHTML。prefixで開始/終了selectのクラスを分ける。
+  function reqTimeWidget(prefix, value) {
+    const p = reqTimeToHM(value);
+    return '<div class="sc-reqtime">対象時間 ' +
+      reqHourSel(`${prefix}-sh`, p ? p.sh : '') + ':' + reqMinSel(`${prefix}-sm`, p ? p.sm : '00') +
+      ' 〜 ' +
+      reqHourSel(`${prefix}-eh`, p ? p.eh : '') + ':' + reqMinSel(`${prefix}-em`, p ? p.em : '00') +
+      ' <span class="muted" style="font-size:11px">(任意・空=変更内容から自動)</span></div>';
+  }
+  // ウィジェットから "HH:MM-HH:MM" を読む。開始/終了の「時」が両方選ばれていなければ空。
+  function readReqTime(root, prefix) {
+    const v = (cls) => (root.querySelector(`.${prefix}-${cls}`) || {}).value || '';
+    const sh = v('sh'), eh = v('eh');
+    if (!sh || !eh) return '';
+    return `${sh}:${v('sm') || '00'}-${eh}:${v('em') || '00'}`;
+  }
+
   function scCard(c) {
     const checks = SC_CHECKS.map(([k, lbl]) =>
       `<label><input type="checkbox" data-p="${esc(c.path)}" data-k="${k}" ${c[k] ? 'checked' : ''}>${lbl}</label>`
@@ -691,7 +725,7 @@
         <input class="sc-edit-target" value="${esc(c.target || '')}" placeholder="対象者">
         <input class="sc-edit-date" value="${esc(c.target_date || '')}" placeholder="対象日 (例 7/26)">
         <input class="sc-edit-change" value="${esc(c.change || '')}" placeholder="変更内容">
-        <input class="sc-edit-reqtime" value="${esc(c.req_time || '')}" placeholder="対象時間 (任意 例 15:00-20:00)">
+        ${reqTimeWidget('sce', c.req_time)}
         <div style="display:flex;gap:4px;margin-top:4px">
           <button class="sc-edit-do" data-p="${esc(c.path)}">保存</button>
           <button class="sc-edit-cancel">やめる</button>
@@ -887,7 +921,7 @@
       `<input id="scNewTarget" placeholder="対象者 (例: 高橋心さん)">` +
       `<input id="scNewDate" placeholder="対象日 (例: 7/26)">` +
       `<input id="scNewChange" placeholder="変更内容">` +
-      `<input id="scNewReqTime" placeholder="対象時間 (任意 例 15:00-20:00 / 変更内容から自動)">` +
+      reqTimeWidget('scn', '') +
       `<input id="scNewRequester" placeholder="依頼者 (空欄可)">` +
       `<select id="scNewSource">${srcs.map((s) => `<option>${esc(s)}</option>`).join('')}</select>` +
       `<input id="scNewMemo" placeholder="メモ (空欄可)">` +
@@ -1067,7 +1101,7 @@
       const change = $('#scNewChange').value;
       const r = await shiftApi('/api/shift/create', {
         target, target_date: targetDate, change,
-        req_time: $('#scNewReqTime').value,
+        req_time: readReqTime($('#scNewForm'), 'scn'),
         requester: $('#scNewRequester').value,
         source: $('#scNewSource').value, memo: $('#scNewMemo').value,
       });
@@ -1149,7 +1183,7 @@
         target: f.querySelector('.sc-edit-target').value,
         target_date: f.querySelector('.sc-edit-date').value,
         change: f.querySelector('.sc-edit-change').value,
-        req_time: f.querySelector('.sc-edit-reqtime').value,
+        req_time: readReqTime(f, 'sce'),
       });
       if (!r.ok) { alert(`編集失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
       scRefresh();
