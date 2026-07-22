@@ -1947,10 +1947,16 @@
       const track = tr.querySelector('.schedule-row');
       if (!track) continue;
       const main = tr.querySelector('.schedule-bar.isEditable, .schedule-bar.isShared');
-      // 縦位置は行の一番上に固定（本人指定 2026-07-22）。以前は「確定バー→希望」の下端に
-      // 実測で合わせていたが、タスク割振(.task-assign-bar)や希望の有無・数で下端が動き、
-      // ゴーストの縦位置がズレていた。トラック上端(top:0)に固定すれば常に同じ位置に出る。
-      const topPx = 0;
+      // 縦位置=確定バーのすぐ下（実測）。経緯:
+      //  ・top:0固定(v1.42)は確定バーの真上に重なり、バーの背面で見えなくなった（本人「消えてる」）。
+      //  ・(希望||確定)下端に合わせる旧実装は、希望の有無で人ごとに高さが変わりバラついた。
+      //  確定バーの下端は「バーの高さ」で決まりタスク(バー内に描かれる)や希望に影響されない＝安定。
+      //  タスクはバー内・希望はさらに下なので、バー直下は常に空きスペースで見やすい。
+      //  休みの人(バー無し)は重なる相手がいないのでトラック上部に出す。
+      const trackTop = track.getBoundingClientRect().top;
+      const topPx = main
+        ? Math.round(main.getBoundingClientRect().bottom - trackTop + 1)
+        : 2;
       for (const a of segs) {
         const color = GHOST_GEN_COLOR[a.genre] || '#888';
         const restTxt = (Array.isArray(a.rest) && a.rest.length === 2)
