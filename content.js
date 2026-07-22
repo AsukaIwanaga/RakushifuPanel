@@ -1177,15 +1177,20 @@
     if (t.matches('.sc-edit-cancel')) t.closest('.sc-edit-form').style.display = 'none';
     if (t.matches('.sc-edit-do')) {
       const f = t.closest('.sc-edit-form');
+      const target = f.querySelector('.sc-edit-target').value;
+      const targetDate = f.querySelector('.sc-edit-date').value;
+      const change = f.querySelector('.sc-edit-change').value;
+      // 編集は6チェックを変えないので、編集前の状態でチェック有無を見ておく
+      const cur = (scState?.cases || []).find((c) => c.path === t.dataset.p);
+      const noChecks = !cur || cur.checked_count === 0;
       t.disabled = true;
       const r = await shiftApi('/api/shift/edit', {
-        path: t.dataset.p,
-        target: f.querySelector('.sc-edit-target').value,
-        target_date: f.querySelector('.sc-edit-date').value,
-        change: f.querySelector('.sc-edit-change').value,
+        path: t.dataset.p, target, target_date: targetDate, change,
         req_time: readReqTime(f, 'sce'),
       });
       if (!r.ok) { alert(`編集失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
+      // まだチェックが1つも付いていない依頼は、更新後の内容でWowTalk文言を出し直す（本人指定）
+      if (noChecks) scShowWowtalk(target, targetDate, change);
       scRefresh();
     }
   });
