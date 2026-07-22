@@ -1692,19 +1692,24 @@
   };
 
   // URL変化 (日付移動・ビュー切替) を監視してパネルの対象日を追従
+  // 各張り直しは互いに独立。1つが例外を投げても他を巻き添えにしないよう個別に隔離する。
+  // （経緯: 上流の張り直しが投げると、後段の updateReqButtons＝名前横の「＋」依頼ボタンが
+  //  毎ティック張り直されず、らくしふ再描画で消えたきり戻らない不具合になっていた）
+  const guarded = (label, fn) => { try { fn(); } catch (e) { console.warn(`[rf] ${label}`, e); } };
   timers.push(setInterval(() => {
     if (!alive()) return contextLost();
+    // ＋ボタンは最優先で張り直す（他が壊れても依頼起票の導線は絶やさない）
+    guarded('reqButtons', updateReqButtons);
     // Vueの再描画でバッジ/バー/LE行/依頼マークが消えた場合の張り直し（軽量）
-    if (lastWeekStats) updateWeekBadges(lastWeekStats);
-    if (lastStrip && !stripsIntact()) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs);
-    if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act);
-    if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks();
-    // 原案ゴースト: 対象日に原案があるのに消えていたら張り直す（希望の寄せもここで戻る）
+    guarded('weekBadges', () => { if (lastWeekStats) updateWeekBadges(lastWeekStats); });
+    guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs); });
+    guarded('leRows', () => { if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); });
+    guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
+    // 原案ゴースト: 対象日に原案があるのに消えていたら張り直す
     if (lastDraftDay && lastDraftDay.byUser && lastDraftDay.byUser.size &&
         onOneDayTarget() && !document.querySelector('.rf-draft-ghost')) {
       updateDraftGhosts().catch(() => {});
     }
-    updateReqButtons(); // 再描画で消えた＋ボタンの張り直し(既存行はスキップ)
     if (location.href === lastHref) return;
     lastHref = location.href;
     const d = parseYmd(urlParams().from || '');
