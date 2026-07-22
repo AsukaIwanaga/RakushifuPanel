@@ -445,6 +445,12 @@
         border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer;
         padding: 3px 10px; font-size: 14px;
       }
+      .sc-del-btn { float: right; border: none; background: none; cursor: pointer; font-size: 13px; opacity: .5; padding: 0 2px; }
+      .sc-del-btn:hover { opacity: 1; }
+      .sc-del-form { display: flex; gap: 4px; margin-top: 4px; }
+      .sc-del-form input { flex: 1; border: 1px solid #d99; border-radius: 4px; padding: 4px 8px; font-size: 14px; }
+      .sc-del-form .sc-del-do { border: 1px solid #c0392b; background: #c0392b; color: #fff; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
+      .sc-del-form .sc-del-cancel { border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
       #scNewForm { border: 1px dashed #b9a3dd; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
       #scNewForm input, #scNewForm select {
         width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px;
@@ -646,13 +652,19 @@
       .map((n) => `<div>${esc(typeof n === 'string' ? n : (n.text || ''))}</div>`).join('');
     return `<div class="sc-card${c.is_done ? ' done' : ''}">
       <div class="sc-title">${c.is_done ? '✅' : '<span class="undone">未了</span>'} ${esc(c.title)}
-        <span class="sc-meta">${c.checked_count}/6</span></div>
+        <span class="sc-meta">${c.checked_count}/6</span>
+        <button class="sc-del-btn" data-p="${esc(c.path)}" title="この依頼を削除（理由必須・archivedへ退避）">🗑</button></div>
       <div class="sc-meta">${esc(c.source)}・${esc(c.requester)}　${esc(c.received_at)}</div>
       <div class="sc-checks">${checks}</div>
       <div class="sc-notes">${notes}</div>
       <div class="sc-note-input">
         <input placeholder="後追いの記録を追記…" data-p="${esc(c.path)}">
         <button data-p="${esc(c.path)}">追記</button>
+      </div>
+      <div class="sc-del-form" style="display:none">
+        <input class="sc-del-reason" placeholder="削除理由（必須）" data-p="${esc(c.path)}">
+        <button class="sc-del-do" data-p="${esc(c.path)}">削除</button>
+        <button class="sc-del-cancel">やめる</button>
       </div>
     </div>`;
   }
@@ -881,10 +893,35 @@
       scRefresh();
     }
     if (t.id === 'scNewCancel') scCloseNewForm();
+
+    // 依頼の削除（恒久削除ではなく archived/ 退避・可逆）。歯止めは「理由必須」。
+    if (t.matches('.sc-del-btn')) {
+      const card = t.closest('.sc-card');
+      const form = card.querySelector('.sc-del-form');
+      form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+      if (form.style.display === 'flex') form.querySelector('.sc-del-reason').focus();
+    }
+    if (t.matches('.sc-del-cancel')) {
+      const form = t.closest('.sc-del-form');
+      form.style.display = 'none';
+      form.querySelector('.sc-del-reason').value = '';
+    }
+    if (t.matches('.sc-del-do')) {
+      const input = t.parentElement.querySelector('.sc-del-reason');
+      const reason = (input.value || '').trim();
+      if (!reason) { input.focus(); input.placeholder = '削除理由を入力してください'; return; }
+      t.disabled = true;
+      const r = await shiftApi('/api/shift/delete', { path: t.dataset.p, reason });
+      if (!r.ok) { alert(`削除失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
+      scRefresh();
+    }
   });
   shiftPanel.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && ev.target.matches('.sc-note-input input')) {
       ev.target.parentElement.querySelector('button').click();
+    }
+    if (ev.key === 'Enter' && ev.target.matches('.sc-del-reason')) {
+      ev.target.parentElement.querySelector('.sc-del-do').click();
     }
   });
 
