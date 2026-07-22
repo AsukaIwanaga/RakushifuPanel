@@ -451,6 +451,14 @@
       }
       .sc-del-btn { float: right; border: none; background: none; cursor: pointer; font-size: 13px; opacity: .5; padding: 0 2px; }
       .sc-del-btn:hover { opacity: 1; }
+      .sc-rej-btn { float: right; border: none; background: none; cursor: pointer; font-size: 13px; opacity: .5; padding: 0 2px; }
+      .sc-rej-btn:hover { opacity: 1; }
+      .sc-unrej-btn { float: right; border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; font-size: 11px; padding: 1px 6px; }
+      .sc-title .rejected { color: #6b7280; }
+      .sc-rej-form { display: flex; gap: 4px; margin-top: 4px; }
+      .sc-rej-form input { flex: 1; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; font-size: 14px; }
+      .sc-rej-form .sc-rej-do { border: 1px solid #6b7280; background: #6b7280; color: #fff; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
+      .sc-rej-form .sc-rej-cancel { border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
       .sc-del-form { display: flex; gap: 4px; margin-top: 4px; }
       .sc-del-form input { flex: 1; border: 1px solid #d99; border-radius: 4px; padding: 4px 8px; font-size: 14px; }
       .sc-del-form .sc-del-do { border: 1px solid #c0392b; background: #c0392b; color: #fff; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
@@ -648,6 +656,8 @@
   };
   // 名前の正規化（空白と敬称を除いて突き合わせ）
   const normName = (s) => String(s || '').replace(/\s+/g, '').replace(/(さん|くん|ちゃん)$/, '');
+  // 「閉じた」案件＝完了 or 拒否。保留(未完了)判定・黄色線・バッジはこれで外す。
+  const scClosed = (c) => c.is_done || c.is_rejected;
 
   function scCard(c) {
     const checks = SC_CHECKS.map(([k, lbl]) =>
@@ -655,16 +665,31 @@
     ).join('');
     const notes = (c.notes || []).slice(0, 2)
       .map((n) => `<div>${esc(typeof n === 'string' ? n : (n.text || ''))}</div>`).join('');
-    return `<div class="sc-card${c.is_done ? ' done' : ''}">
-      <div class="sc-title">${c.is_done ? '✅' : '<span class="undone">未了</span>'} ${esc(c.title)}
+    // 状態の頭記号: 拒否=🚫 / 完了=✅ / それ以外=未了
+    const head = c.is_rejected ? '<span class="rejected">🚫拒否</span>'
+      : c.is_done ? '✅' : '<span class="undone">未了</span>';
+    const rejBtn = c.is_rejected
+      ? `<button class="sc-unrej-btn" data-p="${esc(c.path)}" title="拒否を取り消して未完了に戻す">↩ 拒否解除</button>`
+      : `<button class="sc-rej-btn" data-p="${esc(c.path)}" title="この依頼を拒否で閉じる（本人が断った）">🚫</button>`;
+    const rejReason = c.is_rejected && c.reject_reason
+      ? `<div class="sc-meta">拒否理由: ${esc(c.reject_reason)}</div>` : '';
+    return `<div class="sc-card${scClosed(c) ? ' done' : ''}">
+      <div class="sc-title">${head} ${esc(c.title)}
         <span class="sc-meta">${c.checked_count}/6</span>
+        ${rejBtn}
         <button class="sc-del-btn" data-p="${esc(c.path)}" title="この依頼を削除（理由必須・archivedへ退避）">🗑</button></div>
       <div class="sc-meta">${esc(c.source)}・${esc(c.requester)}　${esc(c.received_at)}</div>
+      ${rejReason}
       <div class="sc-checks">${checks}</div>
       <div class="sc-notes">${notes}</div>
       <div class="sc-note-input">
         <input placeholder="後追いの記録を追記…" data-p="${esc(c.path)}">
         <button data-p="${esc(c.path)}">追記</button>
+      </div>
+      <div class="sc-rej-form" style="display:none">
+        <input class="sc-rej-reason" placeholder="拒否理由（任意）" data-p="${esc(c.path)}">
+        <button class="sc-rej-do" data-p="${esc(c.path)}">拒否で閉じる</button>
+        <button class="sc-rej-cancel">やめる</button>
       </div>
       <div class="sc-del-form" style="display:none">
         <input class="sc-del-reason" placeholder="削除理由（必須）" data-p="${esc(c.path)}">
@@ -678,7 +703,7 @@
     const el = $('#scList');
     if (!scState) return;
     const cases = scState.cases || [];
-    const open = cases.filter((c) => !c.is_done);
+    const open = cases.filter((c) => !scClosed(c));
     $('#scFilterDay').textContent = `この日(${targetDate.getMonth() + 1}/${targetDate.getDate()})`;
     const list = scFilter === 'all' ? cases
       : scFilter === 'day' ? cases.filter((c) => scMatchesDay(c, targetDate))
@@ -722,11 +747,11 @@
     for (const nameEl of document.querySelectorAll('.user-cell .name')) {
       const nm = normName(nameEl.textContent);
       if (!nm) continue;
-      // この人の案件: 表示日一致、または日付未記入の未完了案件
+      // この人の案件: 表示日一致、または日付未記入の未完了(オープン)案件
       const rel = cases.filter((c) => normName(c.target) === nm &&
-        (scMatchesDay(c, targetDate) || (!c.is_done && !(c.target_date || '').trim())));
+        (scMatchesDay(c, targetDate) || (!scClosed(c) && !(c.target_date || '').trim())));
       if (!rel.length) continue;
-      const pending = rel.filter((c) => !c.is_done);
+      const pending = rel.filter((c) => !scClosed(c));
       const box = badgeBox(nameEl);
       if (!box) continue;
       const mark = document.createElement('span');
@@ -737,13 +762,18 @@
         mark.textContent = `🔄${label}`;
         mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#b02a2a;background:#fdecec;border:1px solid #e8b4b4;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
-      } else {
+      } else if (rel.some((c) => c.is_done)) {
         mark.textContent = '✔変更済';
         mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#1e7a44;background:#e8f5ec;border:1px solid #b5d9c3;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
+      } else {
+        // 拒否のみ（完了なし）: 断られた依頼として灰色で示す
+        mark.textContent = '🚫拒否';
+        mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+          'color:#6b7280;background:#f1f2f4;border:1px solid #d3d6db;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
       }
       mark.title = rel.map((c) =>
-        `${c.is_done ? '✅' : `【${scStatusLabel(c)}】`} ${c.title}`).join('\n');
+        `${c.is_rejected ? '🚫拒否' : c.is_done ? '✅' : `【${scStatusLabel(c)}】`} ${c.title}`).join('\n');
       box.appendChild(mark);
     }
   }
@@ -762,8 +792,8 @@
       const nm = normName(nameEl.textContent);
       if (!nm) continue;
       const rel = cases.filter((c) => normName(c.target) === nm &&
-        (scMatchesDay(c, targetDate) || (!c.is_done && !(c.target_date || '').trim())));
-      const pending = rel.filter((c) => !c.is_done);
+        (scMatchesDay(c, targetDate) || (!scClosed(c) && !(c.target_date || '').trim())));
+      const pending = rel.filter((c) => !scClosed(c));
       if (!pending.length) continue;
       const track = tr.querySelector('.schedule-row');
       if (!track) continue;
@@ -1016,6 +1046,31 @@
       if (!r.ok) { alert(`削除失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
       scRefresh();
     }
+
+    // 依頼の拒否（本人が断った）。理由は任意。削除(archived)とは別で案件は残る・可逆。
+    if (t.matches('.sc-rej-btn')) {
+      const form = t.closest('.sc-card').querySelector('.sc-rej-form');
+      form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+      if (form.style.display === 'flex') form.querySelector('.sc-rej-reason').focus();
+    }
+    if (t.matches('.sc-rej-cancel')) {
+      const form = t.closest('.sc-rej-form');
+      form.style.display = 'none';
+      form.querySelector('.sc-rej-reason').value = '';
+    }
+    if (t.matches('.sc-rej-do')) {
+      const reason = (t.parentElement.querySelector('.sc-rej-reason').value || '').trim();
+      t.disabled = true;
+      const r = await shiftApi('/api/shift/reject', { path: t.dataset.p, value: true, reason });
+      if (!r.ok) { alert(`拒否失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
+      scRefresh();
+    }
+    if (t.matches('.sc-unrej-btn')) {
+      t.disabled = true;
+      const r = await shiftApi('/api/shift/reject', { path: t.dataset.p, value: false });
+      if (!r.ok) { alert(`取消失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
+      scRefresh();
+    }
   });
   shiftPanel.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && ev.target.matches('.sc-note-input input')) {
@@ -1023,6 +1078,9 @@
     }
     if (ev.key === 'Enter' && ev.target.matches('.sc-del-reason')) {
       ev.target.parentElement.querySelector('.sc-del-do').click();
+    }
+    if (ev.key === 'Enter' && ev.target.matches('.sc-rej-reason')) {
+      ev.target.parentElement.querySelector('.sc-rej-do').click();
     }
   });
 
