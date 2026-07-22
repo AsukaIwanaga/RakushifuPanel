@@ -778,31 +778,74 @@
     }
   }
 
-  // ===== 変更依頼の対象者の行に、目印の黄色い線を引く（シフト表を眺めて対象を探しやすく）=====
-  // updateShiftMarks と同じ名前照合。行の時間トラック(.schedule-row)の上端に横線を1本。
-  // ホバーで依頼内容がツールチップに出る（cursor:help）。Vue再描画で消えるので監視ループで張り直す。
+  // ===== 変更依頼の対象者の行に、対象区間だけ目立つ依頼ラインを引く =====
+  // 区間は「①明示の対象時間(c.req_time) → ②変更内容の時刻からの範囲 → ③全幅」の順で決める。
+  // 保留=黄ライン / 拒否=同じ位置に赤ライン＋✕（分かりやすく）/ 完了=出さない。
+  // ホバーで依頼内容がツールチップに出る。Vue再描画で消えるので監視ループで張り直す。
+  const hmToMin = (tok) => {
+    const t = String(tok).trim();
+    const c = /^(\d{1,2})[:：](\d{2})$/.exec(t);
+    if (c) return +c[1] * 60 + +c[2];
+    const d = t.replace(/[^\d]/g, '');
+    if (/^\d{3,4}$/.test(d)) return +(d.length === 3 ? d.slice(0, 1) : d.slice(0, 2)) * 60 + +d.slice(-2);
+    if (/^\d{1,2}$/.test(d)) return +d * 60;
+    return null;
+  };
+  const parseReqSpan = (s) => {
+    const parts = String(s || '').split(/\s*[-〜～~]\s*/);
+    if (parts.length !== 2) return null;
+    const a = hmToMin(parts[0]), b = hmToMin(parts[1]);
+    return (a != null && b != null && b > a) ? [a, b] : null;
+  };
+  // 依頼の対象区間。無ければnull(=全幅扱い)
+  function reqSpanOf(c) {
+    const ex = parseReqSpan(c.req_time);
+    if (ex) return ex;
+    const toks = String(c.change || '').match(/\d{1,2}[:：]\d{2}|\d{3,4}/g) || [];
+    const mins = toks.map(hmToMin).filter((v) => v != null);
+    return mins.length >= 2 ? [Math.min(...mins), Math.max(...mins)] : null;
+  }
   function updateReqLines() {
     document.querySelectorAll('.rf-req-line').forEach((e) => e.remove());
     if (isPrintPage || !scState) return;
     const cases = scState.cases || [];
-    const FULL_W = (24 - 6) * 60;  // 6:00〜24:00（1px=1分）
+    const FULL = [6 * 60, 24 * 60];  // 6:00〜24:00（1px=1分）
     for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
       const nameEl = tr.querySelector('.user-cell .name');
       if (!nameEl) continue;
       const nm = normName(nameEl.textContent);
       if (!nm) continue;
-      const rel = cases.filter((c) => normName(c.target) === nm &&
+      // 対象=この人・当日一致 or 日付未記入のオープン。状態は完了以外（保留=黄 / 拒否=赤×）
+      const rel = cases.filter((c) => normName(c.target) === nm && !c.is_done &&
         (scMatchesDay(c, targetDate) || (!scClosed(c) && !(c.target_date || '').trim())));
-      const pending = rel.filter((c) => !scClosed(c));
-      if (!pending.length) continue;
+      if (!rel.length) continue;
       const track = tr.querySelector('.schedule-row');
       if (!track) continue;
-      const line = document.createElement('div');
-      line.className = 'rf-req-line';
-      line.style.cssText = `position:absolute;left:0;width:${FULL_W}px;top:0;height:4px;` +
-        'background:#f5c518;border-radius:2px;z-index:2;cursor:help;box-shadow:0 0 0 1px rgba(180,120,0,.35);';
-      line.title = '🔄 変更依頼: ' + pending.map((c) => `【${scStatusLabel(c)}】${c.title}`).join('\n');
-      track.appendChild(line);
+      rel.forEach((c, idx) => {
+        const [s, e] = reqSpanOf(c) || FULL;
+        const top = idx * 6;   // 同じ人に複数依頼があれば縦にずらす
+        const rejected = c.is_rejected;
+        const title = (rejected ? '🚫 拒否された依頼: ' : '🔄 変更依頼: ')
+          + `${c.title}` + (rejected && c.reject_reason ? `（理由: ${c.reject_reason}）` : '');
+        const line = document.createElement('div');
+        line.className = 'rf-req-line';
+        line.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:${top}px;` +
+          'height:4px;border-radius:2px;z-index:2;cursor:help;' +
+          (rejected ? 'background:#dc2626;box-shadow:0 0 0 1px rgba(150,0,0,.4);'
+                    : 'background:#f5c518;box-shadow:0 0 0 1px rgba(180,120,0,.35);');
+        line.title = title;
+        track.appendChild(line);
+        if (rejected) {
+          const x = document.createElement('div');
+          x.className = 'rf-req-line';
+          x.textContent = '✕';
+          x.style.cssText = `position:absolute;left:${(s - 360) + (e - s) / 2 - 6}px;top:${top - 6}px;` +
+            'font:900 13px/1 sans-serif;color:#dc2626;z-index:3;pointer-events:none;' +
+            'text-shadow:0 0 2px #fff,0 0 2px #fff;';
+          x.title = title;
+          track.appendChild(x);
+        }
+      });
     }
   }
 
@@ -827,6 +870,7 @@
       `<input id="scNewTarget" placeholder="対象者 (例: 高橋心さん)">` +
       `<input id="scNewDate" placeholder="対象日 (例: 7/26)">` +
       `<input id="scNewChange" placeholder="変更内容">` +
+      `<input id="scNewReqTime" placeholder="対象時間 (任意 例 15:00-20:00 / 変更内容から自動)">` +
       `<input id="scNewRequester" placeholder="依頼者 (空欄可)">` +
       `<select id="scNewSource">${srcs.map((s) => `<option>${esc(s)}</option>`).join('')}</select>` +
       `<input id="scNewMemo" placeholder="メモ (空欄可)">` +
@@ -1006,6 +1050,7 @@
       const change = $('#scNewChange').value;
       const r = await shiftApi('/api/shift/create', {
         target, target_date: targetDate, change,
+        req_time: $('#scNewReqTime').value,
         requester: $('#scNewRequester').value,
         source: $('#scNewSource').value, memo: $('#scNewMemo').value,
       });
