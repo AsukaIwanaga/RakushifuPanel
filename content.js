@@ -453,6 +453,12 @@
       .sc-del-btn:hover { opacity: 1; }
       .sc-rej-btn { float: right; border: none; background: none; cursor: pointer; font-size: 13px; opacity: .5; padding: 0 2px; }
       .sc-rej-btn:hover { opacity: 1; }
+      .sc-edit-btn { float: right; border: none; background: none; cursor: pointer; font-size: 12px; opacity: .5; padding: 0 2px; }
+      .sc-edit-btn:hover { opacity: 1; }
+      .sc-edit-form { border: 1px dashed #b9a3dd; border-radius: 8px; padding: 6px; margin: 4px 0; }
+      .sc-edit-form input { width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; font-size: 14px; margin-bottom: 4px; box-sizing: border-box; }
+      .sc-edit-form .sc-edit-do { border: 1px solid #6b46a8; background: #6b46a8; color: #fff; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
+      .sc-edit-form .sc-edit-cancel { border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
       .sc-unrej-btn { float: right; border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; font-size: 11px; padding: 1px 6px; }
       .sc-title .rejected { color: #6b7280; }
       .sc-rej-form { display: flex; gap: 4px; margin-top: 4px; }
@@ -677,9 +683,20 @@
       <div class="sc-title">${head} ${esc(c.title)}
         <span class="sc-meta">${c.checked_count}/6</span>
         ${rejBtn}
+        <button class="sc-edit-btn" data-p="${esc(c.path)}" title="この依頼を編集（対象者/日/変更内容/対象時間）">✏️</button>
         <button class="sc-del-btn" data-p="${esc(c.path)}" title="この依頼を削除（理由必須・archivedへ退避）">🗑</button></div>
       <div class="sc-meta">${esc(c.source)}・${esc(c.requester)}　${esc(c.received_at)}</div>
       ${rejReason}
+      <div class="sc-edit-form" style="display:none">
+        <input class="sc-edit-target" value="${esc(c.target || '')}" placeholder="対象者">
+        <input class="sc-edit-date" value="${esc(c.target_date || '')}" placeholder="対象日 (例 7/26)">
+        <input class="sc-edit-change" value="${esc(c.change || '')}" placeholder="変更内容">
+        <input class="sc-edit-reqtime" value="${esc(c.req_time || '')}" placeholder="対象時間 (任意 例 15:00-20:00)">
+        <div style="display:flex;gap:4px;margin-top:4px">
+          <button class="sc-edit-do" data-p="${esc(c.path)}">保存</button>
+          <button class="sc-edit-cancel">やめる</button>
+        </div>
+      </div>
       <div class="sc-checks">${checks}</div>
       <div class="sc-notes">${notes}</div>
       <div class="sc-note-input">
@@ -1114,6 +1131,27 @@
       t.disabled = true;
       const r = await shiftApi('/api/shift/reject', { path: t.dataset.p, value: false });
       if (!r.ok) { alert(`取消失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
+      scRefresh();
+    }
+
+    // 依頼の編集（対象者/対象日/変更内容/対象時間をまとめて上書き）
+    if (t.matches('.sc-edit-btn')) {
+      const form = t.closest('.sc-card').querySelector('.sc-edit-form');
+      form.style.display = form.style.display === 'none' ? 'block' : 'none';
+      if (form.style.display === 'block') form.querySelector('.sc-edit-change').focus();
+    }
+    if (t.matches('.sc-edit-cancel')) t.closest('.sc-edit-form').style.display = 'none';
+    if (t.matches('.sc-edit-do')) {
+      const f = t.closest('.sc-edit-form');
+      t.disabled = true;
+      const r = await shiftApi('/api/shift/edit', {
+        path: t.dataset.p,
+        target: f.querySelector('.sc-edit-target').value,
+        target_date: f.querySelector('.sc-edit-date').value,
+        change: f.querySelector('.sc-edit-change').value,
+        req_time: f.querySelector('.sc-edit-reqtime').value,
+      });
+      if (!r.ok) { alert(`編集失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
       scRefresh();
     }
   });
