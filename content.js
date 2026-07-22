@@ -120,6 +120,40 @@
     return fl;
   }
 
+  // ===== モデルWS（基本WS＝曜日テンプレの人員ライン）=====
+  // LE Maker の params.ws から、その日に適用される型の時間帯別人員(F/K/FK)を出す。
+  // index.html の wsPickTpl/wsTplFor/wsHoursOf を移植（同じ結果になるよう仕様を合わせる）:
+  //  - byDate[iso].wsTpl があれば最優先
+  //  - なければ曜日割当 assign[getDay()]。値が文字列=型id固定、
+  //    {by:"le",cuts:[{ge,tpl}]} ならLE計(leSum)で分岐（ge以上で最も高い段が勝つ）
+  //  - counts[sec] は18枠(6..23時)。HOURS と同じ並び。
+  function wsPickTplId(av, leSum) {
+    if (!av) return null;
+    if (typeof av === 'string') return av;
+    const cuts = (av.cuts || []).filter((c) => c && c.tpl).slice()
+      .sort((a, b) => Number(a.ge) - Number(b.ge));
+    let pick = null;
+    for (const c of cuts) if ((leSum || 0) >= Number(c.ge)) pick = c.tpl;
+    return pick || (cuts[0] && cuts[0].tpl) || null;
+  }
+  function computeWS(params, iso, leSum) {
+    const w = params && params.ws;
+    if (!w || !Array.isArray(w.templates) || !w.templates.length) return null;
+    const o = params.byDate && params.byDate[iso];
+    let id = o && o.wsTpl;
+    if (!id) {
+      const wd = new Date(`${iso}T00:00:00`).getDay();
+      id = wsPickTplId((w.assign || {})[String(wd)], leSum);
+    }
+    const tpl = w.templates.find((t) => t.id === id);
+    if (!tpl) return null;
+    const pick = (sec) => {
+      const a = (tpl.counts || {})[sec] || [];
+      return HOURS.map((h, i) => Number(a[i]) || 0);
+    };
+    return { F: pick('F'), K: pick('K'), FK: pick('FK') };
+  }
+
   // computeDay の出力を、旧extractSheetData互換の {header, hourly} に変換
   function fetchSheet(date) {
     const label = `${date.getMonth() + 1}/${date.getDate()}`;
@@ -144,13 +178,20 @@
         'REQ（FK）': { hours: reqArr(R.reqFK), total: sumStr(R.reqFK) },
         'REQ（SUM）': { hours: reqArr(R.reqSum), total: sumStr(R.reqSum) },
       };
+      // モデルWS（曜日テンプレ）。必要行に「必要/WS」の2段で併記するため持たせる。
+      const ws = computeWS(params, iso, S.leSum);
+      const wsPack = ws ? {
+        f: { hours: ws.F, total: ws.F.reduce((a, b) => a + b, 0) },
+        k: { hours: ws.K, total: ws.K.reduce((a, b) => a + b, 0) },
+        fk: { hours: ws.FK, total: ws.FK.reduce((a, b) => a + b, 0) },
+      } : null;
       const header = {
         'LABOR%': `${(S.laborPct * 100).toFixed(1)}%`,
         'LABOR H': String(Math.round(S.totalH)),
         'SALES': String(Math.round(S.salesSum)),
         'SBP': String(Math.round(S.sbp)),
       };
-      return { header, hourly, sheetName: label, isAct: r.act };
+      return { header, hourly, wsPack, sheetName: label, isAct: r.act };
     }).catch((e) => ({ error: String(e.message || e), sheetName: label }));
   }
 
@@ -1136,18 +1177,28 @@
       // 清掃・正社員セクションにも修正客数行があれば拾ってしまうため、
       // 帯と同じ判定でフロア/キッチンだけに絞る
       if (!sectionCatOf(tr)) continue;
-      // 修正客数行のクローンにラベルと値を差し替えた行を作る
-      const mkRow = (cls, labelHtml, vals, color, tipFn, styleFn) => {
+      // 修正客数行のクローンにラベルと値を差し替えた行を作る。
+      // opts.sub があれば各セルを2段（上=vals / 下=opts.sub.vals）にする（必要/WS併記用）。
+      const mkRow = (cls, labelHtml, vals, color, tipFn, styleFn, opts) => {
         const clone = tr.cloneNode(true);
         clone.classList.add(cls);
         const cth = clone.querySelector('th.metrics-row-header');
         if (cth) cth.innerHTML = labelHtml;
         // 時刻6..24の19セルが並ぶコンテナを探して値を差し替え
         const rowCells = [...clone.querySelectorAll('*')].find((e) => e.children.length === 19);
+        const sub = opts && opts.sub;
         if (rowCells) {
           [...rowCells.children].forEach((cell, idx) => {
-            cell.textContent = idx < HOURS.length ? (vals[idx] || '') : '';
-            cell.style.color = color;
+            const top = idx < HOURS.length ? (vals[idx] || '') : '';
+            if (sub && idx < HOURS.length) {
+              const sv = sub.vals[idx] ? String(sub.vals[idx]) : '';
+              cell.innerHTML =
+                `<div style="line-height:1.05;color:${color}">${top}</div>` +
+                `<div style="line-height:1.05;font-size:9px;font-weight:600;color:${sub.color}">${sv}</div>`;
+            } else {
+              cell.textContent = top;
+              cell.style.color = color;
+            }
             cell.style.fontWeight = '700';
             if (tipFn && idx < HOURS.length) cell.title = tipFn(idx);
             if (styleFn && idx < HOURS.length) styleFn(cell, idx);
@@ -1165,11 +1216,19 @@
       // 時刻直下のヒートバー(updateStrips)も同じ理由で両セクション共通にしてある。
       let anchor = leRow;
       const tipSum = reqPack?.sum ? (i) => `REQ計 ${reqPack.sum.hours[i] || '0'}` : null;
-      const addReq = (label, row, color) => {
+      // 必要行(LE由来)の各セル下に、モデルWS(曜日テンプレ)の同区分を小さく併記する。
+      // 上=LE必要 / 下=WS。ラベルにも「合計: 必要 / WS」を出す。WSは緑系の色で区別。
+      const WS_SUB_COLOR = '#b45309'; // 琥珀。必要(緑/ティール)と区別
+      const addReq = (label, row, color, wsRow) => {
         if (!row) return;
+        const wsTot = wsRow ? ` / WS ${wsRow.total}` : '';
+        const tipFn = wsRow
+          ? (i) => `${label.slice(2)} 必要 ${row.hours[i] || '0'} / WS ${wsRow.hours[i] || 0}`
+          : tipSum;
         const r = mkRow('rf-req-row',
-          `<span style="font-weight:700;color:${color};">${label} (合計: ${row.total || '-'})</span>`,
-          row.hours, color, tipSum);
+          `<span style="font-weight:700;color:${color};">${label} (合計: ${row.total || '-'}${wsTot})</span>`,
+          row.hours, color, tipFn, null,
+          wsRow ? { sub: { vals: wsRow.hours, color: WS_SUB_COLOR } } : null);
         anchor.after(r);
         anchor = r;
       };
@@ -1188,11 +1247,12 @@
         anchor.after(r);
         anchor = r;
       };
-      addReq('必要F', reqPack?.f, '#2c6e49');
+      const ws = reqPack?.ws;
+      addReq('必要F', reqPack?.f, '#2c6e49', ws?.f);
       addAct('実F', act?.F, reqPack?.f, act?.sum?.F);
-      addReq('必要K', reqPack?.k, '#2c6e49');
+      addReq('必要K', reqPack?.k, '#2c6e49', ws?.k);
       addAct('実K', act?.K, reqPack?.k, act?.sum?.K);
-      addReq('必要FK', reqPack?.fk, '#0e7490');
+      addReq('必要FK', reqPack?.fk, '#0e7490', ws?.fk);
       // 実FK: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
       addAct('実FK', act?.FK, null, act?.sum?.FK);
     }
@@ -1324,7 +1384,7 @@
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/REQ)`;
     updateStrips(catDiffs, tip,
       hasActual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null);
-    updateLERows(hourly['LE'], { sum: req, f: reqF, k: reqK, fk: reqFK },
+    updateLERows(hourly['LE'], { sum: req, f: reqF, k: reqK, fk: reqFK, ws: res.wsPack },
       hasActual ? actual : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
     fetchWeekStats(targetDate)
