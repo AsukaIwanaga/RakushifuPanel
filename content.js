@@ -830,7 +830,7 @@
         const line = document.createElement('div');
         line.className = 'rf-req-line';
         line.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:${top}px;` +
-          'height:4px;border-radius:2px;z-index:2;cursor:help;' +
+          'height:4px;border-radius:2px;z-index:4;cursor:help;' +
           (rejected ? 'background:#dc2626;box-shadow:0 0 0 1px rgba(150,0,0,.4);'
                     : 'background:#f5c518;box-shadow:0 0 0 1px rgba(180,120,0,.35);');
         line.title = title;
@@ -840,7 +840,7 @@
           x.className = 'rf-req-line';
           x.textContent = '✕';
           x.style.cssText = `position:absolute;left:${(s - 360) + (e - s) / 2 - 6}px;top:${top - 6}px;` +
-            'font:900 13px/1 sans-serif;color:#dc2626;z-index:3;pointer-events:none;' +
+            'font:900 13px/1 sans-serif;color:#dc2626;z-index:5;pointer-events:none;' +
             'text-shadow:0 0 2px #fff,0 0 2px #fff;';
           x.title = title;
           track.appendChild(x);
@@ -1834,15 +1834,11 @@
       if (!segs || !segs.length) continue;
       const track = tr.querySelector('.schedule-row');
       if (!track) continue;
-      const trackTop = track.getBoundingClientRect().top;
       const main = tr.querySelector('.schedule-bar.isEditable, .schedule-bar.isShared');
-      const desired = tr.querySelector('.schedule-bar.isDesired');
-      // 縦位置は実測。らくしふの「確定バー→希望」の下端の直下にゴーストを置く。
-      // 希望があればその下、無ければ確定バーの下、どちらも無ければ(=休み)トラック上部。
-      const anchor = desired || main;
-      const topPx = anchor
-        ? Math.round(anchor.getBoundingClientRect().bottom - trackTop + 2)
-        : 4;
+      // 縦位置は行の一番上に固定（本人指定 2026-07-22）。以前は「確定バー→希望」の下端に
+      // 実測で合わせていたが、タスク割振(.task-assign-bar)や希望の有無・数で下端が動き、
+      // ゴーストの縦位置がズレていた。トラック上端(top:0)に固定すれば常に同じ位置に出る。
+      const topPx = 0;
       for (const a of segs) {
         const color = GHOST_GEN_COLOR[a.genre] || '#888';
         const restTxt = (Array.isArray(a.rest) && a.rest.length === 2)
