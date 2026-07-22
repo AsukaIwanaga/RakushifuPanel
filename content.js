@@ -1729,18 +1729,24 @@
       (actual?.error ? `<div class="err">実人数取得失敗: ${actual.error}</div>` : '');
     // 画面上のヒートバー: F/K別の差分（FKと計はツールチップで見せる）
     const reqFK = hourly['REQ（FK）'];
-    const mkDiff = (arr, reqRow) => (hasActual && arr) ? HOURS.map((h, i) => {
-      if (!reqRow?.hours?.[i] && !arr[i]) return null;
-      return Math.round((arr[i] - num(reqRow?.hours?.[i])) * 10) / 10;
+    // 差F/差K の供給には 実FK を 0.5 ずつ配分する（FK要員はF/K両方を半分カバーする想定・本人指定）。
+    // 実FK/必要FK の表示や実計はそのまま。fkArr を渡した区分だけ +0.5×実FK される。
+    const fkHalf = (i) => 0.5 * (actual?.FK?.[i] || 0);
+    const mkDiff = (arr, reqRow, withFk) => (hasActual && arr) ? HOURS.map((h, i) => {
+      const supply = (arr[i] || 0) + (withFk ? fkHalf(i) : 0);
+      if (!reqRow?.hours?.[i] && !supply) return null;
+      return Math.round((supply - num(reqRow?.hours?.[i])) * 10) / 10;
     }) : null;
     const catDiffs = hasActual ? {
-      F: mkDiff(actual.F, reqF), K: mkDiff(actual.K, reqK), FK: mkDiff(actual.FK, reqFK),
+      F: mkDiff(actual.F, reqF, true), K: mkDiff(actual.K, reqK, true),
+      FK: mkDiff(actual.FK, reqFK, false),
     } : null;
+    const effFK = (arr, i) => Math.round(((arr?.[i] || 0) + fkHalf(i)) * 10) / 10;
     const tip = (i) =>
-      `${HOURS[i]}時  F ${actual?.F?.[i] ?? '-'}/${reqF?.hours?.[i] || '0'}` +
-      ` ・ K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'}` +
+      `${HOURS[i]}時  F ${effFK(actual.F, i)}(実${actual?.F?.[i] ?? '-'}+FK½)/${reqF?.hours?.[i] || '0'}` +
+      ` ・ K ${effFK(actual.K, i)}(実${actual?.K?.[i] ?? '-'}+FK½)/${reqK?.hours?.[i] || '0'}` +
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
-      ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'} (実/REQ)`;
+      ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'}`;
     updateStrips(catDiffs, tip,
       hasActual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null);
     updateLERows(hourly['LE'], { sum: req, f: reqF, k: reqK, fk: reqFK, ws: res.wsPack },
