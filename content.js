@@ -796,6 +796,62 @@
   }
 
   // 名前右の「＋」ボタンから、対象者・対象日プリセットで新規起票フォームを開く
+  // ===== WowTalk用の依頼文言（コピペ用）=====
+  // 既定フォーマット（本人指定）:
+  //   「お疲れ様です。{急遽?}M月d日(曜)のシフトについて、現在HH:mm-HH:mmのところ、
+  //    {変更後}に変更願えませんでしょうか。」
+  //   ・対象日が直近1週間以内なら頭に「急遽の変更で恐れ入りますが、」を付ける
+  //   ・変更内容が "A => B" 形式なら A=現在/B=変更後。そうでなければ全文を変更後として使う
+  // ※文言をHaikuで生成する構想があるが、実行時にLLMを呼ぶ経路(APIキー/ローカルendpoint)が
+  //   未整備のため、まずは決定的テンプレートで出す。生成文はtextareaで手直し・コピー可。
+  const fmtTimeToken = (tok) => {
+    const one = (x) => {
+      const digits = String(x).replace(/[^\d]/g, '');
+      if (/^\d{3,4}$/.test(digits)) {
+        const hh = digits.length === 3 ? digits.slice(0, 1) : digits.slice(0, 2);
+        return `${+hh}:${digits.slice(-2)}`;
+      }
+      return String(x).trim();
+    };
+    const parts = String(tok).split('-');
+    return parts.length === 2 ? `${one(parts[0])}-${one(parts[1])}` : one(tok);
+  };
+  function wowtalkMessage(target, targetDateStr, change) {
+    const m = /(\d{1,2})\s*[/月]\s*(\d{1,2})/.exec(targetDateStr || '');
+    let dateLabel = (targetDateStr || '').trim(), urgent = '';
+    if (m) {
+      const mo = +m[1], da = +m[2];
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      let d = new Date(today.getFullYear(), mo - 1, da);
+      if ((d - today) / 86400000 < -180) d = new Date(today.getFullYear() + 1, mo - 1, da);
+      dateLabel = `${mo}月${da}日(${WEEKDAYS[d.getDay()]})`;
+      const diff = (d - today) / 86400000;
+      if (diff >= 0 && diff <= 7) urgent = '急遽の変更で恐れ入りますが、';
+    }
+    const parts = String(change || '').split(/\s*(?:=>|→|->|⇒)\s*/);
+    let body;
+    if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
+      body = `現在${fmtTimeToken(parts[0])}のところ、${fmtTimeToken(parts[1])}に変更願えませんでしょうか。`;
+    } else {
+      // freeformは末尾の「に変更/へ変更」を落として二重表現を防ぐ（例「14時入りに変更」→「14時入り」）
+      const after = String(change || '').trim().replace(/[にへ]変更$/, '').trim() || String(change || '').trim();
+      body = `${after}に変更願えませんでしょうか。`;
+    }
+    return `お疲れ様です。${urgent}${dateLabel}のシフトについて、${body}`;
+  }
+  // 起票直後に、コピペ用の文言を #scNewForm 内に表示する
+  function scShowWowtalk(target, targetDateStr, change) {
+    const msg = wowtalkMessage(target, targetDateStr, change);
+    const f = $('#scNewForm');
+    f.innerHTML =
+      `<div style="font-weight:700;margin-bottom:4px">📋 WowTalk用の文言（${esc(target)}）</div>` +
+      `<textarea id="scWtText" style="width:100%;height:96px;border:1px solid #ccc;border-radius:4px;` +
+      `padding:6px 8px;font-size:14px;resize:vertical;box-sizing:border-box">${esc(msg)}</textarea>` +
+      '<div style="display:flex;gap:4px;margin-top:4px">' +
+      '<button id="scWtCopy">📋 コピー</button><button id="scWtClose">閉じる</button></div>';
+    f.style.display = '';
+  }
+
   function scOpenNewFor(name) {
     shiftPanel.classList.add('open');
     localStorage.setItem('rfShiftOpen', '1');
@@ -887,17 +943,28 @@
     }
     if (t.id === 'scNewCreate') {
       t.disabled = true;
+      const target = $('#scNewTarget').value, targetDate = $('#scNewDate').value;
+      const change = $('#scNewChange').value;
       const r = await shiftApi('/api/shift/create', {
-        target: $('#scNewTarget').value, target_date: $('#scNewDate').value,
-        change: $('#scNewChange').value, requester: $('#scNewRequester').value,
+        target, target_date: targetDate, change,
+        requester: $('#scNewRequester').value,
         source: $('#scNewSource').value, memo: $('#scNewMemo').value,
       });
       t.disabled = false;
       if (!r.ok) { alert(`作成失敗: ${r.error || r.data?.error || ''}`); return; }
-      scCloseNewForm();
+      scShowWowtalk(target, targetDate, change);   // 起票直後にWowTalk用文言を出す
       scRefresh();
     }
     if (t.id === 'scNewCancel') scCloseNewForm();
+    if (t.id === 'scWtClose') scCloseNewForm();
+    if (t.id === 'scWtCopy') {
+      const ta = $('#scWtText');
+      const text = ta ? ta.value : '';
+      try { await navigator.clipboard.writeText(text); }
+      catch { ta.select(); document.execCommand('copy'); }  // 権限が無い場合のフォールバック
+      t.textContent = '✓ コピーしました';
+      setTimeout(() => { if (t) t.textContent = '📋 コピー'; }, 1500);
+    }
 
     // 依頼の削除（恒久削除ではなく archived/ 退避・可逆）。歯止めは「理由必須」。
     if (t.matches('.sc-del-btn')) {
