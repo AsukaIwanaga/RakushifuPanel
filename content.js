@@ -1022,18 +1022,21 @@
     const parts = String(tok).split('-');
     return parts.length === 2 ? `${one(parts[0])}-${one(parts[1])}` : one(tok);
   };
-  function wowtalkMessage(target, targetDateStr, change, requester) {
+  // 対象日→ {label:"M月d日(曜)", urgent:"急遽…"|""}（直近1週間以内でurgent）
+  const dateLabelOf = (targetDateStr) => {
     const m = /(\d{1,2})\s*[/月]\s*(\d{1,2})/.exec(targetDateStr || '');
-    let dateLabel = (targetDateStr || '').trim(), urgent = '';
-    if (m) {
-      const mo = +m[1], da = +m[2];
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      let d = new Date(today.getFullYear(), mo - 1, da);
-      if ((d - today) / 86400000 < -180) d = new Date(today.getFullYear() + 1, mo - 1, da);
-      dateLabel = `${mo}月${da}日(${WEEKDAYS[d.getDay()]})`;
-      const diff = (d - today) / 86400000;
-      if (diff >= 0 && diff <= 7) urgent = '急遽の変更で恐れ入りますが、';
-    }
+    if (!m) return { label: (targetDateStr || '').trim(), urgent: '' };
+    const mo = +m[1], da = +m[2];
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    let d = new Date(today.getFullYear(), mo - 1, da);
+    if ((d - today) / 86400000 < -180) d = new Date(today.getFullYear() + 1, mo - 1, da);
+    const diff = (d - today) / 86400000;
+    return { label: `${mo}月${da}日(${WEEKDAYS[d.getDay()]})`,
+             urgent: (diff >= 0 && diff <= 7) ? '急遽の変更で恐れ入りますが、' : '' };
+  };
+  // ①送信用（依頼/募集）文言
+  function wowtalkMessage(target, targetDateStr, change, requester) {
+    const { label: dateLabel, urgent } = dateLabelOf(targetDateStr);
     // 全員宛（休み募集）は「代われる人いませんか」の募集メッセージにする
     if (target === '全員') {
       const who = (requester || '').trim();
@@ -1052,17 +1055,31 @@
     }
     return `お疲れ様です。${urgent}${dateLabel}のシフトについて、${body}`;
   }
-  // 起票直後に、コピペ用の文言を #scNewForm 内に表示する
+  // ②本人向け（反映完了）文言。person=本人（通常は対象者/全員なら発信者）
+  function wowtalkDoneMessage(person, targetDateStr) {
+    const { label: dateLabel } = dateLabelOf(targetDateStr);
+    const who = (person || '').trim();
+    return `お疲れ様です。${who ? `${who}さん、` : ''}${dateLabel}のシフトの件、`
+      + '反映しました！ご対応ありがとうございます。';
+  }
+  // 起票/編集直後に、コピペ用の文言（①送信用 ②反映完了）を #scNewForm 内に2枚出す
   function scShowWowtalk(target, targetDateStr, change, requester) {
-    const msg = wowtalkMessage(target, targetDateStr, change, requester);
-    const label = target === '全員' ? `全員宛・休み募集（${esc(requester || '')}）` : esc(target);
+    const person = (target && target !== '全員') ? target : (requester || '');
+    const sendMsg = wowtalkMessage(target, targetDateStr, change, requester);
+    const doneMsg = wowtalkDoneMessage(person, targetDateStr);
+    const label = target === '全員' ? `全員宛・休み募集（${esc(requester || '')}）`
+      : (target ? esc(target) : '対象者なし');
+    const block = (head, msg) =>
+      `<div style="font-weight:700;margin:6px 0 3px">${head}</div>` +
+      `<textarea class="sc-wt-text" style="width:100%;height:76px;border:1px solid #ccc;border-radius:4px;` +
+      `padding:6px 8px;font-size:14px;resize:vertical;box-sizing:border-box">${esc(msg)}</textarea>` +
+      '<div style="margin-top:3px"><button class="sc-wt-copy">📋 コピー</button></div>';
     const f = $('#scNewForm');
     f.innerHTML =
-      `<div style="font-weight:700;margin-bottom:4px">📋 WowTalk用の文言（${label}）</div>` +
-      `<textarea id="scWtText" style="width:100%;height:96px;border:1px solid #ccc;border-radius:4px;` +
-      `padding:6px 8px;font-size:14px;resize:vertical;box-sizing:border-box">${esc(msg)}</textarea>` +
-      '<div style="display:flex;gap:4px;margin-top:4px">' +
-      '<button id="scWtCopy">📋 コピー</button><button id="scWtClose">閉じる</button></div>';
+      `<div style="font-weight:700;margin-bottom:2px">📋 WowTalk用の文言（${label}）</div>` +
+      block(`① 全体/相手に送信（${target === '全員' ? '休み募集' : '依頼'}）`, sendMsg) +
+      block('② 本人へ（反映できたら送る）', doneMsg) +
+      '<div style="margin-top:6px"><button id="scWtClose">閉じる</button></div>';
     f.style.display = '';
   }
 
@@ -1156,11 +1173,13 @@
       scRefresh();
     }
     if (t.id === 'scNewCreate') {
-      t.disabled = true;
       const zenin = $('#scNewZenin') && $('#scNewZenin').checked;
       const person = ($('#scNewTarget').value || '').trim();   // 全員宛では「休みにしたい人」
       const targetDate = $('#scNewDate').value;
       const change = $('#scNewChange').value;
+      // 対象者が空（=対象者なし・他の人に募集ラインを出さない）は誤入力しやすいので確認する
+      if (!zenin && !person && !confirm('対象者なしで間違いありませんか？\n（他の人の行に募集の黄色ラインは出ません）')) return;
+      t.disabled = true;
       // 全員宛（休み募集）: target='全員' / 発信者=休みたい人。通常は入力どおり。
       const target = zenin ? '全員' : person;
       const requester = zenin ? person.replace(/\s+/g, '') : $('#scNewRequester').value;
@@ -1177,11 +1196,12 @@
     }
     if (t.id === 'scNewCancel') scCloseNewForm();
     if (t.id === 'scWtClose') scCloseNewForm();
-    if (t.id === 'scWtCopy') {
-      const ta = $('#scWtText');
-      const text = ta ? ta.value : '';
+    if (t.matches('.sc-wt-copy')) {
+      // このボタンの直前の textarea をコピー（①送信用 / ②反映完了 のそれぞれ）
+      const ta = t.closest('div').previousElementSibling;
+      const text = ta && ta.matches('.sc-wt-text') ? ta.value : '';
       try { await navigator.clipboard.writeText(text); }
-      catch { ta.select(); document.execCommand('copy'); }  // 権限が無い場合のフォールバック
+      catch { if (ta) { ta.select(); document.execCommand('copy'); } }  // 権限が無い場合のフォールバック
       t.textContent = '✓ コピーしました';
       setTimeout(() => { if (t) t.textContent = '📋 コピー'; }, 1500);
     }
