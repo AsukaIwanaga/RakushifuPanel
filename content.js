@@ -42,7 +42,7 @@
 
   const CONFIRM_POLL_MS = 5 * 60 * 1000; // 未確定チェックの間隔
   const URL_WATCH_MS = 1500;
-  const DRAFT_POLL_MS = 15000;   // 海賊版原案の自動追従ポーリング間隔（Tailscaleローカルなので軽い）
+  const DRAFT_POLL_MS = 10000;   // 海賊版原案の自動追従ポーリング間隔（Tailscaleローカルなので軽い）
   const isPrintPage = location.pathname.includes('/schedules/print');
 
   // ===== ユーティリティ =====
