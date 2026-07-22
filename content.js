@@ -142,8 +142,11 @@
     const o = params.byDate && params.byDate[iso];
     let id = o && o.wsTpl;
     if (!id) {
-      const wd = new Date(`${iso}T00:00:00`).getDay();
-      id = wsPickTplId((w.assign || {})[String(wd)], leSum);
+      // 月別割当(assignM[YYYY-MM]) > 既定(assign)。月別に無い曜日は既定へフォールバック
+      // （海賊版らくしふの月別モデルWSと同一仕様・2026-07-22）
+      const wd = String(new Date(`${iso}T00:00:00`).getDay());
+      const mAv = ((w.assignM || {})[iso.slice(0, 7)] || {})[wd];
+      id = wsPickTplId(mAv !== undefined ? mAv : (w.assign || {})[wd], leSum);
     }
     const tpl = w.templates.find((t) => t.id === id);
     if (!tpl) return null;
