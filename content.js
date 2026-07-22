@@ -591,6 +591,7 @@
     taskRowsCache = null;   // タスクシートも再取得
     leMakerCache = null;    // LE Maker のdata/paramsも取り直す
     storeTaskMapCache = null;
+    lastDraftDay = null;    // ShiftDraft原案も取り直す
     renderSheet();
     renderUnconfirmed();
   });
@@ -1323,6 +1324,7 @@
       $('#stats').innerHTML = `<span class="err">${res.error}: ${res.sheetName}</span>`;
       renderTasks(); // 取得不可でもタスク欄は独立して更新する
       renderDraft().catch(() => {});
+    updateDraftGhosts().catch(() => {});
       updateStrips(null);
       updateLERows(null);
       return;
@@ -1432,6 +1434,7 @@
       .catch(() => {});
     renderTasks();
     renderDraft().catch(() => {});
+    updateDraftGhosts().catch(() => {});
   }
 
   async function renderTasks() {
@@ -1550,6 +1553,73 @@
       : '<span class="muted">この日の原案なし</span>';
   }
 
+  // ===== らくしふ各人の行に、その人のShiftDraft原案を薄いバーで重ねる =====
+  // 目的: らくしふの確定ライン（.schedule-bar）の下に「海賊版らくしふで描いた場合のシフト」を
+  //       薄く出し、確定作業の下敷きにする。休憩は描かない（本人指定）。
+  // DOM実測(2026-07-22 OneDay):
+  //   行 = tr.user-cell-container.table-body-row、行内に data-user-id を持つ要素あり。
+  //   配置基準 = .schedule-row(position:relative・left=6:00原点/1px=1分)。出勤行・休み行の
+  //   両方に存在する（.schedule-bar-wrapper は出勤行にしか無いので使わない＝原案あり・らくしふ
+  //   休みの人＝一番見たいケースを取りこぼす。実測で確認済み）。
+  //   ゴースト style.left=(開始分-360)px / width=(分数)px。確定バーと同じ式（谷本300px=本体300pxで一致確認）。
+  //   縦: 確定バー top≈2 h60 / 希望(.isDesired) 既定 top≈68。
+  //   → 出勤者は希望を確定バー直下へ寄せ、原案ゴーストはその下（本人指定「希望は上・原案は下」）。
+  //     休みの人は確定バーが無いので、ゴーストを上段（バーがあるべき位置）に出す。
+  const GHOST_GEN_COLOR = { F: '#2563eb', K: '#d97706', FK: '#0e7490' };
+  const DESIRED_TOP = 60;   // 出勤者の希望バーを寄せる位置(px)＝確定バーの直下
+  const GHOST_TOP = 70;     // 出勤者の原案ゴーストの位置(px)＝希望のさらに下
+  const GHOST_TOP_OFF = 4;  // 休みの人のゴースト位置＝上段（確定バーが無い所に立てる）
+  let lastDraftDay = null;  // {iso, byUser: Map<user_id,[seg,...]>}
+
+  async function loadDraftDay(iso) {
+    if (lastDraftDay && lastDraftDay.iso === iso) return lastDraftDay.byUser;
+    const r = await draftApi('/api/draft-day?date=' + iso);
+    const byUser = new Map();
+    if (r && r.ok && r.data && Array.isArray(r.data.assignments)) {
+      for (const a of r.data.assignments) {
+        if (a.s == null || a.e == null) continue;
+        if (!byUser.has(a.user_id)) byUser.set(a.user_id, []);
+        byUser.get(a.user_id).push(a);
+      }
+    }
+    lastDraftDay = { iso, byUser };
+    return byUser;
+  }
+
+  async function updateDraftGhosts() {
+    document.querySelectorAll('.rf-draft-ghost').forEach((e) => e.remove());
+    if (isPrintPage || !onOneDayTarget()) return;
+    const byUser = await loadDraftDay(ymd(targetDate));
+    if (!byUser || !byUser.size) return;
+    const hm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+    for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
+      const idEl = tr.querySelector('[data-user-id]');
+      if (!idEl) continue;
+      const segs = byUser.get(Number(idEl.getAttribute('data-user-id')));
+      if (!segs || !segs.length) continue;
+      const track = tr.querySelector('.schedule-row');
+      if (!track) continue;
+      const main = tr.querySelector('.schedule-bar.isEditable, .schedule-bar.isShared');
+      // 出勤者のみ希望バーを確定バー直下へ寄せる（Vue再描画で戻るため毎回セットし直す）。
+      if (main) {
+        const desired = tr.querySelector('.schedule-bar.isDesired');
+        if (desired) desired.style.top = `${DESIRED_TOP}px`;
+      }
+      const topPx = main ? GHOST_TOP : GHOST_TOP_OFF;
+      for (const a of segs) {
+        const g = document.createElement('div');
+        g.className = 'rf-draft-ghost';
+        g.style.cssText =
+          `position:absolute;left:${a.s - 360}px;width:${a.e - a.s}px;top:${topPx}px;` +
+          `height:6px;border-radius:3px;background:${GHOST_GEN_COLOR[a.genre] || '#888'};` +
+          'opacity:.4;pointer-events:none;z-index:1;';
+        g.title = `原案(ShiftDraft) ${a.name || ''} ${hm(a.s)}-${hm(a.e)}`
+          + (main ? '' : '（らくしふは休み）');
+        track.appendChild(g);
+      }
+    }
+  }
+
   // 注入がセクション単位で欠けていないかを見る。
   // 経緯(2026-07-22): 以前は「.rf-le-row が1つでもあれば張り直さない」判定だったため、
   // フロアにだけ入った状態でキッチンが後から描画されると永久に埋まらなかった
@@ -1579,6 +1649,11 @@
     if (lastStrip && !stripsIntact()) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs);
     if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act);
     if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks();
+    // 原案ゴースト: 対象日に原案があるのに消えていたら張り直す（希望の寄せもここで戻る）
+    if (lastDraftDay && lastDraftDay.byUser && lastDraftDay.byUser.size &&
+        onOneDayTarget() && !document.querySelector('.rf-draft-ghost')) {
+      updateDraftGhosts().catch(() => {});
+    }
     updateReqButtons(); // 再描画で消えた＋ボタンの張り直し(既存行はスキップ)
     if (location.href === lastHref) return;
     lastHref = location.href;
