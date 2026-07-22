@@ -1558,17 +1558,16 @@
   //       薄く出し、確定作業の下敷きにする。休憩は描かない（本人指定）。
   // DOM実測(2026-07-22 OneDay):
   //   行 = tr.user-cell-container.table-body-row、行内に data-user-id を持つ要素あり。
-  //   配置基準 = .schedule-row(position:relative・left=6:00原点/1px=1分)。出勤行・休み行の
+  //   横の配置基準 = .schedule-row(position:relative・left=6:00原点/1px=1分)。出勤行・休み行の
   //   両方に存在する（.schedule-bar-wrapper は出勤行にしか無いので使わない＝原案あり・らくしふ
   //   休みの人＝一番見たいケースを取りこぼす。実測で確認済み）。
   //   ゴースト style.left=(開始分-360)px / width=(分数)px。確定バーと同じ式（谷本300px=本体300pxで一致確認）。
-  //   縦: 確定バー top≈2 h60 / 希望(.isDesired) 既定 top≈68。
-  //   → 出勤者は希望を確定バー直下へ寄せ、原案ゴーストはその下（本人指定「希望は上・原案は下」）。
-  //     休みの人は確定バーが無いので、ゴーストを上段（バーがあるべき位置）に出す。
+  //   縦位置は【必ず実測】で「確定バー→希望 の下」に置く。固定pxは禁物:
+  //     行高・バー高がビューで変わる（谷本 8/1=行高68/確定h32 、7/25=98/60 と別物）。
+  //     以前は固定70pxが .schedule-row 基準で行外(row-rel72>行高68)に落ち、ゴーストが1行下＝
+  //     隣の人の位置に出て「整合性が取れていない」状態になっていた。
+  //     希望(.isDesired)の下に余白があるので、希望は動かさず、その直下へ置く。
   const GHOST_GEN_COLOR = { F: '#2563eb', K: '#d97706', FK: '#0e7490' };
-  const DESIRED_TOP = 60;   // 出勤者の希望バーを寄せる位置(px)＝確定バーの直下
-  const GHOST_TOP = 70;     // 出勤者の原案ゴーストの位置(px)＝希望のさらに下
-  const GHOST_TOP_OFF = 4;  // 休みの人のゴースト位置＝上段（確定バーが無い所に立てる）
   let lastDraftDay = null;  // {iso, byUser: Map<user_id,[seg,...]>}
 
   async function loadDraftDay(iso) {
@@ -1599,20 +1598,22 @@
       if (!segs || !segs.length) continue;
       const track = tr.querySelector('.schedule-row');
       if (!track) continue;
+      const trackTop = track.getBoundingClientRect().top;
       const main = tr.querySelector('.schedule-bar.isEditable, .schedule-bar.isShared');
-      // 出勤者のみ希望バーを確定バー直下へ寄せる（Vue再描画で戻るため毎回セットし直す）。
-      if (main) {
-        const desired = tr.querySelector('.schedule-bar.isDesired');
-        if (desired) desired.style.top = `${DESIRED_TOP}px`;
-      }
-      const topPx = main ? GHOST_TOP : GHOST_TOP_OFF;
+      const desired = tr.querySelector('.schedule-bar.isDesired');
+      // 縦位置は実測。らくしふの「確定バー→希望」の下端の直下にゴーストを置く。
+      // 希望があればその下、無ければ確定バーの下、どちらも無ければ(=休み)トラック上部。
+      const anchor = desired || main;
+      const topPx = anchor
+        ? Math.round(anchor.getBoundingClientRect().bottom - trackTop + 2)
+        : 4;
       for (const a of segs) {
         const g = document.createElement('div');
         g.className = 'rf-draft-ghost';
         g.style.cssText =
           `position:absolute;left:${a.s - 360}px;width:${a.e - a.s}px;top:${topPx}px;` +
-          `height:6px;border-radius:3px;background:${GHOST_GEN_COLOR[a.genre] || '#888'};` +
-          'opacity:.4;pointer-events:none;z-index:1;';
+          `height:5px;border-radius:3px;background:${GHOST_GEN_COLOR[a.genre] || '#888'};` +
+          'opacity:.55;pointer-events:none;z-index:3;';
         g.title = `原案(ShiftDraft) ${a.name || ''} ${hm(a.s)}-${hm(a.e)}`
           + (main ? '' : '（らくしふは休み）');
         track.appendChild(g);
