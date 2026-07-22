@@ -876,8 +876,10 @@
         const [s, e] = reqSpanOf(c) || FULL;
         const top = idx * 6;   // 同じ人に複数依頼があれば縦にずらす
         const rejected = c.is_rejected;
-        const title = (rejected ? '🚫 拒否された依頼: ' : '🔄 変更依頼: ')
-          + `${c.title}` + (rejected && c.reject_reason ? `（理由: ${c.reject_reason}）` : '');
+        // ホバーで状態が分かるように、状態語(依頼中→承諾待ち→反映待ち…)を先頭に出す
+        const title = rejected
+          ? `🚫 拒否: ${c.title}` + (c.reject_reason ? `（理由: ${c.reject_reason}）` : '')
+          : `🔄 ${scStatusLabel(c)}: ${c.title}`;
         const line = document.createElement('div');
         line.className = 'rf-req-line';
         line.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:${top}px;` +
