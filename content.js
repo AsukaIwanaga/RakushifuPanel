@@ -701,6 +701,7 @@
     scState = r.data;
     scRenderList();
     updateShiftMarks();
+    updateReqLines();
   }
 
   // 6チェックの最初の未完了工程を「今の状態」として言葉で返す（依頼中→承諾待ち→…）
@@ -744,6 +745,34 @@
       mark.title = rel.map((c) =>
         `${c.is_done ? '✅' : `【${scStatusLabel(c)}】`} ${c.title}`).join('\n');
       box.appendChild(mark);
+    }
+  }
+
+  // ===== 変更依頼の対象者の行に、目印の黄色い線を引く（シフト表を眺めて対象を探しやすく）=====
+  // updateShiftMarks と同じ名前照合。行の時間トラック(.schedule-row)の上端に横線を1本。
+  // ホバーで依頼内容がツールチップに出る（cursor:help）。Vue再描画で消えるので監視ループで張り直す。
+  function updateReqLines() {
+    document.querySelectorAll('.rf-req-line').forEach((e) => e.remove());
+    if (isPrintPage || !scState) return;
+    const cases = scState.cases || [];
+    const FULL_W = (24 - 6) * 60;  // 6:00〜24:00（1px=1分）
+    for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
+      const nameEl = tr.querySelector('.user-cell .name');
+      if (!nameEl) continue;
+      const nm = normName(nameEl.textContent);
+      if (!nm) continue;
+      const rel = cases.filter((c) => normName(c.target) === nm &&
+        (scMatchesDay(c, targetDate) || (!c.is_done && !(c.target_date || '').trim())));
+      const pending = rel.filter((c) => !c.is_done);
+      if (!pending.length) continue;
+      const track = tr.querySelector('.schedule-row');
+      if (!track) continue;
+      const line = document.createElement('div');
+      line.className = 'rf-req-line';
+      line.style.cssText = `position:absolute;left:0;width:${FULL_W}px;top:0;height:4px;` +
+        'background:#f5c518;border-radius:2px;z-index:2;cursor:help;box-shadow:0 0 0 1px rgba(180,120,0,.35);';
+      line.title = '🔄 変更依頼: ' + pending.map((c) => `【${scStatusLabel(c)}】${c.title}`).join('\n');
+      track.appendChild(line);
     }
   }
 
@@ -1330,12 +1359,17 @@
       const WS_SUB_COLOR = '#b45309'; // 琥珀。必要(緑/ティール)と区別
       const addReq = (label, row, color, wsRow) => {
         if (!row) return;
-        const wsTot = wsRow ? ` / WS ${wsRow.total}` : '';
         const tipFn = wsRow
-          ? (i) => `${label.slice(2)} 必要 ${row.hours[i] || '0'} / WS ${wsRow.hours[i] || 0}`
+          ? (i) => `${label.slice(2)} 上=必要 ${row.hours[i] || '0'} / 下=WS ${wsRow.hours[i] || 0}`
           : tipSum;
-        const r = mkRow('rf-req-row',
-          `<span style="font-weight:700;color:${color};">${label} (合計: ${row.total || '-'}${wsTot})</span>`,
+        // ラベルの色をセルの上下段と一致させる: 上段(必要)=color / 下段(WS)=琥珀。
+        // 「上＝必要 / 下＝WS」を明示して、2段のどちらがどちらか一目で分かるようにする。
+        const labelHtml = wsRow
+          ? `<span style="font-weight:700;color:${color};">${label} ${row.total || '-'}</span>`
+            + `<span style="font-weight:700;color:${WS_SUB_COLOR};">／WS ${wsRow.total}</span>`
+            + '<span style="font-weight:400;font-size:9px;color:#9aa8b5;"> 上必要/下WS</span>'
+          : `<span style="font-weight:700;color:${color};">${label} (合計: ${row.total || '-'})</span>`;
+        const r = mkRow('rf-req-row', labelHtml,
           row.hours, color, tipFn, null,
           wsRow ? { sub: { vals: wsRow.hours, color: WS_SUB_COLOR } } : null);
         anchor.after(r);
@@ -1772,6 +1806,7 @@
     guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs); });
     guarded('leRows', () => { if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
+    guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
     // 原案ゴースト: 対象日に原案があるのに消えていたら張り直す
     if (lastDraftDay && lastDraftDay.byUser && lastDraftDay.byUser.size &&
         onOneDayTarget() && !document.querySelector('.rf-draft-ghost')) {
@@ -1785,6 +1820,7 @@
       renderSheet();
       scRenderList();      // 「この日」フィルタと依頼マークを新しい日付へ追従
       updateShiftMarks();
+      updateReqLines();
     }
   }, URL_WATCH_MS));
 
