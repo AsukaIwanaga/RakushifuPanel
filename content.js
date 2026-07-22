@@ -1609,15 +1609,32 @@
         ? Math.round(anchor.getBoundingClientRect().bottom - trackTop + 2)
         : 4;
       for (const a of segs) {
-        const g = document.createElement('div');
-        g.className = 'rf-draft-ghost';
-        g.style.cssText =
-          `position:absolute;left:${a.s - 360}px;width:${a.e - a.s}px;top:${topPx}px;` +
-          `height:5px;border-radius:3px;background:${GHOST_GEN_COLOR[a.genre] || '#888'};` +
-          'opacity:.55;pointer-events:none;z-index:3;';
-        g.title = `原案(ShiftDraft) ${a.name || ''} ${hm(a.s)}-${hm(a.e)}`
+        const color = GHOST_GEN_COLOR[a.genre] || '#888';
+        const restTxt = (Array.isArray(a.rest) && a.rest.length === 2)
+          ? `　休 ${hm(a.rest[0])}-${hm(a.rest[1])}` : '';
+        const title = `原案(ShiftDraft) ${a.name || ''} ${hm(a.s)}-${hm(a.e)}${restTxt}`
           + (main ? '' : '（らくしふは休み）');
-        track.appendChild(g);
+        const bar = (l, r) => {
+          if (r <= l) return;
+          const g = document.createElement('div');
+          g.className = 'rf-draft-ghost';
+          g.style.cssText =
+            `position:absolute;left:${l - 360}px;width:${r - l}px;top:${topPx}px;` +
+            `height:5px;border-radius:3px;background:${color};` +
+            'opacity:.55;pointer-events:none;z-index:3;';
+          g.title = title;
+          track.appendChild(g);
+        };
+        // 休憩は帯を切って隙間にする（本人指定「休憩は空でいい」＝塗らずに空ける）。
+        // rest=[開始,終了]分。区間を [s,rest0] と [rest1,e] に分けて描く。
+        // 不正値対策で s..e にクランプし、はみ出す/潰れる区間は bar() 側で捨てる。
+        if (Array.isArray(a.rest) && a.rest.length === 2) {
+          const rs = Math.max(a.s, Math.min(a.rest[0], a.e));
+          const re = Math.max(a.s, Math.min(a.rest[1], a.e));
+          if (re > rs) { bar(a.s, rs); bar(re, a.e); } else { bar(a.s, a.e); }
+        } else {
+          bar(a.s, a.e);
+        }
       }
     }
   }
