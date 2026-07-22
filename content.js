@@ -108,6 +108,18 @@
     return leMakerCache;
   }
 
+  // 合計保存の整数丸め（最大剰余法）: 計=round(実数和)を先に確定し、各セルは切捨て→小数部の大きい順に+1。
+  // 時間帯別の表示値の和が合計表示と必ず一致する（LEの表示専用。REQ等の計算は実数のまま）
+  function apportionInt(arr) {
+    const v = arr.map((x) => Math.max(0, Number(x) || 0));
+    const total = Math.round(v.reduce((a, b) => a + b, 0));
+    const fl = v.map(Math.floor);
+    let rem = total - fl.reduce((a, b) => a + b, 0);
+    v.map((x, i) => ({ i, f: x - fl[i] })).sort((a, b) => b.f - a.f)
+      .forEach((o) => { if (rem > 0) { fl[o.i]++; rem--; } });
+    return fl;
+  }
+
   // computeDay の出力を、旧extractSheetData互換の {header, hourly} に変換
   function fetchSheet(date) {
     const label = `${date.getMonth() + 1}/${date.getDate()}`;
@@ -121,8 +133,8 @@
       }
       const r = eng.computeDay(data, params, iso);
       const R = r.rows, S = r.summary;
-      // LE: 0も「0」表示（整数丸め）。REQ: 0は空欄（旧シート挙動）
-      const leArr = HOURS.map((h, i) => String(Math.round(R.le[i] || 0)));
+      // LE: 0も「0」表示（最大剰余法＝時間帯の和がLE計と一致）。REQ: 0は空欄（旧シート挙動）
+      const leArr = apportionInt(HOURS.map((h, i) => R.le[i] || 0)).map((v) => String(v));
       const reqArr = (a) => HOURS.map((h, i) => (a[i] ? String(Math.round(a[i] * 10) / 10) : ''));
       const sumStr = (a) => String(Math.round(a.reduce((x, y) => x + y, 0)));
       const hourly = {
