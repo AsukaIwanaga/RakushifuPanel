@@ -857,7 +857,7 @@
     return mins.length >= 2 ? [Math.min(...mins), Math.max(...mins)] : null;
   }
   function updateReqLines() {
-    document.querySelectorAll('.rf-req-line').forEach((e) => e.remove());
+    document.querySelectorAll('.rf-req-line, .rf-req-x').forEach((e) => e.remove());
     if (isPrintPage || !scState) return;
     const cases = scState.cases || [];
     const FULL = [6 * 60, 24 * 60];  // 6:00〜24:00（1px=1分）
@@ -880,27 +880,60 @@
         const title = rejected
           ? `🚫 拒否: ${c.title}` + (c.reject_reason ? `（理由: ${c.reject_reason}）` : '')
           : `🔄 ${scStatusLabel(c)}: ${c.title}`;
+        // 当たり判定を稼ぐため要素は少し高め(10px)にし、色帯は上4pxだけ描く(背景グラデ)。
+        // ホバーは自前ツールチップ(即時表示)。ネイティブtitleの「?」カーソル＋遅延はやめる。
+        const bg = rejected ? '#dc2626' : '#f5c518';
         const line = document.createElement('div');
         line.className = 'rf-req-line';
+        line.dataset.tip = title;
         line.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:${top}px;` +
-          'height:4px;border-radius:2px;z-index:4;cursor:help;' +
-          (rejected ? 'background:#dc2626;box-shadow:0 0 0 1px rgba(150,0,0,.4);'
-                    : 'background:#f5c518;box-shadow:0 0 0 1px rgba(180,120,0,.35);');
-        line.title = title;
+          'height:8px;z-index:4;cursor:default;' +
+          `background:linear-gradient(${bg},${bg}) top left/100% 4px no-repeat;`;
         track.appendChild(line);
         if (rejected) {
           const x = document.createElement('div');
-          x.className = 'rf-req-line';
+          x.className = 'rf-req-x';
           x.textContent = '✕';
           x.style.cssText = `position:absolute;left:${(s - 360) + (e - s) / 2 - 6}px;top:${top - 6}px;` +
             'font:900 13px/1 sans-serif;color:#dc2626;z-index:5;pointer-events:none;' +
             'text-shadow:0 0 2px #fff,0 0 2px #fff;';
-          x.title = title;
           track.appendChild(x);
         }
       });
     }
   }
+
+  // 依頼ライン用の即時ツールチップ（ネイティブtitleの「?」カーソル＋表示遅延をやめる）。
+  // .rf-req-line の data-tip をカーソル脇に即座に出す。リスナーは1回だけ張る。
+  let rfTip = null;
+  const ensureRfTip = () => {
+    if (rfTip) return rfTip;
+    rfTip = document.createElement('div');
+    rfTip.className = 'rf-line-tip';
+    rfTip.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;display:none;' +
+      'background:#1f2937;color:#fff;font:600 12px/1.45 -apple-system,"Hiragino Sans",sans-serif;' +
+      'padding:5px 9px;border-radius:6px;box-shadow:0 2px 10px rgba(0,0,0,.35);max-width:340px;white-space:pre-line;';
+    document.body.appendChild(rfTip);
+    return rfTip;
+  };
+  document.addEventListener('mouseover', (ev) => {
+    const el = ev.target.closest && ev.target.closest('.rf-req-line');
+    if (!el || !el.dataset.tip) return;
+    const tip = ensureRfTip();
+    tip.textContent = el.dataset.tip;
+    tip.style.display = 'block';
+  });
+  document.addEventListener('mousemove', (ev) => {
+    if (!rfTip || rfTip.style.display === 'none') return;
+    let x = ev.clientX + 12, y = ev.clientY + 14;
+    if (x + rfTip.offsetWidth > innerWidth) x = ev.clientX - rfTip.offsetWidth - 12;
+    if (y + rfTip.offsetHeight > innerHeight) y = ev.clientY - rfTip.offsetHeight - 12;
+    rfTip.style.left = `${Math.max(0, x)}px`;
+    rfTip.style.top = `${Math.max(0, y)}px`;
+  });
+  document.addEventListener('mouseout', (ev) => {
+    if (rfTip && ev.target.closest && ev.target.closest('.rf-req-line')) rfTip.style.display = 'none';
+  });
 
   // 表示中の日を対象日欄の既定値に使う（"7/21" 形式）
   const scDateStr = () => `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
