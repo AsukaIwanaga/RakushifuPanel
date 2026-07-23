@@ -473,6 +473,8 @@
       #scNewForm select.rf-tsel, .sc-edit-form select.rf-tsel { width: auto !important; min-width: 44px; padding: 3px 4px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; margin: 0; background: #fff; }
       .sc-unrej-btn { float: right; border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; font-size: 11px; padding: 1px 6px; }
       .sc-title .rejected { color: #6b7280; }
+      .sc-title .sc-nodate { font-size: 10px; font-weight: 700; color: #b45309; background: #fdf3e3;
+        border: 1px solid #e8cfa4; border-radius: 4px; padding: 1px 4px; white-space: nowrap; }
       .sc-rej-form { display: flex; gap: 4px; margin-top: 4px; }
       .sc-rej-form input { flex: 1; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; font-size: 14px; }
       .sc-rej-form .sc-rej-do { border: 1px solid #6b7280; background: #6b7280; color: #fff; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
@@ -750,8 +752,11 @@
       : `<button class="sc-rej-btn" data-p="${esc(c.path)}" title="この依頼を拒否で閉じる（本人が断った）">🚫</button>`;
     const rejReason = c.is_rejected && c.reject_reason
       ? `<div class="sc-meta">拒否理由: ${esc(c.reject_reason)}</div>` : '';
+    // 対象日が空だとバッジ・黄色ラインが毎日出る。気づけるよう印を出す（✏️で日付を入れる）
+    const noDate = !scClosed(c) && !(c.target_date || '').trim()
+      ? '<span class="sc-nodate" title="対象日が未記入です。毎日バッジ・ラインが出ます。✏️で対象日を入れてください">📅未記入</span>' : '';
     return `<div class="sc-card${scClosed(c) ? ' done' : ''}">
-      <div class="sc-title">${head} ${esc(c.title)}
+      <div class="sc-title">${head} ${esc(c.title)} ${noDate}
         <span class="sc-meta">${c.checked_count}/6</span>
         ${rejBtn}
         <button class="sc-edit-btn" data-p="${esc(c.path)}" title="この依頼を編集（対象者/日/変更内容/対象時間）">✏️</button>
@@ -793,8 +798,13 @@
     const cases = scState.cases || [];
     const open = cases.filter((c) => !scClosed(c));
     $('#scFilterDay').textContent = `この日(${targetDate.getMonth() + 1}/${targetDate.getDate()})`;
+    // 「この日」は名前バッジ・黄色ラインと同じ条件にする。
+    // 日付未記入の未完了案件はバッジ/ラインが全日に出るので、ここでも出さないと
+    // 「名前は依頼中なのにリストは"依頼なし"」という食い違いになる（2026-07-22修正）。
     const list = scFilter === 'all' ? cases
-      : scFilter === 'day' ? cases.filter((c) => scMatchesDay(c, targetDate))
+      : scFilter === 'day'
+        ? cases.filter((c) => scMatchesDay(c, targetDate)
+            || (!scClosed(c) && !(c.target_date || '').trim()))
       : open;
     el.innerHTML = list.map(scCard).join('') ||
       `<span class="muted">${scFilter === 'day' ? 'この日の依頼なし' : '未完了なし 🎉'}</span>`;
