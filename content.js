@@ -556,6 +556,11 @@
       .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 13px; }
       .section-title #draftSend { margin-left: 4px; font-size: 11px; padding: 0 8px; border-radius: 5px;
         border: 1px solid #ccc; background: #fff; cursor: pointer; }
+      .section-title #reflectPlan { margin-left: 4px; font-size: 11px; padding: 0 8px; border-radius: 5px;
+        border: 1px solid #ccc; background: #fff; cursor: pointer; }
+      #reflectAll { font-size: 11px; padding: 1px 10px; border-radius: 5px;
+        border: 1px solid #16a34a; background: #16a34a; color: #fff; cursor: pointer; }
+      #reflectAll[disabled] { border-color: #ccc; background: #eee; color: #999; }
       .section-title #draftMonth { margin-left: 6px; font-size: 11px; font-weight: 400; padding: 0 2px;
         border: 1px solid #ccc; border-radius: 5px; background: #fff; }
       .section-title #draftOpen { font-weight: 400; font-size: 11px; margin-left: 4px; color: #2c6e49; }
@@ -2132,6 +2137,208 @@
       : '<span class="muted">この日の原案なし</span>';
   }
 
+  // ===== 海賊版原案 → らくしふ実シフトへの反映（差分プレビュー＋1件ずつ手押し反映）=====
+  // 方針（本人合意 2026-07-23）: 確定送信(/confirm)には一切触れない・削除もしない・
+  // 反映は必ず1行ずつご本人のボタン押下で。ツールは「差分を出す/1件POSTする」まで。
+  // 反映するのは (1)新規バー(create) と (2)時間・休憩の変更(retime) のみ。
+  //   ・FK区分／既存が複数バー／時間指定タスク → 自動化せず「要手動」で表示。
+  //   ・全域を覆う単一タスクだけは create 時に store_task_ids として付ける。
+  const RF_GENRE = { F: 2, K: 3 };   // 原案の区分 → らくしふ attending_genre_id
+  // 非GETに必須のCSRFトークン（らくしふページのDOMから読む。無ければ書けない）
+  const rfCsrf = () => (document.querySelector('#csrf-token')?.dataset?.csrfToken) || '';
+  // らくしふの確定/未確定シフト(instructed)を対象日ぶん生で取る
+  async function fetchInstructedRaw(date) {
+    const p = new URLSearchParams(location.search);
+    const storeId = p.get('s');
+    if (!storeId) throw new Error('store_id 不明');
+    const q = new URLSearchParams();
+    q.set('page_ctx_name', 'admin'); q.set('store_id', storeId);
+    for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    q.set('start_date', ymd(date)); q.set('end_date', ymd(date)); q.set('is_staff_print_page', 'false');
+    const r = await fetch('/ajax/admin/v2/schedules?' + q, {
+      credentials: 'include', headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (!r.ok) throw new Error(`シフトAPI HTTP ${r.status}`);
+    const j = await r.json();
+    return { storeId, list: (j.instructed || []).filter((s) => s.date === ymd(date) && !s.is_deleted) };
+  }
+  const hm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
+  const restEq = (a, b) => JSON.stringify(a || []) === JSON.stringify(b || []);
+  // 分[s,e]の休憩配列 → らくしふ rest_times [{start_hour,start_minute,end_hour,end_minute}]
+  const restsToApi = (rests) => (rests || [])
+    .filter((r) => Array.isArray(r) && r.length === 2 && r[1] > r[0])
+    .map(([s, e]) => ({ start_hour: Math.floor(s / 60), start_minute: s % 60,
+                        end_hour: Math.floor(e / 60), end_minute: e % 60 }));
+  // 既存バーの rest_times({start_hour..}) を分[s,e]配列へ（比較用）
+  const apiRestToMin = (rt) => (rt || [])
+    .map((r) => [r.start_hour * 60 + r.start_minute, r.end_hour * 60 + r.end_minute]);
+
+  // 対象日の差分プランを組む。行: {kind, user_id, name, genre, payload, desc, manual?}
+  async function buildReflectPlan(date) {
+    const [draftR, cur, taskMap] = await Promise.all([
+      draftApi('/api/draft-day?date=' + ymd(date)),
+      fetchInstructedRaw(date),
+      fetchStoreTaskMap(new URLSearchParams(location.search).get('s')).catch(() => ({})),
+    ]);
+    if (!draftR || !draftR.ok) throw new Error('ShiftDraft未達（原案が取れません）');
+    const nameToTaskId = {};
+    for (const [id, nm] of Object.entries(taskMap)) nameToTaskId[nm] = +id;
+    const asg = draftR.data.assignments || [];
+    // user_id ごとに: 本体バー(taskなし) と タスクバー に分ける
+    const byUser = {};
+    for (const a of asg) {
+      const u = (byUser[a.user_id] ||= { name: a.name, shift: [], tasks: [], genre: a.genre });
+      (a.task ? u.tasks : u.shift).push(a);
+      if (a.genre) u.genre = a.genre;
+    }
+    // 既存バーを (user_id, attending_genre_id) で引く。区分跨ぎの誤マッチを防ぐ。
+    const curKey = (uid, g) => `${uid}:${g}`;
+    const curByUG = {};
+    for (const s of cur.list) (curByUG[curKey(s.user_id, s.attending_genre_id)] ||= []).push(s);
+
+    const rows = [];
+    for (const [uidStr, u] of Object.entries(byUser)) {
+      const uid = +uidStr;
+      const genreId = RF_GENRE[u.genre];
+      // 本体バー（タスクでないバー）だけを「シフト」とみなす。
+      // タスクだけの人（固定作業のみ・研修枠のみ）はシフトが無いので自動対象にしない。
+      const shiftBars = u.shift;
+      const manualRow = (desc) => rows.push({
+        kind: 'manual', user_id: uid, name: u.name, genre: u.genre, desc, manual: true });
+      if (!shiftBars.length) {
+        if (u.tasks.length) manualRow(`時間指定タスクのみ（本体シフト無し）→手動`);
+        continue;
+      }
+      if (shiftBars.length > 1) { manualRow(`原案に本体バーが複数（分割勤務）→手動`); continue; }
+      if (!genreId) { manualRow(`区分${u.genre}は自動対象外→手動`); continue; }
+      const s = shiftBars[0].s, e = shiftBars[0].e;
+      const rests = shiftBars[0].rests || [];
+      // 時間指定タスク: 本体スパンと完全一致する単一タスクだけ store_task_ids で付ける
+      const fullTaskIds = [];
+      let partialTasks = 0;
+      for (const t of u.tasks) {
+        const id = nameToTaskId[t.task];
+        if (id && t.s === s && t.e === e) fullTaskIds.push(id);
+        else partialTasks += 1;
+      }
+      const manualNotes = partialTasks ? [`時間指定タスク${partialTasks}件は手動`] : [];
+
+      const existing = curByUG[curKey(uid, genreId)] || [];
+      if (existing.length > 1) {
+        manualRow(`${hm(s)}-${hm(e)}：この区分に既存バーが複数→手動`); continue;
+      }
+      const ex = existing[0];
+      // 既に確定/共有/固定済みのバーには絶対に触れない（上書き事故を防ぐ）
+      if (ex && (ex.is_shared || ex.is_fixed)) {
+        manualRow(`${hm(s)}-${hm(e)}：既に確定/共有済み→手動（上書きしません）`); continue;
+      }
+      const restApi = restsToApi(rests);
+      if (!ex) {
+        // 新規作成
+        rows.push({
+          kind: 'create', user_id: uid, name: u.name, genre: u.genre,
+          desc: `新規 ${hm(s)}-${hm(e)}` + (restApi.length ? `（休${rests.map((r) => hm(r[0]) + '-' + hm(r[1])).join(',')}）` : '')
+            + (fullTaskIds.length ? `＋タスク${fullTaskIds.length}` : '')
+            + (manualNotes.length ? `　⚠${manualNotes.join('・')}` : ''),
+          payload: { schedule: {
+            user_id: uid, attending_store_id: +cur.storeId, attending_genre_id: genreId,
+            date: ymd(date), start_hour: Math.floor(s / 60), start_minute: s % 60,
+            end_hour: Math.floor(e / 60), end_minute: e % 60,
+            rest_times: restApi, shift_pattern_id: null, off: false, off_type: 0,
+            memo_text: null, store_task_ids: fullTaskIds.length ? fullTaskIds : null,
+            instructedScheduleStoreTasks: [], company_special_holiday_id: null,
+          } },
+        });
+      } else if (ex.off || ex.start_as_min == null || ex.end_as_min == null) {
+        // 既存が「休み」または時間なしのバー。働きに変える判断は人に委ねる（手動）
+        manualRow(`${hm(s)}-${hm(e)}：既存が休み/時間未設定→手動`);
+      } else {
+        // 既存あり: 時間 or 休憩が違えば retime（タスクは既存を保持・触らない）
+        const sameTime = ex.start_as_min === s && ex.end_as_min === e;
+        const sameRest = restEq(apiRestToMin(ex.rest_times).sort(), rests.map((r) => [r[0], r[1]]).sort());
+        if (sameTime && sameRest) continue;   // 一致は出さない
+        rows.push({
+          kind: 'retime', user_id: uid, name: u.name, genre: u.genre,
+          desc: `変更 ${hm(ex.start_as_min)}-${hm(ex.end_as_min)} → ${hm(s)}-${hm(e)}`
+            + (sameRest ? '' : `／休憩を更新`)
+            + (partialTasks ? `　⚠時間指定タスク${partialTasks}件は手動` : ''),
+          bar_id: ex.id,
+          payload: { schedule: {
+            id: ex.id, attending_store_id: ex.attending_store_id, attending_genre_id: ex.attending_genre_id,
+            start_hour: Math.floor(s / 60), start_minute: s % 60,
+            end_hour: Math.floor(e / 60), end_minute: e % 60,
+            rest_times: restApi, shift_pattern_id: ex.shift_pattern_id, off: ex.off,
+            off_type: ex.off_type, memo_text: ex.memo_text,
+            store_task_ids: ex.store_task_ids, company_special_holiday_id: ex.company_special_holiday_id,
+          } },
+        });
+      }
+    }
+    rows.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+    return rows;
+  }
+
+  let reflectRows = null;
+  async function renderReflectPlan() {
+    const el = $('#reflect');
+    el.className = 'reflect';
+    el.innerHTML = '<span class="muted">差分を計算中…</span>';
+    try {
+      reflectRows = await buildReflectPlan(targetDate);
+    } catch (e) { el.innerHTML = `<span class="err">失敗: ${esc(e.message)}</span>`; return; }
+    const auto = reflectRows.filter((r) => !r.manual);
+    const manual = reflectRows.filter((r) => r.manual);
+    if (!reflectRows.length) { el.innerHTML = '<span class="allok">✓ 原案と一致（反映する差分なし）</span>'; return; }
+    const rowHtml = (r, i) => {
+      const btn = r.manual ? '<span class="muted" style="font-size:11px">要手動</span>'
+        : `<button class="rap" data-i="${i}">反映</button>`;
+      return `<div class="rrow ${r.kind}" data-i="${i}">` +
+        `<span class="rwho"><span class="dtag ${esc(r.genre || '')}" style="display:inline-block;` +
+        `width:20px;text-align:center;border-radius:4px;color:#fff;font-size:10px">${esc(r.genre || '?')}</span> ` +
+        `${esc(r.name)}</span><span class="rwhat">${esc(r.desc)}</span>${btn}</div>`;
+    };
+    el.innerHTML =
+      `<div class="rf-warn">確定送信はしません。反映は1行ずつご確認のうえ「反映」を押してください` +
+      `（削除・確定は行いません）。${rfCsrf() ? '' : '<b>⚠CSRFトークン未検出：このページをリロードしてください</b>'}</div>` +
+      `<div class="rsum">反映できる差分 ${auto.length}件${manual.length ? ` ／ 要手動 ${manual.length}件` : ''}</div>` +
+      (auto.length ? `<div style="margin:2px 0"><button id="reflectAll" title="上から順に1件ずつ反映（各件の成否を表示）">▶ ${auto.length}件を順に反映</button></div>` : '') +
+      reflectRows.map(rowHtml).join('');
+  }
+
+  // 1行を実際にPOST/PUTする。成功でDOMに✓、失敗で赤表示。確定には触れない。
+  async function applyReflectRow(i) {
+    const r = reflectRows && reflectRows[i];
+    if (!r || r.manual) return false;
+    const token = rfCsrf();
+    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return false; }
+    const rowEl = $(`#reflect .rrow[data-i="${i}"]`);
+    const btn = rowEl && rowEl.querySelector('.rap');
+    if (btn) { btn.disabled = true; btn.textContent = '送信中'; }
+    const url = r.kind === 'create' ? '/ajax/admin/schedules' : `/ajax/admin/schedules/${r.bar_id}`;
+    const method = r.kind === 'create' ? 'POST' : 'PUT';
+    try {
+      const res = await fetch(url, {
+        method, credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json',
+          'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
+        body: JSON.stringify(r.payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (rowEl) { rowEl.classList.add('done'); rowEl.classList.remove('err'); }
+      if (btn) { btn.textContent = '✓ 反映'; btn.disabled = true; }
+      r.applied = true;
+      // 反映後はゴースト/実数を取り直す
+      renderSheet();
+      return true;
+    } catch (e) {
+      if (rowEl) rowEl.classList.add('err');
+      if (btn) { btn.textContent = '再試行'; btn.disabled = false; }
+      const w = rowEl && rowEl.querySelector('.rwhat');
+      if (w) w.textContent += `　→ 失敗: ${e.message}`;
+      return false;
+    }
+  }
+
   // ===== らくしふ各人の行に、その人のShiftDraft原案を薄いバーで重ねる =====
   // 目的: らくしふの確定ライン（.schedule-bar）の下に「海賊版らくしふで描いた場合のシフト」を
   //       薄く出し、確定作業の下敷きにする。休憩は描かない（本人指定）。
@@ -2329,6 +2536,19 @@
     }
   }
   $('#draftSend').addEventListener('click', sendWishes);
+  $('#reflectPlan').addEventListener('click', renderReflectPlan);
+  // 反映セクションのクリック（差分1件 or 一括）。確定には触れない。
+  $('#reflect').addEventListener('click', async (ev) => {
+    const one = ev.target.closest('.rap');
+    if (one) { await applyReflectRow(+one.dataset.i); return; }
+    if (ev.target.id === 'reflectAll') {
+      ev.target.disabled = true;
+      const targets = (reflectRows || [])
+        .map((r, i) => ({ r, i })).filter((x) => !x.r.manual && !x.r.applied);
+      for (const { i } of targets) { await applyReflectRow(i); }   // 1件ずつ順に
+      ev.target.textContent = '完了';
+    }
+  });
   renderSheet();
   renderUnconfirmed();
   scRefresh(); // バッジ表示のためダイアログ閉でも件数を取る
