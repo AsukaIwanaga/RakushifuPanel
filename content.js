@@ -591,7 +591,7 @@
     <div id="panel">
       <div class="nav">
         <b id="dateLabel">-</b>
-        <button id="reqBasis" title="必要人数(REQ)の基準を切り替え。LE=客数から算出 / WS=モデルWSの計画人数">基準: LE</button>
+        <button id="reqBasis" title="必要人数(REQ)の基準を切り替え。LE=客数から算出 / モデルWS=モデルWSの計画人数">基準: LE</button>
         <select id="wsTplSel" title="この日に適用するモデルWS型。自動=曜日割当に従う（変更はLE Makerのparams.jsonに保存＝海賊版と共通）"></select>
         <button id="rfUpdate" style="display:none"></button>
         <button id="reload" class="accent">更新</button>
@@ -1698,12 +1698,12 @@
       const WS_SUB_COLOR = '#b45309'; // 琥珀。必要(緑/ティール)と区別
       const addReq = (label, row, color, wsRow) => {
         if (!row) return;
-        const bn = reqPack?.basisName || 'LE', sn = reqPack?.subName || 'WS';
+        const bn = reqPack?.basisName || 'LE', sn = reqPack?.subName || 'モデルWS';
         const tipFn = wsRow
           ? (i) => `${label.slice(2)} 上=${bn} ${row.hours[i] || '0'} / 下=${sn} ${wsRow.hours[i] || 0}`
           : tipSum;
         // ラベルの色をセルの上下段と一致させる: 上段(=基準)=color / 下段(=もう一方)=琥珀。
-        // どちらが基準か分かるよう見出しに基準名(LE/WS)を出す。
+        // どちらが基準か分かるよう見出しに基準名(LE/モデルWS)を出す。
         const labelHtml = wsRow
           ? `<span style="font-weight:700;color:${color};">${label}(${bn}) ${row.total || '-'}</span>`
             + `<span style="font-weight:700;color:${WS_SUB_COLOR};">／${sn} ${wsRow.total}</span>`
@@ -1801,7 +1801,7 @@
     const useWs = reqBasis() === 'ws' && wsReq;
     const primary = useWs ? wsReq : leReq;     // 基準（必要行の上段・差分の相手）
     const secondary = useWs ? leReq : wsReq;   // 併記（必要行の下段）
-    const basisName = useWs ? 'WS' : 'LE', subName = useWs ? 'LE' : 'WS';
+    const basisName = useWs ? 'モデルWS' : 'LE', subName = useWs ? 'LE' : 'モデルWS';
     // この日に適用するモデルWS型の選択欄。自動=曜日割当に従う／型を選ぶと日別上書き。
     {
       const params = (leMakerCache && leMakerCache.params) || {};
@@ -1817,11 +1817,11 @@
     }
     // WSが無い日（モデルWSの曜日割当が未設定など）は、黙ってLEに戻らず理由を出す
     const wantWs = reqBasis() === 'ws';
-    $('#reqBasis').textContent = wsReq ? `基準: ${basisName}` : '基準: LE（WS未設定）';
+    $('#reqBasis').textContent = wsReq ? `基準: ${basisName}` : '基準: LE（モデルWS未設定）';
     $('#reqBasis').title = wsReq
-      ? '必要人数(REQ)の基準を切り替え。LE=客数から算出 / WS=モデルWSの計画人数'
+      ? '必要人数(REQ)の基準を切り替え。LE=客数から算出 / モデルWS=モデルWSの計画人数'
       : 'この日はモデルWSが決まっていません（海賊版らくしふの📐モデルWSで、この曜日に型を割り当ててください）。'
-        + (wantWs ? '\nWS基準を選んでいますがLEで表示しています。' : '');
+        + (wantWs ? '\nモデルWS基準を選んでいますがLEで表示しています。' : '');
     const req = primary.sum;
     const reqF = primary.f, reqK = primary.k;
     const hasActual = actual && !actual.error;
@@ -1840,7 +1840,7 @@
         `<th class="${nowCls(h)}${shortAt(i) ? ' short-mark' : ''}">${h}</th>`).join('') +
       `<th class="total">計</th></tr>`;
 
-    // REQ行は選択中の基準(LE/WS)の値を出す。見出しにも基準名を付けてどちらか分かるようにする。
+    // REQ行は選択中の基準(LE/モデルWS)の値を出す。見出しにも基準名を付けてどちらか分かるようにする。
     const REQ_ROW = { 'REQ（F）': 'f', 'REQ（K）': 'k', 'REQ（FK）': 'fk', 'REQ（SUM）': 'sum' };
     const bodyRows = HOURLY_COLS.map((c) => {
       const key = REQ_ROW[c.rowLabel];
