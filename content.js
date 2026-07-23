@@ -603,7 +603,7 @@
       <div id="tasks" class="tasks muted">読込中…</div>
       <div class="section-title">シフト確定 未処理日（今日〜月末）</div>
       <div id="unconfirmed" class="unconfirmed muted">確認中…</div>
-      <div class="section-title">海賊版らくしふ
+      <div class="section-title fold" id="draftTitle"><span id="draftFold">▾</span> 海賊版らくしふ
         <select id="draftMonth" title="送信する月（らくしふの表示月とは無関係に選べます）"></select>
         <button id="draftSend" title="選択した月の希望シフトをShiftDraftへ送る">希望送信</button>
         <a id="draftOpen" href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener">開く↗</a>
@@ -1376,6 +1376,20 @@
   });
   applyTasksFold();
 
+  // 海賊版らくしふセクションの折りたたみ（見出しの月セレクタ/ボタン/リンクは対象外）
+  function applyDraftFold() {
+    const hidden = localStorage.getItem('rfDraftHidden') === '1';
+    $('#draft').style.display = hidden ? 'none' : '';
+    $('#draftFold').textContent = hidden ? '▸' : '▾';
+  }
+  $('#draftTitle').addEventListener('click', (ev) => {
+    if (ev.target.closest('select, button, a')) return;
+    const hidden = localStorage.getItem('rfDraftHidden') === '1';
+    localStorage.setItem('rfDraftHidden', hidden ? '0' : '1');
+    applyDraftFold();
+  });
+  applyDraftFold();
+
   // ===== 週間アサイン（人別: 週N日/Nh を名前横にバッジ表示） =====
   let lastWeekStats = null;
   async function fetchWeekStats(date) {
@@ -1988,6 +2002,9 @@
   });
 
   async function sendWishes() {
+    // 折りたたみ中でも進捗/結果が見えるよう、送信時は開く
+    localStorage.setItem('rfDraftHidden', '0');
+    applyDraftFold();
     const el = $('#draft');
     const p = new URLSearchParams(location.search);
     const storeId = p.get('s');
