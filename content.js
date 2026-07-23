@@ -1097,13 +1097,20 @@
     return { label: `${mo}月${da}日(${WEEKDAYS[d.getDay()]})`,
              urgent: (diff >= 0 && diff <= 7) ? '急遽の変更で恐れ入りますが、' : '' };
   };
+  // 対象時間 "HH:MM-HH:MM" → 「17:00〜22:00」。未設定なら空文字。
+  const reqTimeLabel = (reqTime) => {
+    const p = reqTimeToHM(reqTime);
+    return p ? `${p.sh}:${p.sm}〜${p.eh}:${p.em}` : '';
+  };
   // ①送信用（依頼/募集）文言
-  function wowtalkMessage(target, targetDateStr, change, requester) {
+  function wowtalkMessage(target, targetDateStr, change, requester, reqTime) {
     const { label: dateLabel, urgent } = dateLabelOf(targetDateStr);
+    const span = reqTimeLabel(reqTime);
     // 全員宛（休み募集）は「代われる人いませんか」の募集メッセージにする
     if (target === '全員') {
       const who = (requester || '').trim();
-      return `お疲れ様です。${urgent}${dateLabel}${who ? `の${who}さんのシフト` : ''}について、` +
+      return `お疲れ様です。${urgent}${dateLabel}${span ? ` ${span}` : ''}` +
+        `${who ? `の${who}さんのシフト` : 'のシフト'}について、` +
         `${change ? `${String(change).trim()}の` : ''}お休み希望が出ています。`
         + 'どなたか代わっていただける方はいらっしゃいませんでしょうか。';
     }
@@ -1114,22 +1121,24 @@
     } else {
       // freeformは末尾の「に変更/へ変更」を落として二重表現を防ぐ（例「14時入りに変更」→「14時入り」）
       const after = String(change || '').trim().replace(/[にへ]変更$/, '').trim() || String(change || '').trim();
-      body = `${after}に変更願えませんでしょうか。`;
+      // 変更内容が空なら「〜に変更」だけが残って文が壊れるので、汎用文にする
+      body = after ? `${after}に変更願えませんでしょうか。` : '変更をお願いできませんでしょうか。';
     }
-    return `お疲れ様です。${urgent}${dateLabel}のシフトについて、${body}`;
+    return `お疲れ様です。${urgent}${dateLabel}${span ? ` ${span}` : ''}のシフトについて、${body}`;
   }
   // ②本人向け（反映完了）文言。person=本人（通常は対象者/全員なら発信者）
-  function wowtalkDoneMessage(person, targetDateStr) {
+  function wowtalkDoneMessage(person, targetDateStr, reqTime) {
     const { label: dateLabel } = dateLabelOf(targetDateStr);
+    const span = reqTimeLabel(reqTime);
     const who = (person || '').trim();
-    return `お疲れ様です。${who ? `${who}さん、` : ''}${dateLabel}のシフトの件、`
+    return `お疲れ様です。${who ? `${who}さん、` : ''}${dateLabel}${span ? ` ${span}` : ''}のシフトの件、`
       + '反映しました！ご対応ありがとうございます。';
   }
   // 起票/編集直後に、コピペ用の文言（①送信用 ②反映完了）を #scNewForm 内に2枚出す
-  function scShowWowtalk(target, targetDateStr, change, requester) {
+  function scShowWowtalk(target, targetDateStr, change, requester, reqTime) {
     const person = (target && target !== '全員') ? target : (requester || '');
-    const sendMsg = wowtalkMessage(target, targetDateStr, change, requester);
-    const doneMsg = wowtalkDoneMessage(person, targetDateStr);
+    const sendMsg = wowtalkMessage(target, targetDateStr, change, requester, reqTime);
+    const doneMsg = wowtalkDoneMessage(person, targetDateStr, reqTime);
     const label = target === '全員' ? `全員宛・休み募集（${esc(requester || '')}）`
       : (target ? esc(target) : '対象者なし');
     const block = (head, msg) =>
@@ -1246,15 +1255,15 @@
       // 全員宛（休み募集）: target='全員' / 発信者=休みたい人。通常は入力どおり。
       const target = zenin ? '全員' : person;
       const requester = zenin ? person.replace(/\s+/g, '') : $('#scNewRequester').value;
+      const reqTime = readReqTime($('#scNewForm'), 'scn');
       const r = await shiftApi('/api/shift/create', {
-        target, target_date: targetDate, change,
-        req_time: readReqTime($('#scNewForm'), 'scn'),
+        target, target_date: targetDate, change, req_time: reqTime,
         requester,
         source: $('#scNewSource').value, memo: $('#scNewMemo').value,
       });
       t.disabled = false;
       if (!r.ok) { alert(`作成失敗: ${r.error || r.data?.error || ''}`); return; }
-      scShowWowtalk(target, targetDate, change, requester);   // 起票直後にWowTalk用文言を出す
+      scShowWowtalk(target, targetDate, change, requester, reqTime);   // 起票直後にWowTalk用文言を出す
       scRefresh();
     }
     if (t.id === 'scNewCancel') scCloseNewForm();
@@ -1332,13 +1341,13 @@
       const cur = (scState?.cases || []).find((c) => c.path === t.dataset.p);
       const noChecks = !cur || cur.checked_count === 0;
       t.disabled = true;
+      const reqTime = readReqTime(f, 'sce');
       const r = await shiftApi('/api/shift/edit', {
-        path: t.dataset.p, target, target_date: targetDate, change,
-        req_time: readReqTime(f, 'sce'),
+        path: t.dataset.p, target, target_date: targetDate, change, req_time: reqTime,
       });
       if (!r.ok) { alert(`編集失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
       // まだチェックが1つも付いていない依頼は、更新後の内容でWowTalk文言を出し直す（本人指定）
-      if (noChecks) scShowWowtalk(target, targetDate, change, cur && cur.requester);
+      if (noChecks) scShowWowtalk(target, targetDate, change, cur && cur.requester, reqTime);
       scRefresh();
     }
   });
