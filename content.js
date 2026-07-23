@@ -859,9 +859,13 @@
       : open;
     el.innerHTML = list.map(scCard).join('') ||
       `<span class="muted">${scFilter === 'day' ? 'この日の依頼なし' : '未完了なし 🎉'}</span>`;
-    const b = $('#shiftBadge');
-    b.textContent = open.length;
-    b.style.display = open.length ? 'block' : 'none';
+    // 🔁バッジの数はフィルタに追従する（「この日」なら当日分の未完了だけ・本人指定2026-07-23）
+    const n = scFilter === 'day' ? list.filter((c) => !scClosed(c)).length : open.length;
+    const bd = $('#shiftBadge');
+    bd.textContent = n;
+    bd.style.display = n ? 'block' : 'none';
+    $('#shiftToggle').title = scFilter === 'day'
+      ? `シフト変更依頼（この日の未完了 ${n}件）` : `シフト変更依頼（未完了 ${n}件）`;
   }
 
   async function scRefresh() {
