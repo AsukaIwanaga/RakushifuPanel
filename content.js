@@ -565,6 +565,23 @@
         color: #fff; font-size: 10px; font-weight: 700; margin-right: 5px; }
       .draft .dtag.F { background: #2563eb; } .draft .dtag.K { background: #d97706; }
       .draft .dtag.FK { background: #0e7490; }
+      .reflect { font-size: 12px; }
+      .reflect .rf-warn { color: #92400e; background: #fef3c7; border: 1px solid #fcd34d;
+        border-radius: 5px; padding: 4px 7px; margin-bottom: 5px; }
+      .reflect .rrow { display: flex; align-items: center; gap: 6px; padding: 3px 0;
+        border-bottom: 1px dotted #eee; }
+      .reflect .rrow .rwho { flex: 0 0 auto; font-weight: 700; min-width: 72px; }
+      .reflect .rrow .rwhat { flex: 1 1 auto; color: #444; }
+      .reflect .rrow.create .rwhat { color: #1e7a44; }
+      .reflect .rrow.retime .rwhat { color: #b45309; }
+      .reflect .rrow.manual { opacity: .8; }
+      .reflect .rrow.manual .rwhat { color: #6b7280; }
+      .reflect .rrow.done { background: #f0faf3; }
+      .reflect .rrow.err .rwhat { color: #b02a2a; }
+      .reflect .rap { flex: 0 0 auto; font-size: 11px; padding: 1px 8px; border-radius: 5px;
+        border: 1px solid #16a34a; background: #16a34a; color: #fff; cursor: pointer; }
+      .reflect .rap[disabled] { border-color: #ccc; background: #eee; color: #999; cursor: default; }
+      .reflect .rsum { margin: 4px 0; font-weight: 700; }
       .section-title.fold { cursor: pointer; user-select: none; }
       .unconfirmed { display: flex; flex-wrap: wrap; gap: 4px; }
       .unconfirmed .day {
@@ -617,6 +634,11 @@
         <a id="draftOpen" href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener">開く↗</a>
       </div>
       <div id="draft" class="draft muted">-</div>
+      <div class="section-title" style="margin-top:6px">この日を らくしふへ反映
+        <button id="reflectPlan" title="海賊版の原案と今のらくしふを突き合わせ、差分を出す（送信はしません）">差分を出す</button>
+        <span class="muted" style="font-weight:400;font-size:10px">※確定送信はしません／反映は1件ずつ手押し</span>
+      </div>
+      <div id="reflect" class="reflect muted">-</div>
     </div>
   `;
 
