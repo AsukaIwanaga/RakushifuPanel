@@ -29,6 +29,9 @@
   const REGULAR_STAFF = ['岩永飛鳥'];
   // 過剰人員の警告しきい値（これ以上のプラスは人件費浪費としてオレンジ表示）
   const SURPLUS_WARN = 2;
+  // MGT/cMGTタスクがシフトのこの割合以上を占めたら、そのシフトは丸ごとMGT扱いにする
+  // （＝実F/実K/実計から全部抜く）。これ未満なら、そのタスク区間だけ抜いて残りはF/K。
+  const MGT_WHOLE_RATIO = 0.8;
   // 業務割振タスク名 → カウント先。F/K/FK=振替、BU系=キッチン扱い、
   // MGT/TRer/TRee=OP Hに数えず MGT系へ（正社員→MGT、その他→cMGT）
   const moveGroup = (name, isRegular) => {
@@ -294,12 +297,17 @@
         .filter((t) => t.grp && t.e > t.s)
         .sort((a, b) => a.s - b.s || a.id - b.id);
 
-      // MGT / TRer / TRee のタスクが入っている人は、セクション(F/K)内にいても
-      // 実F・実K・実計に数えない（本人指定 2026-07-22）。オペレーションの頭数では
-      // ないため。該当者はシフト全体をMGT(社員)/cMGT(クルー)として計上する。
-      // 従来はタスク区間だけMGT/cMGTへ振替え、残り時間はF/Kに入れていた。
-      const mgtWhole = moves.some((mv) => mv.grp === 'MGT' || mv.grp === 'cMGT')
-        ? (isReg ? 'MGT' : 'cMGT') : null;
+      // MGT / TRer / TRee は、オペレーションの頭数ではないので実F/実K/実計から抜く。
+      // ただし抜くのは「そのタスクが入っている区間」だけ。ラインの一部にMGTを入れた
+      // だけでライン全体が消えるのは行き過ぎ（本人指摘 2026-07-23）。
+      // シフトのほぼ全域(MGT_WHOLE_RATIO以上)がMGT/cMGTのときだけ、まるごとMGT扱いにする。
+      const mgtSpans = moves.filter((mv) => mv.grp === 'MGT' || mv.grp === 'cMGT');
+      const mgtMin = mgtSpans.reduce((acc, mv) => {           // 区間の重なりを除いた合計分
+        const s = Math.max(mv.s, acc.end);
+        return { min: acc.min + Math.max(0, mv.e - s), end: Math.max(acc.end, mv.e) };
+      }, { min: 0, end: -Infinity }).min;
+      const shiftMin = Math.max(1, sh.end_as_min - sh.start_as_min);
+      const mgtWhole = (mgtMin / shiftMin) >= MGT_WHOLE_RATIO ? (isReg ? 'MGT' : 'cMGT') : null;
 
       const uh = (userHour[sh.user_id] ||= HOURS.map(() => 0));
       HOURS.forEach((h, i) => {
