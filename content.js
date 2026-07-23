@@ -1445,9 +1445,9 @@
     return CAT_OF[sec] || null;
   }
 
-  function updateStrips(catDiffs, tipFor, catActs) {
+  function updateStrips(catDiffs, tipFor, catActs, basisName) {
     document.querySelectorAll('.rf-heat-strip, .rf-strip-label').forEach((e) => e.remove());
-    lastStrip = catDiffs ? { catDiffs, tip: tipFor, catActs } : null;
+    lastStrip = catDiffs ? { catDiffs, tip: tipFor, catActs, basisName } : null;
     if (!catDiffs || !onOneDayTarget()) return;
     // 各 time-header が属するセクションを「直前の .table-title」で決める。
     // 旧実装は全要素からテキストが「フロア/キッチン」の葉要素を拾っていたが、
@@ -1530,9 +1530,11 @@
       for (const [kind, key, label] of STRIP_ROWS) {
         const values = kind === 'act' ? (catActs && catActs[key]) : catDiffs[key];
         if (!values) continue;
-        const s = makeStrip(kind, values, label);
+        // 差の帯は「どの基準に対する差か」が分かるよう見出しに基準名を付ける（差F(LE) 等）
+        const lb = kind === 'diff' && basisName ? `${label}(${basisName})` : label;
+        const s = makeStrip(kind, values, lb);
         prev.after(s);
-        addLabel(s, label, kind === 'act' ? ACT_STRIP_COLOR : DIFF_LABEL_COLOR);
+        addLabel(s, lb, kind === 'act' ? ACT_STRIP_COLOR : DIFF_LABEL_COLOR);
         prev = s;
       }
     }
@@ -1736,7 +1738,13 @@
     const primary = useWs ? wsReq : leReq;     // 基準（必要行の上段・差分の相手）
     const secondary = useWs ? leReq : wsReq;   // 併記（必要行の下段）
     const basisName = useWs ? 'WS' : 'LE', subName = useWs ? 'LE' : 'WS';
-    $('#reqBasis').textContent = `基準: ${basisName}`;
+    // WSが無い日（モデルWSの曜日割当が未設定など）は、黙ってLEに戻らず理由を出す
+    const wantWs = reqBasis() === 'ws';
+    $('#reqBasis').textContent = wsReq ? `基準: ${basisName}` : '基準: LE（WS未設定）';
+    $('#reqBasis').title = wsReq
+      ? '必要人数(REQ)の基準を切り替え。LE=客数から算出 / WS=モデルWSの計画人数'
+      : 'この日はモデルWSが決まっていません（海賊版らくしふの📐モデルWSで、この曜日に型を割り当ててください）。'
+        + (wantWs ? '\nWS基準を選んでいますがLEで表示しています。' : '');
     const req = primary.sum;
     const reqF = primary.f, reqK = primary.k;
     const hasActual = actual && !actual.error;
@@ -1830,7 +1838,7 @@
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'}`;
     updateStrips(catDiffs, tip,
-      hasActual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null);
+      hasActual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null, basisName);
     updateLERows(hourly['LE'],
       { sum: req, f: reqF, k: reqK, fk: reqFK, sub: secondary, basisName, subName },
       hasActual ? actual : null);
@@ -2109,7 +2117,7 @@
     guarded('reqButtons', updateReqButtons);
     // Vueの再描画でバッジ/バー/LE行/依頼マークが消えた場合の張り直し（軽量）
     guarded('weekBadges', () => { if (lastWeekStats) updateWeekBadges(lastWeekStats); });
-    guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs); });
+    guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs, lastStrip.basisName); });
     guarded('leRows', () => { if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
