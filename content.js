@@ -1496,7 +1496,8 @@
   const STRIP_ROWS = [
     ['act', 'F', '実F'], ['diff', 'F', '差F'],
     ['act', 'K', '実K'], ['diff', 'K', '差K'],
-    ['act', 'FK', '実FK'], ['act', 'TR', 'TR'],
+    ['act', 'FK', '実FK'], ['diff', 'FK', '差FK'],
+    ['act', 'TR', 'TR'],
   ];
   const ACT_STRIP_COLOR = '#374151'; // 実数の数字・見出しとも中立色
   const DIFF_LABEL_COLOR = '#6b7280';
@@ -1910,22 +1911,19 @@
       (actual?.error ? `<div class="err">実人数取得失敗: ${actual.error}</div>` : '');
     // 画面上のヒートバー: F/K別の差分（FKと計はツールチップで見せる）
     const reqFK = primary.fk;   // 差分も選択中の基準に追従
-    // 差F/差K の供給には 実FK を 0.5 ずつ配分する（FK要員はF/K両方を半分カバーする想定・本人指定）。
-    // 実FK/必要FK の表示や実計はそのまま。fkArr を渡した区分だけ +0.5×実FK される。
-    const fkHalf = (i) => 0.5 * (actual?.FK?.[i] || 0);
-    const mkDiff = (arr, reqRow, withFk) => (hasActual && arr) ? HOURS.map((h, i) => {
-      const supply = (arr[i] || 0) + (withFk ? fkHalf(i) : 0);
+    // 差は区分どおり忠実に出す（実F−必要F / 実K−必要K / 実FK−必要FK）。
+    // 以前は実FKを0.5ずつ差F/差Kに配分していたが、FKはFK枠として見る方針に戻した（2026-07-23）。
+    const mkDiff = (arr, reqRow) => (hasActual && arr) ? HOURS.map((h, i) => {
+      const supply = arr[i] || 0;
       if (!reqRow?.hours?.[i] && !supply) return null;
       return Math.round((supply - num(reqRow?.hours?.[i])) * 10) / 10;
     }) : null;
     const catDiffs = hasActual ? {
-      F: mkDiff(actual.F, reqF, true), K: mkDiff(actual.K, reqK, true),
-      FK: mkDiff(actual.FK, reqFK, false),
+      F: mkDiff(actual.F, reqF), K: mkDiff(actual.K, reqK), FK: mkDiff(actual.FK, reqFK),
     } : null;
-    const effFK = (arr, i) => Math.round(((arr?.[i] || 0) + fkHalf(i)) * 10) / 10;
     const tip = (i) =>
-      `${HOURS[i]}時  F ${effFK(actual.F, i)}(実${actual?.F?.[i] ?? '-'}+FK½)/${reqF?.hours?.[i] || '0'}` +
-      ` ・ K ${effFK(actual.K, i)}(実${actual?.K?.[i] ?? '-'}+FK½)/${reqK?.hours?.[i] || '0'}` +
+      `${HOURS[i]}時  F ${actual?.F?.[i] ?? '-'}/${reqF?.hours?.[i] || '0'}` +
+      ` ・ K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'}` +
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'}`;
     updateStrips(catDiffs, tip,
