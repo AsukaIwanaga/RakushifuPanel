@@ -720,10 +720,34 @@
   let scFilter = 'open'; // 'open' | 'day' | 'all'
   let scState = null;
 
-  // 案件の対象日 (例 "7/23", "07-23") が指定日と一致するか
+  // 対象日の文字列から {mo,da} を全部拾う（例 "7/23" / "07-23" / "7/26〜7/30"）
+  const scDateTokens = (v) => {
+    const out = [];
+    const re = /(\d{1,2})\s*[\/月\-]\s*(\d{1,2})/g;
+    let m;
+    while ((m = re.exec(String(v || '')))) out.push({ mo: +m[1], da: +m[2] });
+    return out;
+  };
+  // 対象日(単日 or 期間 "7/26〜7/30")が指定日を含むか。
+  // 期間は年跨ぎ(12/28〜1/3)も通るよう、月日を通し番号(月*100+日)にして判定する。
   const scMatchesDay = (c, d) => {
-    const m = /(\d{1,2})\s*[\/月\-]\s*(\d{1,2})/.exec(c.target_date || '');
-    return !!m && +m[1] === d.getMonth() + 1 && +m[2] === d.getDate();
+    const t = scDateTokens(c.target_date);
+    if (!t.length) return false;
+    const key = (mo, da) => mo * 100 + da;
+    const target = key(d.getMonth() + 1, d.getDate());
+    if (t.length === 1) return target === key(t[0].mo, t[0].da);
+    const a = key(t[0].mo, t[0].da), b = key(t[1].mo, t[1].da);
+    return a <= b ? (target >= a && target <= b) : (target >= a || target <= b);
+  };
+  // target_date 文字列を入力欄2つ（開始/終了）へ分解する（"7/26〜7/30" → {from,to}）
+  const scSplitDate = (v) => {
+    const parts = String(v || '').split(/\s*[〜~～]\s*/);
+    return { from: (parts[0] || '').trim(), to: (parts[1] || '').trim() };
+  };
+  // 入力欄2つ（開始/終了）から target_date 文字列を作る。終了が空/同じなら単日。
+  const scJoinDate = (from, to) => {
+    const f = String(from || '').trim(), t = String(to || '').trim();
+    return (!t || t === f) ? f : `${f}〜${t}`;
   };
   // 名前の正規化（空白と敬称を除いて突き合わせ）
   const normName = (s) => String(s || '').replace(/\s+/g, '').replace(/(さん|くん|ちゃん)$/, '');
@@ -789,7 +813,10 @@
       ${rejReason}
       <div class="sc-edit-form" style="display:none">
         <input class="sc-edit-target" value="${esc(c.target || '')}" placeholder="対象者">
-        <input class="sc-edit-date" value="${esc(c.target_date || '')}" placeholder="対象日 (例 7/26)">
+        <div style="display:flex;gap:4px;align-items:center">
+          <input class="sc-edit-date" value="${esc(scSplitDate(c.target_date).from)}" placeholder="対象日 (例 7/26)">〜
+          <input class="sc-edit-date-end" value="${esc(scSplitDate(c.target_date).to)}" placeholder="終了日 (期間なら/空欄可)">
+        </div>
         <input class="sc-edit-change" value="${esc(c.change || '')}" placeholder="変更内容">
         ${reqTimeWidget('sce', c.req_time)}
         <div style="display:flex;gap:4px;margin-top:4px">
@@ -1034,7 +1061,10 @@
       '<label style="display:flex;align-items:center;gap:5px;font-size:13px;margin-bottom:4px">' +
       '<input type="checkbox" id="scNewZenin" style="width:auto">全員宛（休み募集：代われる人を募集）</label>' +
       `<input id="scNewTarget" placeholder="対象者 (例: 高橋心さん)">` +
-      `<input id="scNewDate" placeholder="対象日 (例: 7/26)">` +
+      '<div style="display:flex;gap:4px;align-items:center">' +
+      `<input id="scNewDate" placeholder="対象日 (例: 7/26)">〜` +
+      `<input id="scNewDateEnd" placeholder="終了日 (期間なら/空欄可)">` +
+      '</div>' +
       `<input id="scNewChange" placeholder="変更内容">` +
       reqTimeWidget('scn', '') +
       `<input id="scNewRequester" placeholder="依頼者 (空欄可)">` +
@@ -1043,6 +1073,7 @@
       `<button id="scNewCreate">作成</button>` +
       `<button id="scNewCancel">キャンセル</button>`;
     $('#scNewDate').value = scDateStr(); // 対象日は表示中の日を既定に（編集可）
+    $('#scNewDateEnd').value = '';        // 期間にしたいときだけ終了日を入れる
     // 区分に応じて依頼者・sourceを自動補完（クルー発=対象者本人 / 店舗発=自分）
     const applyKind = () => {
       const store = $('#scNewKind').value === 'store';
@@ -1093,16 +1124,21 @@
     const parts = String(tok).split('-');
     return parts.length === 2 ? `${one(parts[0])}-${one(parts[1])}` : one(tok);
   };
-  // 対象日→ {label:"M月d日(曜)", urgent:"急遽…"|""}（直近1週間以内でurgent）
+  // 対象日→ {label:"M月d日(曜)"（期間なら "…〜M月d日(曜)"）, urgent:"急遽…"|""}
+  // urgent は開始日が直近1週間以内かどうかで判断する。
   const dateLabelOf = (targetDateStr) => {
-    const m = /(\d{1,2})\s*[/月]\s*(\d{1,2})/.exec(targetDateStr || '');
-    if (!m) return { label: (targetDateStr || '').trim(), urgent: '' };
-    const mo = +m[1], da = +m[2];
+    const toks = scDateTokens(targetDateStr);
+    if (!toks.length) return { label: (targetDateStr || '').trim(), urgent: '' };
     const today = new Date(); today.setHours(0, 0, 0, 0);
-    let d = new Date(today.getFullYear(), mo - 1, da);
-    if ((d - today) / 86400000 < -180) d = new Date(today.getFullYear() + 1, mo - 1, da);
-    const diff = (d - today) / 86400000;
-    return { label: `${mo}月${da}日(${WEEKDAYS[d.getDay()]})`,
+    const one = (t) => {
+      let d = new Date(today.getFullYear(), t.mo - 1, t.da);
+      if ((d - today) / 86400000 < -180) d = new Date(today.getFullYear() + 1, t.mo - 1, t.da);
+      return d;
+    };
+    const ds = toks.slice(0, 2).map(one);
+    const fmt = (d) => `${d.getMonth() + 1}月${d.getDate()}日(${WEEKDAYS[d.getDay()]})`;
+    const diff = (ds[0] - today) / 86400000;
+    return { label: ds.map(fmt).join('〜'),
              urgent: (diff >= 0 && diff <= 7) ? '急遽の変更で恐れ入りますが、' : '' };
   };
   // 対象時間 "HH:MM-HH:MM" → 「17:00〜22:00」。未設定なら空文字。
@@ -1171,6 +1207,7 @@
     $('#scNewForm').style.display = '';
     $('#scNewTarget').value = name.replace(/\s+/g, '');
     $('#scNewDate').value = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
+    $('#scNewDateEnd').value = '';
     if ($('#scNewKind').value === 'crew') {
       $('#scNewRequester').value = name.replace(/\s+/g, '');
     }
@@ -1230,6 +1267,7 @@
     if (f.style.display !== 'none') { scCloseNewForm(); return; } // 開いていれば閉じる
     if (!f.innerHTML) scBuildNewForm();
     $('#scNewDate').value = scDateStr(); // 開くたびに表示中の日へ合わせる
+    $('#scNewDateEnd').value = '';
     f.style.display = '';
   });
 
@@ -1255,7 +1293,7 @@
     if (t.id === 'scNewCreate') {
       const zenin = $('#scNewZenin') && $('#scNewZenin').checked;
       const person = ($('#scNewTarget').value || '').trim();   // 全員宛では「休みにしたい人」
-      const targetDate = $('#scNewDate').value;
+      const targetDate = scJoinDate($('#scNewDate').value, $('#scNewDateEnd').value);
       const change = $('#scNewChange').value;
       // 対象者が空（=対象者なし・他の人に募集ラインを出さない）は誤入力しやすいので確認する
       if (!zenin && !person && !confirm('対象者なしで間違いありませんか？\n（他の人の行に募集の黄色ラインは出ません）')) return;
@@ -1343,7 +1381,8 @@
     if (t.matches('.sc-edit-do')) {
       const f = t.closest('.sc-edit-form');
       const target = f.querySelector('.sc-edit-target').value;
-      const targetDate = f.querySelector('.sc-edit-date').value;
+      const targetDate = scJoinDate(f.querySelector('.sc-edit-date').value,
+                                    f.querySelector('.sc-edit-date-end').value);
       const change = f.querySelector('.sc-edit-change').value;
       // 編集は6チェックを変えないので、編集前の状態でチェック有無を見ておく
       const cur = (scState?.cases || []).find((c) => c.path === t.dataset.p);
