@@ -43,6 +43,8 @@
   const CONFIRM_POLL_MS = 5 * 60 * 1000; // 未確定チェックの間隔
   const URL_WATCH_MS = 1500;
   const DRAFT_POLL_MS = 10000;   // 海賊版原案の自動追従ポーリング間隔（Tailscaleローカルなので軽い）
+  // 必要人数(REQ)の基準: 'le'=客数から算出 / 'ws'=モデルWSの計画人数。パネルのボタンで切替・記憶。
+  const reqBasis = () => (localStorage.getItem('rfReqBasis') === 'ws' ? 'ws' : 'le');
   const isPrintPage = location.pathname.includes('/schedules/print');
 
   // ===== ユーティリティ =====
@@ -563,6 +565,7 @@
     <div id="panel">
       <div class="nav">
         <b id="dateLabel">-</b>
+        <button id="reqBasis" title="必要人数(REQ)の基準を切り替え。LE=客数から算出 / WS=モデルWSの計画人数">基準: LE</button>
         <button id="rfUpdate" style="display:none"></button>
         <button id="reload" class="accent">更新</button>
         <span id="ver" class="muted"></span>
@@ -609,6 +612,11 @@
     leMakerCache = null;    // LE Maker のdata/paramsも取り直す
     storeTaskMapCache = null;
     lastDraftDay = null;    // ShiftDraft原案も取り直す
+    renderSheet();
+  });
+  // REQの基準を LE ⇔ モデルWS で切り替える（記憶して次回も同じ基準で開く）
+  $('#reqBasis').addEventListener('click', () => {
+    localStorage.setItem('rfReqBasis', reqBasis() === 'ws' ? 'le' : 'ws');
     renderSheet();
     renderUnconfirmed();
   });
@@ -1624,16 +1632,17 @@
       const WS_SUB_COLOR = '#b45309'; // 琥珀。必要(緑/ティール)と区別
       const addReq = (label, row, color, wsRow) => {
         if (!row) return;
+        const bn = reqPack?.basisName || 'LE', sn = reqPack?.subName || 'WS';
         const tipFn = wsRow
-          ? (i) => `${label.slice(2)} 上=必要 ${row.hours[i] || '0'} / 下=WS ${wsRow.hours[i] || 0}`
+          ? (i) => `${label.slice(2)} 上=${bn} ${row.hours[i] || '0'} / 下=${sn} ${wsRow.hours[i] || 0}`
           : tipSum;
-        // ラベルの色をセルの上下段と一致させる: 上段(必要)=color / 下段(WS)=琥珀。
-        // 「上＝必要 / 下＝WS」を明示して、2段のどちらがどちらか一目で分かるようにする。
+        // ラベルの色をセルの上下段と一致させる: 上段(=基準)=color / 下段(=もう一方)=琥珀。
+        // どちらが基準か分かるよう見出しに基準名(LE/WS)を出す。
         const labelHtml = wsRow
-          ? `<span style="font-weight:700;color:${color};">${label} ${row.total || '-'}</span>`
-            + `<span style="font-weight:700;color:${WS_SUB_COLOR};">／WS ${wsRow.total}</span>`
-            + '<span style="font-weight:400;font-size:9px;color:#9aa8b5;"> 上必要/下WS</span>'
-          : `<span style="font-weight:700;color:${color};">${label} (合計: ${row.total || '-'})</span>`;
+          ? `<span style="font-weight:700;color:${color};">${label}(${bn}) ${row.total || '-'}</span>`
+            + `<span style="font-weight:700;color:${WS_SUB_COLOR};">／${sn} ${wsRow.total}</span>`
+            + `<span style="font-weight:400;font-size:9px;color:#9aa8b5;"> 上${bn}/下${sn}</span>`
+          : `<span style="font-weight:700;color:${color};">${label}(${bn}) (合計: ${row.total || '-'})</span>`;
         const r = mkRow('rf-req-row', labelHtml,
           row.hours, color, tipFn, null,
           wsRow ? { sub: { vals: wsRow.hours, color: WS_SUB_COLOR } } : null);
@@ -1655,7 +1664,7 @@
         anchor.after(r);
         anchor = r;
       };
-      const ws = reqPack?.ws;
+      const ws = reqPack?.sub;   // 併記するもう一方の基準（LE⇔WS）
       addReq('必要F', reqPack?.f, '#2c6e49', ws?.f);
       addAct('実F', act?.F, reqPack?.f, act?.sum?.F);
       addReq('必要K', reqPack?.k, '#2c6e49', ws?.k);
@@ -1709,8 +1718,27 @@
 
     // 実人数 (らくしふ現シフト・休憩控除済) と REQ の比較。マイナス＝不足
     const num = (s) => { const v = parseFloat(s); return Number.isFinite(v) ? v : 0; };
-    const req = hourly['REQ（SUM）'];
-    const reqF = hourly['REQ（F）'], reqK = hourly['REQ（K）'];
+    // ===== REQの基準: LE(客数から算出) or モデルWS(計画人数) を切り替え =====
+    // どちらが主か分からないという指摘。主=基準／従=もう一方 を必要行に併記する。
+    const leReq = { sum: hourly['REQ（SUM）'], f: hourly['REQ（F）'],
+                    k: hourly['REQ（K）'], fk: hourly['REQ（FK）'] };
+    const toRow = (a) => ({
+      hours: a.hours.map((v) => (v ? String(Math.round(v * 10) / 10) : '')),
+      total: String(Math.round(a.total)),
+    });
+    const wsReq = res.wsPack ? (() => {
+      const p = res.wsPack;
+      const sumH = HOURS.map((h, i) => (p.f.hours[i] || 0) + (p.k.hours[i] || 0) + (p.fk.hours[i] || 0));
+      return { sum: toRow({ hours: sumH, total: sumH.reduce((x, y) => x + y, 0) }),
+               f: toRow(p.f), k: toRow(p.k), fk: toRow(p.fk) };
+    })() : null;
+    const useWs = reqBasis() === 'ws' && wsReq;
+    const primary = useWs ? wsReq : leReq;     // 基準（必要行の上段・差分の相手）
+    const secondary = useWs ? leReq : wsReq;   // 併記（必要行の下段）
+    const basisName = useWs ? 'WS' : 'LE', subName = useWs ? 'LE' : 'WS';
+    $('#reqBasis').textContent = `基準: ${basisName}`;
+    const req = primary.sum;
+    const reqF = primary.f, reqK = primary.k;
     const hasActual = actual && !actual.error;
     const diffs = (hasActual && req)
       ? HOURS.map((h, i) => {
@@ -1727,11 +1755,15 @@
         `<th class="${nowCls(h)}${shortAt(i) ? ' short-mark' : ''}">${h}</th>`).join('') +
       `<th class="total">計</th></tr>`;
 
+    // REQ行は選択中の基準(LE/WS)の値を出す。見出しにも基準名を付けてどちらか分かるようにする。
+    const REQ_ROW = { 'REQ（F）': 'f', 'REQ（K）': 'k', 'REQ（FK）': 'fk', 'REQ（SUM）': 'sum' };
     const bodyRows = HOURLY_COLS.map((c) => {
-      const data = hourly[c.rowLabel];
+      const key = REQ_ROW[c.rowLabel];
+      const data = key ? primary[key] : hourly[c.rowLabel];
+      const head = key ? `${c.head}(${basisName})` : c.head;
       const cells = HOURS.map((h, i) =>
         `<td class="${nowCls(h)}">${data ? (data.hours[i] || '') : '?'}</td>`).join('');
-      return `<tr class="${c.cls}"><td class="row-head">${c.head}</td>${cells}` +
+      return `<tr class="${c.cls}"><td class="row-head">${head}</td>${cells}` +
         `<td class="total">${data?.total ?? '?'}</td></tr>`;
     }).join('');
 
@@ -1778,7 +1810,7 @@
     $('#tableWrap').innerHTML = `<table>${headRow}${bodyRows}${actualRows}${diffRow}</table>` +
       (actual?.error ? `<div class="err">実人数取得失敗: ${actual.error}</div>` : '');
     // 画面上のヒートバー: F/K別の差分（FKと計はツールチップで見せる）
-    const reqFK = hourly['REQ（FK）'];
+    const reqFK = primary.fk;   // 差分も選択中の基準に追従
     // 差F/差K の供給には 実FK を 0.5 ずつ配分する（FK要員はF/K両方を半分カバーする想定・本人指定）。
     // 実FK/必要FK の表示や実計はそのまま。fkArr を渡した区分だけ +0.5×実FK される。
     const fkHalf = (i) => 0.5 * (actual?.FK?.[i] || 0);
@@ -1799,7 +1831,8 @@
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'}`;
     updateStrips(catDiffs, tip,
       hasActual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null);
-    updateLERows(hourly['LE'], { sum: req, f: reqF, k: reqK, fk: reqFK, ws: res.wsPack },
+    updateLERows(hourly['LE'],
+      { sum: req, f: reqF, k: reqK, fk: reqFK, sub: secondary, basisName, subName },
       hasActual ? actual : null);
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
     fetchWeekStats(targetDate)
