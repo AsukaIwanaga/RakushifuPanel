@@ -139,19 +139,27 @@
     for (const c of cuts) if ((leSum || 0) >= Number(c.ge)) pick = c.tpl;
     return pick || (cuts[0] && cuts[0].tpl) || null;
   }
-  function computeWS(params, iso, leSum) {
+  // 曜日割当だけで決まる型（日別上書きを見ない）。パネルの「自動」表示用にも使う。
+  function wsAutoTpl(params, iso, leSum) {
+    const w = params && params.ws;
+    if (!w || !Array.isArray(w.templates)) return null;
+    // 月別割当(assignM[YYYY-MM]) > 既定(assign)。月別に無い曜日は既定へフォールバック
+    // （海賊版らくしふの月別モデルWSと同一仕様・2026-07-22）
+    const wd = String(new Date(`${iso}T00:00:00`).getDay());
+    const mAv = ((w.assignM || {})[iso.slice(0, 7)] || {})[wd];
+    const id = wsPickTplId(mAv !== undefined ? mAv : (w.assign || {})[wd], leSum);
+    return w.templates.find((t) => t.id === id) || null;
+  }
+  // その日に適用される型。日別上書き(byDate[iso].wsTpl) > 曜日割当
+  function wsTplFor(params, iso, leSum) {
     const w = params && params.ws;
     if (!w || !Array.isArray(w.templates) || !w.templates.length) return null;
-    const o = params.byDate && params.byDate[iso];
-    let id = o && o.wsTpl;
-    if (!id) {
-      // 月別割当(assignM[YYYY-MM]) > 既定(assign)。月別に無い曜日は既定へフォールバック
-      // （海賊版らくしふの月別モデルWSと同一仕様・2026-07-22）
-      const wd = String(new Date(`${iso}T00:00:00`).getDay());
-      const mAv = ((w.assignM || {})[iso.slice(0, 7)] || {})[wd];
-      id = wsPickTplId(mAv !== undefined ? mAv : (w.assign || {})[wd], leSum);
-    }
-    const tpl = w.templates.find((t) => t.id === id);
+    const ovr = ((params.byDate || {})[iso] || {}).wsTpl;
+    if (ovr) return w.templates.find((t) => t.id === ovr) || null;
+    return wsAutoTpl(params, iso, leSum);
+  }
+  function computeWS(params, iso, leSum) {
+    const tpl = wsTplFor(params, iso, leSum);
     if (!tpl) return null;
     const pick = (sec) => {
       const a = (tpl.counts || {})[sec] || [];
@@ -566,6 +574,7 @@
       <div class="nav">
         <b id="dateLabel">-</b>
         <button id="reqBasis" title="必要人数(REQ)の基準を切り替え。LE=客数から算出 / WS=モデルWSの計画人数">基準: LE</button>
+        <select id="wsTplSel" title="この日に適用するモデルWS型。自動=曜日割当に従う（変更はLE Makerのparams.jsonに保存＝海賊版と共通）"></select>
         <button id="rfUpdate" style="display:none"></button>
         <button id="reload" class="accent">更新</button>
         <span id="ver" class="muted"></span>
@@ -618,7 +627,27 @@
   $('#reqBasis').addEventListener('click', () => {
     localStorage.setItem('rfReqBasis', reqBasis() === 'ws' ? 'le' : 'ws');
     renderSheet();
-    renderUnconfirmed();
+  });
+  // この日に適用するモデルWS型を選ぶ＝params.byDate[iso].wsTpl の日別上書き。
+  // 保存はShiftDraftの POST /le/ws（SoTはLE Makerのparams.json・_rev楽観ロック）。
+  // ws本体は触らず byDateWsTpl だけ渡す（空文字=自動に戻す＝上書き解除）。
+  $('#wsTplSel').addEventListener('change', async (ev) => {
+    const sel = ev.target;
+    const params = (leMakerCache && leMakerCache.params) || {};
+    if (!params.ws) { alert('モデルWSが読めていません。更新を押して再取得してください'); return; }
+    const iso = ymd(targetDate);
+    sel.disabled = true;
+    const r = await draftApi('/le/ws', {
+      ws: params.ws, _rev: params._rev || 0, byDateWsTpl: { [iso]: sel.value || null },
+    });
+    sel.disabled = false;
+    if (!r || !r.ok) {
+      const msg = (r && r.data && r.data.msg) || (r && r.error) || '保存できませんでした';
+      alert(`モデルWSの割当保存に失敗: ${msg}`);
+      return;
+    }
+    leMakerCache = null;   // params が変わったので取り直してから再計算
+    renderSheet();
   });
 
   // ===== 拡張の自己更新（MacBook運用: launchdがgit pull → ここで気付いて反映） =====
@@ -1738,6 +1767,19 @@
     const primary = useWs ? wsReq : leReq;     // 基準（必要行の上段・差分の相手）
     const secondary = useWs ? leReq : wsReq;   // 併記（必要行の下段）
     const basisName = useWs ? 'WS' : 'LE', subName = useWs ? 'LE' : 'WS';
+    // この日に適用するモデルWS型の選択欄。自動=曜日割当に従う／型を選ぶと日別上書き。
+    {
+      const params = (leMakerCache && leMakerCache.params) || {};
+      const tpls = (params.ws && params.ws.templates) || [];
+      const iso = ymd(targetDate);
+      const ovr = ((params.byDate || {})[iso] || {}).wsTpl || '';
+      const auto = wsAutoTpl(params, iso, num(hourly['LE']?.total));
+      const sel = $('#wsTplSel');
+      sel.innerHTML = `<option value="">自動（${auto ? esc(auto.name) : '未設定'}）</option>` +
+        tpls.map((t) => `<option value="${esc(t.id)}"${t.id === ovr ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
+      sel.value = ovr;
+      sel.style.display = tpls.length ? '' : 'none';
+    }
     // WSが無い日（モデルWSの曜日割当が未設定など）は、黙ってLEに戻らず理由を出す
     const wantWs = reqBasis() === 'ws';
     $('#reqBasis').textContent = wsReq ? `基準: ${basisName}` : '基準: LE（WS未設定）';
