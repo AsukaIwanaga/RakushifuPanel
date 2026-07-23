@@ -294,12 +294,28 @@
         .filter((t) => t.grp && t.e > t.s)
         .sort((a, b) => a.s - b.s || a.id - b.id);
 
+      // MGT / TRer / TRee のタスクが入っている人は、セクション(F/K)内にいても
+      // 実F・実K・実計に数えない（本人指定 2026-07-22）。オペレーションの頭数では
+      // ないため。該当者はシフト全体をMGT(社員)/cMGT(クルー)として計上する。
+      // 従来はタスク区間だけMGT/cMGTへ振替え、残り時間はF/Kに入れていた。
+      const mgtWhole = moves.some((mv) => mv.grp === 'MGT' || mv.grp === 'cMGT')
+        ? (isReg ? 'MGT' : 'cMGT') : null;
+
       const uh = (userHour[sh.user_id] ||= HOURS.map(() => 0));
       HOURS.forEach((h, i) => {
         let total = net(sh, sh.start_as_min, sh.end_as_min, h);
         total = Math.min(total, Math.max(0, 1 - uh[i])); // 重複登録時: 1人1時間まで
         if (total === 0) return;
         uh[i] += total;
+        if (mgtWhole) {
+          act[mgtWhole][i] += total;                 // シフト全体をMGT/cMGTへ
+          for (const mv of moves) {                  // TR参考枠はタスク区間ぶんだけ
+            if (!mv.tr) continue;
+            const m = Math.min(net(sh, mv.s, mv.e, h), total);
+            if (m > 0) act.TR[i] += m;
+          }
+          return;                                    // F/K・実計には入れない
+        }
         let alloc = 0, mgt = 0;
         for (const mv of moves) {
           const m = Math.min(net(sh, mv.s, mv.e, h), total - alloc); // タスク重複: 先勝ち
