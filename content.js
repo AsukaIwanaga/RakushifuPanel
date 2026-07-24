@@ -2160,9 +2160,23 @@
   //     ここだけは is_shared でも書き込む（勤務時間は変えず、タグを足すだけ）。
   const CK_TASK = { 温度: 238056, 日付: 222328, 廃棄: 222329 };
   const NOON = 12 * 60;
-  // 社会保険加入者（優先枠）。らくしふにも台帳にもデータが無いので、ここで手入力して維持する。
-  // 名前は空白を除いた表記で（例 '千石京輔'）。空のままなら勤務時間順だけで並ぶ。
-  const SOCIAL_INSURANCE = [];
+  // 社会保険加入者は海賊版らくしふの constraints.json（kind:"shakaiho"）が正。
+  // 海賊版側で区分を変えたらそのまま追従する（拡張にはコピーを持たない）。
+  // 正社員(REGULAR_STAFF)は当然加入者なので足す。
+  let siCache = null;
+  async function fetchSocialInsurance() {
+    if (siCache) return siCache;
+    const ids = new Set();
+    try {
+      const r = await draftApi('/data/constraints.json');
+      const c = (r && r.ok) ? r.data : null;
+      for (const [uid, v] of Object.entries(c || {})) {
+        if ((v || {}).kind === 'shakaiho') ids.add(+uid);
+      }
+    } catch { /* 取れなければ社保優先なしで続行 */ }
+    siCache = ids;
+    return ids;
+  }
   // 非GETに必須のCSRFトークン（らくしふページのDOMから読む。無ければ書けない）
   const rfCsrf = () => (document.querySelector('#csrf-token')?.dataset?.csrfToken) || '';
   // らくしふの確定/未確定シフト(instructed)を対象日ぶん生で取る
@@ -2179,7 +2193,8 @@
     });
     if (!r.ok) throw new Error(`シフトAPI HTTP ${r.status}`);
     const j = await r.json();
-    return { storeId, list: (j.instructed || []).filter((s) => s.date === ymd(date) && !s.is_deleted) };
+    return { storeId, users: j.users || [],
+             list: (j.instructed || []).filter((s) => s.date === ymd(date) && !s.is_deleted) };
   }
   const hm = (m) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
   const restEq = (a, b) => JSON.stringify(a || []) === JSON.stringify(b || []);
@@ -2360,10 +2375,10 @@
 
   // 対象日のCK割付プランを作る。既に付いている人はそのまま（重複して付けない）。
   async function buildCkPlan(date) {
-    const cur = await fetchInstructedRaw(date);
+    const [cur, siIds] = await Promise.all([fetchInstructedRaw(date), fetchSocialInsurance()]);
+    // 正社員判定に名前が要るので、先にAPIの users から埋めておく
     const nameOf = {};
-    // users は schedules レスポンスに入るが fetchInstructedRaw は instructed だけ返すので、
-    // 行の名前はシフト表DOMではなくAPIから引き直す（別途取得）。
+    for (const u of cur.users) nameOf[u.id] = (u.name || '').replace(/\s+/g, ' ').trim();
     const bars = cur.list.filter((s) => !s.off && s.start_as_min != null && s.end_as_min != null
       && (s.attending_genre_id === 2 || s.attending_genre_id === 3));
     // 実働（休憩控除）。長い順の判定に使う
@@ -2374,11 +2389,18 @@
       }
       return L;
     };
-    const si = new Set(SOCIAL_INSURANCE.map((n) => String(n).replace(/\s+/g, '')));
-    const isSI = (s) => si.has((nameOf[s.user_id] || '').replace(/\s+/g, ''));
-    // 並び: 社保加入 → 実働が長い → 早出
+    // 社保加入 = 海賊版 constraints.json の kind:"shakaiho" ＋ 正社員
+    const regIds = new Set(cur.list
+      .filter((s) => REGULAR_STAFF.includes((nameOf[s.user_id] || '').replace(/\s+/g, '')))
+      .map((s) => s.user_id));
+    const isSI = (s) => siIds.has(s.user_id) || regIds.has(s.user_id);
+    // 午後・日付: 社保加入 → 実働が長い順 → 早出（本人指定のルール）
     const rank = (pool) => [...pool].sort((a, b) =>
       (isSI(b) - isSI(a)) || (netLen(b) - netLen(a)) || (a.start_as_min - b.start_as_min));
+    // 午前の温度は「オープン担当」＝最も早く出る人。廃棄=ラストと対称で、
+    // 実績(7日)との一致が 40%→59% に上がったため午前だけこの並びにする（2026-07-24検証）。
+    const rankAm = (pool) => [...pool].sort((a, b) =>
+      (isSI(b) - isSI(a)) || (a.start_as_min - b.start_as_min) || (netLen(b) - netLen(a)));
     const hasTag = (s, id) => (s.store_task_ids || []).includes(id);
     const F = bars.filter((s) => s.attending_genre_id === 2);
     const K = bars.filter((s) => s.attending_genre_id === 3);
@@ -2386,19 +2408,20 @@
     const pmOf = (a) => a.filter((s) => s.end_as_min > NOON);
     const plan = [];
     const pick = (pool, used) => rank(pool).find((s) => !used.has(s.user_id)) || null;
+    const pickAm = (pool, used) => rankAm(pool).find((s) => !used.has(s.user_id)) || null;
     const add = (label, s, task) => {
       if (!s) { plan.push({ label, task, missing: true }); return; }
       plan.push({ label, task, bar: s, already: hasTag(s, CK_TASK[task]) });
     };
     // フロア: 午前1名・午後1名に温度（別人）
     const uF = new Set();
-    const f1 = pick(amOf(F), uF); if (f1) uF.add(f1.user_id);
+    const f1 = pickAm(amOf(F), uF); if (f1) uF.add(f1.user_id);
     add('F 温度(午前)', f1, '温度');
     const f2 = pick(pmOf(F), uF); if (f2) uF.add(f2.user_id);
     add('F 温度(午後)', f2, '温度');
     // キッチン: 午前温度 → 廃棄(ラスト=最も遅く終わる人) → 午後温度 → 日付（全員別人）
     const uK = new Set();
-    const k1 = pick(amOf(K), uK); if (k1) uK.add(k1.user_id);
+    const k1 = pickAm(amOf(K), uK); if (k1) uK.add(k1.user_id);
     add('K 温度(午前)', k1, '温度');
     const kpm = pmOf(K);
     const last = [...kpm].sort((a, b) => b.end_as_min - a.end_as_min)
@@ -2409,7 +2432,8 @@
     add('K 温度(午後)', k2, '温度');
     const k3 = pick(kpm, uK); if (k3) uK.add(k3.user_id);
     add('K 日付(午後)', k3, '日付');
-    return { plan, nameOf, storeId: cur.storeId };
+    const siCount = new Set([...siIds, ...regIds]).size;
+    return { plan, nameOf, storeId: cur.storeId, siCount };
   }
 
   let ckRows = null;
@@ -2418,22 +2442,8 @@
     el.className = 'reflect';
     el.innerHTML = '<span class="muted">CK割付を計算中…</span>';
     let res;
-    try {
-      // 名前は schedules の users から引く（fetchInstructedRawは instructed のみ返すため）
-      const p = new URLSearchParams(location.search);
-      const q = new URLSearchParams();
-      q.set('page_ctx_name', 'admin'); q.set('store_id', p.get('s'));
-      for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
-      q.set('start_date', ymd(targetDate)); q.set('end_date', ymd(targetDate));
-      q.set('is_staff_print_page', 'false');
-      const [uRes, built] = await Promise.all([
-        fetch('/ajax/admin/v2/schedules?' + q, { credentials: 'include',
-          headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } }).then((r) => r.json()),
-        buildCkPlan(targetDate),
-      ]);
-      for (const u of (uRes.users || [])) built.nameOf[u.id] = (u.name || '').replace(/\s+/g, ' ').trim();
-      res = built;
-    } catch (e) { el.innerHTML = `<span class="err">失敗: ${esc(e.message)}</span>`; return; }
+    try { res = await buildCkPlan(targetDate); }
+    catch (e) { el.innerHTML = `<span class="err">失敗: ${esc(e.message)}</span>`; return; }
     ckRows = res.plan;
     const todo = ckRows.filter((r) => r.bar && !r.already);
     const rowHtml = (r, i) => {
@@ -2450,7 +2460,9 @@
     el.innerHTML =
       '<div class="rf-warn">CKは<b>シフト全域タグ</b>（store_task_ids）として付けます。' +
       '勤務時間・休憩は変更しません。既存のタグは消しません。確定送信もしません。' +
-      (SOCIAL_INSURANCE.length ? '' : '<br><b>※社会保険加入者リストが未設定のため、勤務時間の長い順のみで選んでいます。</b>') +
+      (res.siCount ? `<br>社保加入者 ${res.siCount}名を優先（海賊版 constraints.json の kind:shakaiho＋正社員）。`
+        + '午前の温度は「最も早く出る人」＝オープン担当。'
+        : '<br><b>※社保加入者が取れませんでした（海賊版に繋がらない）。勤務時間順のみで選んでいます。</b>') +
       '</div>' +
       `<div class="rsum">付与する ${todo.length}件</div>` +
       (todo.length ? `<div style="margin:2px 0"><button id="ckAll">▶ ${todo.length}件をまとめて付与</button></div>` : '') +
