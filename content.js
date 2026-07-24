@@ -556,8 +556,14 @@
       .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 13px; }
       .section-title #draftSend { margin-left: 4px; font-size: 11px; padding: 0 8px; border-radius: 5px;
         border: 1px solid #ccc; background: #fff; cursor: pointer; }
-      .section-title #reflectPlan { margin-left: 4px; font-size: 11px; padding: 0 8px; border-radius: 5px;
-        border: 1px solid #ccc; background: #fff; cursor: pointer; }
+      .section-title #reflectPlan, .section-title #ckPlan { margin-left: 4px; font-size: 11px;
+        padding: 0 8px; border-radius: 5px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+      #ckAll { font-size: 11px; padding: 1px 10px; border-radius: 5px;
+        border: 1px solid #16a34a; background: #16a34a; color: #fff; cursor: pointer; }
+      #ckAll[disabled] { border-color: #ccc; background: #eee; color: #999; }
+      .reflect .ckap { flex: 0 0 auto; font-size: 11px; padding: 1px 8px; border-radius: 5px;
+        border: 1px solid #16a34a; background: #16a34a; color: #fff; cursor: pointer; }
+      .reflect .ckap[disabled] { border-color: #ccc; background: #eee; color: #999; cursor: default; }
       #reflectAll { font-size: 11px; padding: 1px 10px; border-radius: 5px;
         border: 1px solid #16a34a; background: #16a34a; color: #fff; cursor: pointer; }
       #reflectAll[disabled] { border-color: #ccc; background: #eee; color: #999; }
@@ -641,6 +647,7 @@
       <div id="draft" class="draft muted">-</div>
       <div class="section-title" style="margin-top:6px">この日を らくしふへ反映
         <button id="reflectPlan" title="海賊版の原案と今のらくしふを突き合わせ、差分を出す（送信はしません）">差分を出す</button>
+        <button id="ckPlan" title="温度・日付・廃棄のCKを、この日の勤務者に自動で割り付ける（シフト全域タグ。時間は変えません）">🌡 CK割付</button>
         <span class="muted" style="font-weight:400;font-size:10px">※確定送信はしません／反映は1件ずつ手押し</span>
       </div>
       <div id="reflect" class="reflect muted">-</div>
@@ -2144,6 +2151,18 @@
   //   ・FK区分／既存が複数バー／時間指定タスク → 自動化せず「要手動」で表示。
   //   ・全域を覆う単一タスクだけは create 時に store_task_ids として付ける。
   const RF_GENRE = { F: 2, K: 3 };   // 原案の区分 → らくしふ attending_genre_id
+
+  // ===== CK（温度・日付・廃棄）の自動割付 =====
+  // 実測した運用（2026-06〜07の51件）に合わせる:
+  //   ・CKは「タスクバー」ではなく**シフト全域タグ** = schedule.store_task_ids に入れる。
+  //   ・毎日 温度×4（F午前/F午後/K午前/K午後）・日付×1（K午後）・廃棄×1（K午後のラスト）。
+  //   ・付与先はすべて確定済み(is_shared)のシフト＝確定後に付ける運用なので、
+  //     ここだけは is_shared でも書き込む（勤務時間は変えず、タグを足すだけ）。
+  const CK_TASK = { 温度: 238056, 日付: 222328, 廃棄: 222329 };
+  const NOON = 12 * 60;
+  // 社会保険加入者（優先枠）。らくしふにも台帳にもデータが無いので、ここで手入力して維持する。
+  // 名前は空白を除いた表記で（例 '千石京輔'）。空のままなら勤務時間順だけで並ぶ。
+  const SOCIAL_INSURANCE = [];
   // 非GETに必須のCSRFトークン（らくしふページのDOMから読む。無ければ書けない）
   const rfCsrf = () => (document.querySelector('#csrf-token')?.dataset?.csrfToken) || '';
   // らくしふの確定/未確定シフト(instructed)を対象日ぶん生で取る
@@ -2328,6 +2347,146 @@
       if (btn) { btn.textContent = '✓ 反映'; btn.disabled = true; }
       r.applied = true;
       // 反映後はゴースト/実数を取り直す
+      renderSheet();
+      return true;
+    } catch (e) {
+      if (rowEl) rowEl.classList.add('err');
+      if (btn) { btn.textContent = '再試行'; btn.disabled = false; }
+      const w = rowEl && rowEl.querySelector('.rwhat');
+      if (w) w.textContent += `　→ 失敗: ${e.message}`;
+      return false;
+    }
+  }
+
+  // 対象日のCK割付プランを作る。既に付いている人はそのまま（重複して付けない）。
+  async function buildCkPlan(date) {
+    const cur = await fetchInstructedRaw(date);
+    const nameOf = {};
+    // users は schedules レスポンスに入るが fetchInstructedRaw は instructed だけ返すので、
+    // 行の名前はシフト表DOMではなくAPIから引き直す（別途取得）。
+    const bars = cur.list.filter((s) => !s.off && s.start_as_min != null && s.end_as_min != null
+      && (s.attending_genre_id === 2 || s.attending_genre_id === 3));
+    // 実働（休憩控除）。長い順の判定に使う
+    const netLen = (s) => {
+      let L = s.end_as_min - s.start_as_min;
+      for (const r of (s.rest_times || [])) {
+        L -= Math.max(0, (r.end_hour * 60 + r.end_minute) - (r.start_hour * 60 + r.start_minute));
+      }
+      return L;
+    };
+    const si = new Set(SOCIAL_INSURANCE.map((n) => String(n).replace(/\s+/g, '')));
+    const isSI = (s) => si.has((nameOf[s.user_id] || '').replace(/\s+/g, ''));
+    // 並び: 社保加入 → 実働が長い → 早出
+    const rank = (pool) => [...pool].sort((a, b) =>
+      (isSI(b) - isSI(a)) || (netLen(b) - netLen(a)) || (a.start_as_min - b.start_as_min));
+    const hasTag = (s, id) => (s.store_task_ids || []).includes(id);
+    const F = bars.filter((s) => s.attending_genre_id === 2);
+    const K = bars.filter((s) => s.attending_genre_id === 3);
+    const amOf = (a) => a.filter((s) => s.start_as_min < NOON);
+    const pmOf = (a) => a.filter((s) => s.end_as_min > NOON);
+    const plan = [];
+    const pick = (pool, used) => rank(pool).find((s) => !used.has(s.user_id)) || null;
+    const add = (label, s, task) => {
+      if (!s) { plan.push({ label, task, missing: true }); return; }
+      plan.push({ label, task, bar: s, already: hasTag(s, CK_TASK[task]) });
+    };
+    // フロア: 午前1名・午後1名に温度（別人）
+    const uF = new Set();
+    const f1 = pick(amOf(F), uF); if (f1) uF.add(f1.user_id);
+    add('F 温度(午前)', f1, '温度');
+    const f2 = pick(pmOf(F), uF); if (f2) uF.add(f2.user_id);
+    add('F 温度(午後)', f2, '温度');
+    // キッチン: 午前温度 → 廃棄(ラスト=最も遅く終わる人) → 午後温度 → 日付（全員別人）
+    const uK = new Set();
+    const k1 = pick(amOf(K), uK); if (k1) uK.add(k1.user_id);
+    add('K 温度(午前)', k1, '温度');
+    const kpm = pmOf(K);
+    const last = [...kpm].sort((a, b) => b.end_as_min - a.end_as_min)
+      .find((s) => !uK.has(s.user_id)) || null;
+    if (last) uK.add(last.user_id);
+    add('K 廃棄(ラスト)', last, '廃棄');
+    const k2 = pick(kpm, uK); if (k2) uK.add(k2.user_id);
+    add('K 温度(午後)', k2, '温度');
+    const k3 = pick(kpm, uK); if (k3) uK.add(k3.user_id);
+    add('K 日付(午後)', k3, '日付');
+    return { plan, nameOf, storeId: cur.storeId };
+  }
+
+  let ckRows = null;
+  async function renderCkPlan() {
+    const el = $('#reflect');
+    el.className = 'reflect';
+    el.innerHTML = '<span class="muted">CK割付を計算中…</span>';
+    let res;
+    try {
+      // 名前は schedules の users から引く（fetchInstructedRawは instructed のみ返すため）
+      const p = new URLSearchParams(location.search);
+      const q = new URLSearchParams();
+      q.set('page_ctx_name', 'admin'); q.set('store_id', p.get('s'));
+      for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+      q.set('start_date', ymd(targetDate)); q.set('end_date', ymd(targetDate));
+      q.set('is_staff_print_page', 'false');
+      const [uRes, built] = await Promise.all([
+        fetch('/ajax/admin/v2/schedules?' + q, { credentials: 'include',
+          headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } }).then((r) => r.json()),
+        buildCkPlan(targetDate),
+      ]);
+      for (const u of (uRes.users || [])) built.nameOf[u.id] = (u.name || '').replace(/\s+/g, ' ').trim();
+      res = built;
+    } catch (e) { el.innerHTML = `<span class="err">失敗: ${esc(e.message)}</span>`; return; }
+    ckRows = res.plan;
+    const todo = ckRows.filter((r) => r.bar && !r.already);
+    const rowHtml = (r, i) => {
+      if (r.missing) return `<div class="rrow manual"><span class="rwho">${esc(r.label)}</span>` +
+        `<span class="rwhat">該当者なし（この日はその区分/時間帯に勤務者がいません）</span></div>`;
+      const who = res.nameOf[r.bar.user_id] || r.bar.user_id;
+      const when = `${hm(r.bar.start_as_min)}-${hm(r.bar.end_as_min)}`;
+      if (r.already) return `<div class="rrow done"><span class="rwho">${esc(r.label)}</span>` +
+        `<span class="rwhat">${esc(who)} ${when} … 既に付与済み</span></div>`;
+      return `<div class="rrow create" data-i="${i}"><span class="rwho">${esc(r.label)}</span>` +
+        `<span class="rwhat">${esc(who)} ${when} に「${esc(r.task)}」を付与</span>` +
+        `<button class="ckap" data-i="${i}">付与</button></div>`;
+    };
+    el.innerHTML =
+      '<div class="rf-warn">CKは<b>シフト全域タグ</b>（store_task_ids）として付けます。' +
+      '勤務時間・休憩は変更しません。既存のタグは消しません。確定送信もしません。' +
+      (SOCIAL_INSURANCE.length ? '' : '<br><b>※社会保険加入者リストが未設定のため、勤務時間の長い順のみで選んでいます。</b>') +
+      '</div>' +
+      `<div class="rsum">付与する ${todo.length}件</div>` +
+      (todo.length ? `<div style="margin:2px 0"><button id="ckAll">▶ ${todo.length}件をまとめて付与</button></div>` : '') +
+      ckRows.map(rowHtml).join('');
+  }
+
+  // 1件付与: 既存 store_task_ids にCKのidを足して PUT（時間は既存のまま送る）
+  async function applyCkRow(i) {
+    const r = ckRows && ckRows[i];
+    if (!r || !r.bar || r.already) return false;
+    const token = rfCsrf();
+    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return false; }
+    const rowEl = $(`#reflect .rrow[data-i="${i}"]`);
+    const btn = rowEl && rowEl.querySelector('.ckap');
+    if (btn) { btn.disabled = true; btn.textContent = '送信中'; }
+    const ex = r.bar;
+    const ids = Array.from(new Set([...(ex.store_task_ids || []), CK_TASK[r.task]]));
+    const payload = { schedule: {
+      id: ex.id, attending_store_id: ex.attending_store_id, attending_genre_id: ex.attending_genre_id,
+      start_hour: Math.floor(ex.start_as_min / 60), start_minute: ex.start_as_min % 60,
+      end_hour: Math.floor(ex.end_as_min / 60), end_minute: ex.end_as_min % 60,
+      rest_times: (ex.rest_times || []), shift_pattern_id: ex.shift_pattern_id,
+      off: ex.off, off_type: ex.off_type, memo_text: ex.memo_text,
+      store_task_ids: ids, company_special_holiday_id: ex.company_special_holiday_id,
+    } };
+    try {
+      const res = await fetch(`/ajax/admin/schedules/${ex.id}`, {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json',
+          'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      r.already = true;
+      if (rowEl) rowEl.classList.add('done');
+      if (btn) { btn.textContent = '✓ 付与'; btn.disabled = true; }
       renderSheet();
       return true;
     } catch (e) {
@@ -2538,7 +2697,17 @@
   $('#draftSend').addEventListener('click', sendWishes);
   $('#reflectPlan').addEventListener('click', renderReflectPlan);
   // 反映セクションのクリック（差分1件 or 一括）。確定には触れない。
+  $('#ckPlan').addEventListener('click', renderCkPlan);
   $('#reflect').addEventListener('click', async (ev) => {
+    const ck = ev.target.closest('.ckap');
+    if (ck) { await applyCkRow(+ck.dataset.i); return; }
+    if (ev.target.id === 'ckAll') {
+      ev.target.disabled = true;
+      const targets = (ckRows || []).map((r, i) => ({ r, i })).filter((x) => x.r.bar && !x.r.already);
+      for (const { i } of targets) { await applyCkRow(i); }
+      ev.target.textContent = '完了';
+      return;
+    }
     const one = ev.target.closest('.rap');
     if (one) { await applyReflectRow(+one.dataset.i); return; }
     if (ev.target.id === 'reflectAll') {
