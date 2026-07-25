@@ -452,6 +452,24 @@
         width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
         background: #6b46a8; color: #fff; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
       }
+      #reflectToggle {
+        position: fixed; right: 112px; top: 12px; z-index: 2147483646;
+        width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
+        background: #0e7490; color: #fff; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
+      }
+      @media print { #reflectToggle, #reflectPanel { display: none !important; } }
+      #reflectPanel {
+        position: fixed; left: 12px; top: 64px; z-index: 2147483647;
+        width: 480px; max-width: calc(100vw - 24px);
+        max-height: calc(100vh - 80px); overflow-y: auto;
+        background: #fff; border: 1px solid #0e7490; border-radius: 10px;
+        box-shadow: 0 4px 20px rgba(0,0,0,.25); padding: 12px; display: none;
+        font-size: 15px; color: #222;
+      }
+      #reflectPanel.open { display: block; }
+      #reflectPanel .rp-head { display: flex; align-items: baseline; gap: 8px;
+        border-bottom: 2px solid #0e7490; padding-bottom: 5px; margin-bottom: 8px; }
+      #reflectPanel .rp-head b { font-size: 16px; color: #0e7490; }
       #shiftPanel {
         position: fixed; right: 62px; top: 64px; z-index: 2147483647;
         width: 490px; max-width: calc(100vw - 24px);
@@ -626,6 +644,7 @@
     </style>
     <button id="toggle" title="客数予測パネル">📊<span class="badge" id="badge"></span></button>
     <button id="shiftToggle" title="シフト変更依頼">🔁<span class="badge" id="shiftBadge"></span></button>
+    <button id="reflectToggle" title="海賊版らくしふ → らくしふへ反映">🔀</button>
     <div id="shiftPanel">
       <div class="sc-head">
         <b>シフト変更依頼</b>
@@ -656,7 +675,12 @@
       <div id="tasks" class="tasks muted">読込中…</div>
       <div class="section-title">シフト確定 未処理日（今日〜月末）</div>
       <div id="unconfirmed" class="unconfirmed muted">確認中…</div>
-      <div class="section-title fold" id="draftTitle"><span id="draftFold">▾</span> 海賊版らくしふ
+    </div>
+    <div id="reflectPanel">
+      <div class="rp-head"><b>海賊版らくしふ → 反映</b>
+        <span class="muted" style="font-size:11px">確定送信はしません／反映は1件ずつ手押し</span>
+      </div>
+      <div class="section-title fold" id="draftTitle"><span id="draftFold">▾</span> 希望送信・この日の原案
         <select id="draftMonth" title="送信する月（らくしふの表示月とは無関係に選べます）"></select>
         <button id="draftSend" title="選択した月の希望シフトをShiftDraftへ送る">希望送信</button>
         <a id="draftOpen" href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener">開く↗</a>
@@ -665,7 +689,6 @@
       <div class="section-title" style="margin-top:6px">この日を らくしふへ反映
         <button id="reflectPlan" title="海賊版の原案と今のらくしふを突き合わせ、差分を出す（送信はしません）">差分を出す</button>
         <button id="ckPlan" title="温度・日付・廃棄のCKを、この日の勤務者に自動で割り付ける（シフト全域タグ。時間は変えません）">🌡 CK割付</button>
-        <span class="muted" style="font-weight:400;font-size:10px">※確定送信はしません／反映は1件ずつ手押し</span>
       </div>
       <div id="reflect" class="reflect muted">-</div>
     </div>
@@ -691,6 +714,14 @@
     repositionShiftPanel();
   });
   if (localStorage.getItem('rfPanelOpen') === '1') panel.classList.add('open');
+
+  // 🔀 海賊版→らくしふ反映パネル（左側に独立表示）
+  const reflectPanel = $('#reflectPanel');
+  $('#reflectToggle').addEventListener('click', () => {
+    reflectPanel.classList.toggle('open');
+    localStorage.setItem('rfReflectOpen', reflectPanel.classList.contains('open') ? '1' : '0');
+  });
+  if (localStorage.getItem('rfReflectOpen') === '1') reflectPanel.classList.add('open');
 
   // 対象日はらくしふ画面(URLのfrom=)に完全追従（独自の日付移動は廃止）
   $('#reload').addEventListener('click', () => {
