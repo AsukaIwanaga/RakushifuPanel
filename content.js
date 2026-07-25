@@ -2408,62 +2408,72 @@
     const nameToTaskId = {};
     for (const [id, nm] of Object.entries(taskMap)) nameToTaskId[nm] = +id;
     const asg = draftR.data.assignments || [];
-    // user_id ごとに: 本体バー(taskなし) と タスクバー に分ける
-    const byUser = {};
-    for (const a of asg) {
-      const u = (byUser[a.user_id] ||= { name: a.name, shift: [], tasks: [], genre: a.genre });
-      (a.task ? u.tasks : u.shift).push(a);
-      if (a.genre) u.genre = a.genre;
-    }
     // 既存バーを (user_id, attending_genre_id) で引く。区分跨ぎの誤マッチを防ぐ。
     const curKey = (uid, g) => `${uid}:${g}`;
     const curByUG = {};
     for (const s of cur.list) (curByUG[curKey(s.user_id, s.attending_genre_id)] ||= []).push(s);
+    // FK・非生産・役割バーは所属区分に寄せる。所属genreの対応表。
+    const belong = {};
+    for (const uu of (cur.users || [])) belong[uu.id] = uu.belonging_genre_id;
+    const mapGenre = (glabel, uid) => (glabel === 'F' ? 2 : glabel === 'K' ? 3
+      : (belong[uid] === 2 || belong[uid] === 3) ? belong[uid] : null);
+
+    // 原案を (user_id, らくしふ区分) ごとにまとめる。区分をまたぐ人（応援）は区分別に線を持つ。
+    const byUG = {};
+    for (const a of asg) {
+      if (a.e <= a.s) continue;
+      const gid = mapGenre(a.genre, a.user_id);
+      const key = `${a.user_id}:${gid}`;
+      const g = (byUG[key] ||= { uid: a.user_id, name: a.name, gid, glabel: a.genre, bars: [] });
+      g.bars.push(a);
+    }
 
     const rows = [];
-    for (const [uidStr, u] of Object.entries(byUser)) {
-      const uid = +uidStr;
-      const genreId = RF_GENRE[u.genre];
-      // 本体バー（タスクでないバー）だけを「シフト」とみなす。
-      // タスクだけの人（固定作業のみ・研修枠のみ）はシフトが無いので自動対象にしない。
-      const shiftBars = u.shift;
+    for (const g of Object.values(byUG)) {
+      const uid = g.uid;
       const manualRow = (desc) => rows.push({
-        kind: 'manual', user_id: uid, name: u.name, genre: u.genre, desc, manual: true });
-      if (!shiftBars.length) {
-        if (u.tasks.length) manualRow(`時間指定タスクのみ（本体シフト無し）→手動`);
-        continue;
+        kind: 'manual', user_id: uid, name: g.name, genre: g.glabel, desc, manual: true });
+      // 同区分のバーを時間帯でマージ＝その区分での出勤の線。2区間以上＝分割勤務。
+      const bars = g.bars.filter((b) => b.e > b.s).sort((a, b) => a.s - b.s);
+      if (!bars.length) continue;
+      const merged = [];
+      for (const b of bars) {
+        const last = merged[merged.length - 1];
+        if (last && b.s <= last.e) last.e = Math.max(last.e, b.e);
+        else merged.push({ s: b.s, e: b.e });
       }
-      if (shiftBars.length > 1) { manualRow(`原案に本体バーが複数（分割勤務）→手動`); continue; }
-      if (!genreId) { manualRow(`区分${u.genre}は自動対象外→手動`); continue; }
-      const s = shiftBars[0].s, e = shiftBars[0].e;
-      const rests = shiftBars[0].rests || [];
-      // 時間指定タスク: 本体スパンと完全一致する単一タスクだけ store_task_ids で付ける
+      if (merged.length > 1) {
+        manualRow(`分割勤務（${merged.map((m) => `${hm(m.s)}-${hm(m.e)}`).join(' , ')}）→手動`); continue;
+      }
+      if (!g.gid) { manualRow(`区分${g.glabel}の所属が不明→手動`); continue; }
+      const s = merged[0].s, e = merged[0].e;
+      // 休憩は「タスクでない本体バー」から拾う（複数あれば連結）
+      const rests = [].concat(...g.bars.filter((b) => !b.task).map((b) => b.rests || []));
+      const restApi = restsToApi(rests);
+      const restLabel = restApi.length ? `（休${rests.map((r) => hm(r[0]) + '-' + hm(r[1])).join(',')}）` : '';
+      // 全域一致の単一タスクだけ store_task_ids に付ける。部分区間タスクは手動注記。
       const fullTaskIds = [];
       let partialTasks = 0;
-      for (const t of u.tasks) {
+      for (const t of g.bars.filter((b) => b.task)) {
         const id = nameToTaskId[t.task];
         if (id && t.s === s && t.e === e) fullTaskIds.push(id);
-        else partialTasks += 1;
+        else if (id) partialTasks += 1;
       }
-      const manualNotes = partialTasks ? [`時間指定タスク${partialTasks}件は手動`] : [];
-
+      const genreId = g.gid;
       const existing = curByUG[curKey(uid, genreId)] || [];
-      if (existing.length > 1) {
-        manualRow(`${hm(s)}-${hm(e)}：この区分に既存バーが複数→手動`); continue;
-      }
+      if (existing.length > 1) { manualRow(`${hm(s)}-${hm(e)}：既存バーが複数→手動`); continue; }
       const ex = existing[0];
-      // 既に確定/共有/固定済みのバーには絶対に触れない（上書き事故を防ぐ）
-      if (ex && (ex.is_shared || ex.is_fixed)) {
-        manualRow(`${hm(s)}-${hm(e)}：既に確定/共有済み→手動（上書きしません）`); continue;
-      }
-      const restApi = restsToApi(rests);
+      const warn = [];
+      if (ex && (ex.is_shared || ex.is_fixed)) warn.push('共有済みを引き直し');
+      if (partialTasks) warn.push(`時間指定タスク${partialTasks}件は手動`);
+      const warnTxt = warn.length ? `　⚠${warn.join('・')}` : '';
+      const gl = g2label(genreId);
+
       if (!ex) {
-        // 新規作成
         rows.push({
-          kind: 'create', user_id: uid, name: u.name, genre: u.genre,
-          desc: `新しく ${hm(s)}-${hm(e)} を引く` + (restApi.length ? `（休${rests.map((r) => hm(r[0]) + '-' + hm(r[1])).join(',')}）` : '')
-            + (fullTaskIds.length ? `＋タスク${fullTaskIds.length}` : '')
-            + (manualNotes.length ? `　⚠${manualNotes.join('・')}` : ''),
+          kind: 'create', user_id: uid, name: g.name, genre: gl,
+          desc: `新しく ${gl} ${hm(s)}-${hm(e)} を引く${restLabel}`
+            + (fullTaskIds.length ? `＋タスク${fullTaskIds.length}` : '') + warnTxt,
           payload: { schedule: {
             user_id: uid, attending_store_id: +cur.storeId, attending_genre_id: genreId,
             date: ymd(date), start_hour: Math.floor(s / 60), start_minute: s % 60,
@@ -2473,30 +2483,28 @@
             instructedScheduleStoreTasks: [], company_special_holiday_id: null,
           } },
         });
-      } else if (ex.off || ex.start_as_min == null || ex.end_as_min == null) {
-        // 既存が「休み」または時間なしのバー。働きに変える判断は人に委ねる（手動）
-        manualRow(`${hm(s)}-${hm(e)}：既存が休み/時間未設定→手動`);
-      } else {
-        // 既存あり: 時間 or 休憩が違えば retime（タスクは既存を保持・触らない）
+        continue;
+      }
+      const wasOff = ex.off || ex.start_as_min == null || ex.end_as_min == null;
+      if (!wasOff) {
         const sameTime = ex.start_as_min === s && ex.end_as_min === e;
         const sameRest = restEq(apiRestToMin(ex.rest_times).sort(), rests.map((r) => [r[0], r[1]]).sort());
-        if (sameTime && sameRest) continue;   // 一致は出さない
-        rows.push({
-          kind: 'retime', user_id: uid, name: u.name, genre: u.genre,
-          desc: `${hm(ex.start_as_min)}-${hm(ex.end_as_min)} → ${hm(s)}-${hm(e)} に引き直す`
-            + (sameRest ? '' : `／休憩を更新`)
-            + (partialTasks ? `　⚠時間指定タスク${partialTasks}件は手動` : ''),
-          bar_id: ex.id,
-          payload: { schedule: {
-            id: ex.id, attending_store_id: ex.attending_store_id, attending_genre_id: ex.attending_genre_id,
-            start_hour: Math.floor(s / 60), start_minute: s % 60,
-            end_hour: Math.floor(e / 60), end_minute: e % 60,
-            rest_times: restApi, shift_pattern_id: ex.shift_pattern_id, off: ex.off,
-            off_type: ex.off_type, memo_text: ex.memo_text,
-            store_task_ids: ex.store_task_ids, company_special_holiday_id: ex.company_special_holiday_id,
-          } },
-        });
+        if (sameTime && sameRest) continue;   // 完全一致は出さない
       }
+      rows.push({
+        kind: 'retime', user_id: uid, name: g.name, genre: gl,
+        desc: (wasOff ? `休み → ${gl} ${hm(s)}-${hm(e)} を引く${restLabel}`
+          : `${gl} ${hm(ex.start_as_min)}-${hm(ex.end_as_min)} → ${hm(s)}-${hm(e)} に引き直す${restLabel}`) + warnTxt,
+        bar_id: ex.id,
+        payload: { schedule: {
+          id: ex.id, attending_store_id: ex.attending_store_id, attending_genre_id: ex.attending_genre_id,
+          start_hour: Math.floor(s / 60), start_minute: s % 60,
+          end_hour: Math.floor(e / 60), end_minute: e % 60,
+          rest_times: restApi, shift_pattern_id: ex.shift_pattern_id,
+          off: false, off_type: 0, memo_text: ex.memo_text,   // 原案は勤務なので off は必ず外す
+          store_task_ids: ex.store_task_ids, company_special_holiday_id: ex.company_special_holiday_id,
+        } },
+      });
     }
     rows.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
     return rows;
