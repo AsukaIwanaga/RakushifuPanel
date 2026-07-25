@@ -459,8 +459,8 @@
       }
       @media print { #reflectToggle, #reflectPanel { display: none !important; } }
       #reflectPanel {
-        position: fixed; left: 12px; top: 64px; z-index: 2147483647;
-        width: 480px; max-width: calc(100vw - 24px);
+        position: fixed; right: 12px; top: 64px; z-index: 2147483647;
+        width: 460px; max-width: calc(100vw - 24px);
         max-height: calc(100vh - 80px); overflow-y: auto;
         background: #fff; border: 1px solid #0e7490; border-radius: 10px;
         box-shadow: 0 4px 20px rgba(0,0,0,.25); padding: 12px; display: none;
@@ -700,12 +700,17 @@
   let targetDate = parseYmd(urlParams().from || '') || new Date();
   let lastHref = location.href;
 
-  // 📊パネルと🔁ダイアログが同時に開いても被らないよう、🔁側を左に避ける
+  const reflectPanel = $('#reflectPanel');
+  // 3つのパネル(📊/🔁/🔀)を右端から順に並べて重ならないようにする。
+  // どれも右寄せ＝左のシフト表を隠さない（左に出て邪魔という指摘対応）。
   function repositionShiftPanel() {
-    const sp = $('#shiftPanel');
-    sp.style.right = panel.classList.contains('open')
-      ? `${12 + panel.offsetWidth + 8}px`
-      : '62px';
+    const gap = 8;
+    let right = 12;
+    // 右から: 📊 → 🔁 → 🔀 の順に、開いているものだけ左へ積む
+    if (panel.classList.contains('open')) { panel.style.right = `${right}px`; right += panel.offsetWidth + gap; }
+    if (shiftPanel.classList.contains('open')) { shiftPanel.style.right = `${right}px`; right += shiftPanel.offsetWidth + gap; }
+    else shiftPanel.style.right = `${right}px`;   // 閉じていても次回開く位置を用意
+    if (reflectPanel.classList.contains('open')) { reflectPanel.style.right = `${right}px`; }
   }
 
   $('#toggle').addEventListener('click', () => {
@@ -715,11 +720,11 @@
   });
   if (localStorage.getItem('rfPanelOpen') === '1') panel.classList.add('open');
 
-  // 🔀 海賊版→らくしふ反映パネル（左側に独立表示）
-  const reflectPanel = $('#reflectPanel');
+  // 🔀 海賊版→らくしふ反映パネル（右寄せ・他パネルと重ならない）
   $('#reflectToggle').addEventListener('click', () => {
     reflectPanel.classList.toggle('open');
     localStorage.setItem('rfReflectOpen', reflectPanel.classList.contains('open') ? '1' : '0');
+    repositionShiftPanel();
   });
   if (localStorage.getItem('rfReflectOpen') === '1') reflectPanel.classList.add('open');
 
