@@ -621,6 +621,7 @@
         <button id="scNewBtn">＋新規</button>
         <button id="scReload">更新</button>
       </div>
+      <datalist id="scNames"></datalist>
       <div id="scNewForm" style="display:none"></div>
       <div id="scList" class="muted">読込中…</div>
     </div>
@@ -785,6 +786,20 @@
   };
   // 名前の正規化（空白と敬称を除いて突き合わせ）
   const normName = (s) => String(s || '').replace(/\s+/g, '').replace(/(さん|くん|ちゃん)$/, '');
+  // シフト表に出ている人の名前一覧（対象者の候補。全角空白は半角に）
+  const crewNames = () => {
+    const set = new Set();
+    for (const el of document.querySelectorAll('.user-cell .name')) {
+      const n = (el.textContent || '').replace(/　/g, ' ').trim();
+      if (n) set.add(n);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, 'ja'));
+  };
+  // 対象者ドロップダウン(datalist)の中身を今のシフト表から作り直す
+  const refreshCrewDatalist = () => {
+    const dl = $('#scNames');
+    if (dl) dl.innerHTML = crewNames().map((n) => `<option value="${esc(n)}">`).join('');
+  };
   // 「閉じた」案件＝完了 or 拒否。保留(未完了)判定・黄色線・バッジはこれで外す。
   const scClosed = (c) => c.is_done || c.is_rejected;
 
@@ -846,7 +861,7 @@
       <div class="sc-meta">${esc(c.source)}・${esc(c.requester)}　${esc(c.received_at)}</div>
       ${rejReason}
       <div class="sc-edit-form" style="display:none">
-        <input class="sc-edit-target" value="${esc(c.target || '')}" placeholder="対象者">
+        <input class="sc-edit-target" list="scNames" value="${esc(c.target || '')}" placeholder="対象者（選択 or 入力）">
         <div style="display:flex;gap:4px;align-items:center">
           <input class="sc-edit-date" value="${esc(scSplitDate(c.target_date).from)}" placeholder="対象日 (例 7/26)">〜
           <input class="sc-edit-date-end" value="${esc(scSplitDate(c.target_date).to)}" placeholder="終了日 (期間なら/空欄可)">
@@ -1098,7 +1113,7 @@
       `</select>` +
       '<label style="display:flex;align-items:center;gap:5px;font-size:13px;margin-bottom:4px">' +
       '<input type="checkbox" id="scNewZenin" style="width:auto">全員宛（休み募集：代われる人を募集）</label>' +
-      `<input id="scNewTarget" placeholder="対象者 (例: 高橋心さん)">` +
+      `<input id="scNewTarget" list="scNames" placeholder="対象者（選択 or 入力）">` +
       '<div style="display:flex;gap:4px;align-items:center">' +
       `<input id="scNewDate" placeholder="対象日 (例: 7/26)">〜` +
       `<input id="scNewDateEnd" placeholder="終了日 (期間なら/空欄可)">` +
@@ -1139,6 +1154,7 @@
       $('#scNewRequester').style.display = on ? 'none' : '';
     });
     applyKind();
+    refreshCrewDatalist();   // 対象者の候補を今のシフト表から充填
   }
 
   // 名前右の「＋」ボタンから、対象者・対象日プリセットで新規起票フォームを開く
@@ -1242,6 +1258,7 @@
     localStorage.setItem('rfShiftOpen', '1');
     repositionShiftPanel();
     if (!$('#scNewForm').innerHTML) scBuildNewForm();
+    refreshCrewDatalist();
     $('#scNewForm').style.display = '';
     $('#scNewTarget').value = name.replace(/\s+/g, '');
     $('#scNewDate').value = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
@@ -1304,6 +1321,7 @@
     const f = $('#scNewForm');
     if (f.style.display !== 'none') { scCloseNewForm(); return; } // 開いていれば閉じる
     if (!f.innerHTML) scBuildNewForm();
+    refreshCrewDatalist();               // 対象者候補を最新のシフト表から
     $('#scNewDate').value = scDateStr(); // 開くたびに表示中の日へ合わせる
     $('#scNewDateEnd').value = '';
     f.style.display = '';
@@ -1413,7 +1431,7 @@
     if (t.matches('.sc-edit-btn')) {
       const form = t.closest('.sc-card').querySelector('.sc-edit-form');
       form.style.display = form.style.display === 'none' ? 'block' : 'none';
-      if (form.style.display === 'block') form.querySelector('.sc-edit-change').focus();
+      if (form.style.display === 'block') { refreshCrewDatalist(); form.querySelector('.sc-edit-change').focus(); }
     }
     if (t.matches('.sc-edit-cancel')) t.closest('.sc-edit-form').style.display = 'none';
     if (t.matches('.sc-edit-do')) {
