@@ -470,6 +470,8 @@
       #reflectPanel .rp-head { display: flex; align-items: baseline; gap: 8px;
         border-bottom: 2px solid #0e7490; padding-bottom: 5px; margin-bottom: 8px; }
       #reflectPanel .rp-head b { font-size: 16px; color: #0e7490; }
+      #rfCapBox { border: 1px solid #0e7490; background: #ecfeff; border-radius: 6px;
+        padding: 6px 8px; margin-bottom: 6px; }
       #shiftPanel {
         position: fixed; right: 62px; top: 64px; z-index: 2147483647;
         width: 490px; max-width: calc(100vw - 24px);
@@ -686,6 +688,7 @@
         <a id="draftOpen" href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener">開く↗</a>
       </div>
       <div id="draft" class="draft muted">-</div>
+      <div id="rfCapBox" style="display:none"></div>
       <div class="section-title" style="margin-top:6px">この日を らくしふへ反映
         <button id="reflectPlan" title="海賊版の原案どおりに、らくしふへシフトのラインを引く（新規作成／時間の引き直し。押した瞬間は書き込みません）">✏️ ラインを引く</button>
         <button id="ckPlan" title="温度・日付・廃棄のCKを、この日の勤務者に自動で割り付ける（シフト全域タグ。時間は変えません）">🌡 CK割付</button>
@@ -2039,7 +2042,20 @@
   // ページ本体のシフト保存(page_hook.jsが検知)→少し待って再計算
   let editRefreshTimer = null;
   window.addEventListener('message', (ev) => {
-    if (ev.source !== window || ev.data?.__rfPanel !== 'dataChanged') return;
+    if (ev.source !== window) return;
+    // タスク割当保存の採取（中身の反映を作るための一時機能）。反映パネルに出す。
+    if (ev.data?.__rfCapture) {
+      const c = ev.data.__rfCapture;
+      const box = $('#rfCapBox');
+      if (box) {
+        box.style.display = '';
+        box.innerHTML = '<div style="font-weight:700;color:#0e7490">📥 保存通信を採取（コピーして共有してください）</div>' +
+          `<div style="font-size:11px;margin:2px 0"><b>${esc(c.method)}</b> ${esc(c.url)}</div>` +
+          `<textarea readonly style="width:100%;height:90px;font-size:11px;box-sizing:border-box">${esc(c.body || '')}</textarea>`;
+      }
+      return;
+    }
+    if (ev.data?.__rfPanel !== 'dataChanged') return;
     clearTimeout(editRefreshTimer);
     editRefreshTimer = setTimeout(() => {
       if (!alive()) return contextLost();
