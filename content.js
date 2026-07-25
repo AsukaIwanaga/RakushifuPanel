@@ -463,6 +463,20 @@
       #shiftPanel.open { display: block; }
       .sc-head { display: flex; gap: 5px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
       .sc-head b { flex: 1; font-size: 16px; }
+      #scDetectBox { border: 1px solid #f0c36d; background: #fffbef; border-radius: 6px;
+        padding: 6px 8px; margin-bottom: 8px; font-size: 12px; }
+      .sc-detect-head { font-weight: 700; margin-bottom: 4px; }
+      #scDraftAll { font-size: 11px; padding: 1px 10px; border-radius: 5px;
+        border: 1px solid #d97706; background: #d97706; color: #fff; cursor: pointer; }
+      .sc-drow { display: flex; align-items: center; gap: 6px; padding: 3px 0;
+        border-top: 1px dotted #eadfbf; }
+      .sc-drow .sc-dwho { flex: 0 0 auto; font-weight: 700; min-width: 76px; }
+      .sc-drow .sc-dwhat { flex: 1 1 auto; color: #7a5b12; }
+      .sc-drow.dup { opacity: .55; }
+      .sc-drow.err .sc-dwhat { color: #b02a2a; }
+      .sc-draft { flex: 0 0 auto; font-size: 11px; padding: 1px 9px; border-radius: 5px;
+        border: 1px solid #d97706; background: #d97706; color: #fff; cursor: pointer; }
+      .sc-draft[disabled] { border-color: #ccc; background: #eee; color: #999; cursor: default; }
       .sc-head button {
         border: 1px solid #ccc; background: #f5f5f5; border-radius: 5px;
         cursor: pointer; padding: 4px 10px; font-size: 14px;
@@ -619,10 +633,12 @@
         <button id="scFilterDay">この日</button>
         <button id="scFilterAll">すべて</button>
         <button id="scNewBtn">＋新規</button>
+        <button id="scDetect" title="この日の「要確定」（未確定の指示シフト）を検出して依頼として起案する">⚠要確定</button>
         <button id="scReload">更新</button>
       </div>
       <datalist id="scNames"></datalist>
       <div id="scNewForm" style="display:none"></div>
+      <div id="scDetectBox" style="display:none"></div>
       <div id="scList" class="muted">読込中…</div>
     </div>
     <div id="panel">
@@ -802,6 +818,120 @@
   };
   // 「閉じた」案件＝完了 or 拒否。保留(未完了)判定・黄色線・バッジはこれで外す。
   const scClosed = (c) => c.is_done || c.is_rejected;
+
+  // ===== 「要確定」検出 → 依頼の起案 =====
+  // 要確定＝instructed(指示シフト)が is_shared=false（＝確定・共有されていない）状態。
+  // らくしふ上で赤破線「要確定」で出る。これは「シフトに未確定の変更がある」＝依頼が発生、と同義（本人判断）。
+  // 検出して WorkLogWeb に変更依頼として起案できるようにする。
+  const g2label = (g) => (g === 2 ? 'F' : g === 3 ? 'K' : '');
+  async function detectYoukakutei(date) {
+    const p = new URLSearchParams(location.search);
+    const q = new URLSearchParams();
+    q.set('page_ctx_name', 'admin'); q.set('store_id', p.get('s'));
+    for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    q.set('start_date', ymd(date)); q.set('end_date', ymd(date)); q.set('is_staff_print_page', 'false');
+    const r = await fetch('/ajax/admin/v2/schedules?' + q, {
+      credentials: 'include', headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+    if (!r.ok) throw new Error(`シフトAPI HTTP ${r.status}`);
+    const j = await r.json();
+    const iso = ymd(date);
+    const nameOf = {};
+    for (const u of (j.users || [])) nameOf[u.id] = (u.name || '').replace(/\s+/g, ' ').trim();
+    const ins = (j.instructed || []).filter((s) => s.date === iso && !s.is_deleted);
+    const desired = (j.desired || []).filter((s) => s.date === iso);
+    const span = (s) => (s.off ? '休み' : `${hm(s.start_as_min)}-${hm(s.end_as_min)}`);
+    const rows = [];
+    for (const s of ins) {
+      if (s.is_shared) continue;                 // 確定・共有済み＝要確定ではない
+      // 差分の before は「同じ人・同じ区分の確定済みバー」だけ。別区分の確定は
+      // 置き換えではなく“応援などの追加”なので混同しない（岩永の例）。
+      const base = ins.find((x) => x.user_id === s.user_id && x.is_shared
+        && x.attending_genre_id === s.attending_genre_id) || null;
+      const des = desired.find((x) => x.user_id === s.user_id);
+      const gl = g2label(s.attending_genre_id);
+      const now = (gl ? `${gl} ` : '') + span(s);
+      let change;
+      if (base && (base.start_as_min !== s.start_as_min || base.end_as_min !== s.end_as_min || base.off !== s.off)) {
+        change = `確定${span(base)} → ${now}（要確定）`;
+      } else if (base) {
+        change = `${now}（要確定・確定と同時刻）`;    // 同時刻だが未共有
+      } else {
+        change = `${now} を新規追加（要確定）` + (des ? ` / 希望${span(des)}` : '');
+      }
+      rows.push({
+        bar_id: s.id, user_id: s.user_id, name: nameOf[s.user_id] || String(s.user_id),
+        genre: gl, off: s.off, change,
+        req_time: s.off ? '' : `${hm(s.start_as_min)}-${hm(s.end_as_min)}`,
+        span: span(s),
+      });
+    }
+    // 同じ人の複数バー（例: 応援で2本）はまとめず各行出す。名前順。
+    rows.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+    return rows;
+  }
+  // その人・その日に既に開いている依頼があるか（二重起案を防ぐ）
+  const hasOpenCase = (name, date) => (scState?.cases || []).some((c) =>
+    !scClosed(c) && normName(c.target) === normName(name) &&
+    (scMatchesDay(c, date) || !(c.target_date || '').trim()));
+
+  let detectRows = null;
+  async function renderDetect() {
+    const box = $('#scDetectBox');
+    // トグル: 開いていたら閉じる
+    if (box.style.display !== 'none' && box.dataset.day === ymd(targetDate)) {
+      box.style.display = 'none'; return;
+    }
+    $('#scNewForm').style.display = 'none';
+    box.style.display = ''; box.dataset.day = ymd(targetDate);
+    box.innerHTML = '<span class="muted">要確定を検出中…</span>';
+    try { detectRows = await detectYoukakutei(targetDate); }
+    catch (e) { box.innerHTML = `<span class="err">検出失敗: ${esc(e.message)}</span>`; return; }
+    const md = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
+    if (!detectRows.length) {
+      box.innerHTML = `<div class="sc-detect-head">${md} の要確定：なし ✓</div>`;
+      return;
+    }
+    const rowHtml = (r, i) => {
+      const dup = hasOpenCase(r.name, targetDate);
+      const btn = dup
+        ? '<span class="muted" style="font-size:11px">起案済み</span>'
+        : `<button class="sc-draft" data-i="${i}">起案</button>`;
+      return `<div class="sc-drow${dup ? ' dup' : ''}" data-i="${i}">` +
+        `<span class="sc-dwho">${esc(r.name)}</span>` +
+        `<span class="sc-dwhat">${esc(r.change)}</span>${btn}</div>`;
+    };
+    const todo = detectRows.filter((r) => !hasOpenCase(r.name, targetDate));
+    box.innerHTML =
+      `<div class="sc-detect-head">${md} の要確定 ${detectRows.length}件` +
+      `（未起案 ${todo.length}件）` +
+      `<button id="scDetectClose" style="float:right">閉じる</button></div>` +
+      (todo.length ? `<div style="margin:3px 0"><button id="scDraftAll">▶ 未起案 ${todo.length}件を起案</button></div>` : '') +
+      detectRows.map(rowHtml).join('');
+  }
+  // 1件を変更依頼として起案（WorkLogWeb /api/shift/create）
+  async function draftFromDetect(i) {
+    const r = detectRows && detectRows[i];
+    if (!r) return false;
+    const rowEl = $(`#scDetectBox .sc-drow[data-i="${i}"]`);
+    const btn = rowEl && rowEl.querySelector('.sc-draft');
+    if (btn) { btn.disabled = true; btn.textContent = '起案中'; }
+    const res = await shiftApi('/api/shift/create', {
+      target: r.name.replace(/\s+/g, ''),
+      target_date: `${targetDate.getMonth() + 1}/${targetDate.getDate()}`,
+      change: r.change, req_time: r.req_time,
+      requester: r.name.replace(/\s+/g, ''),
+      source: 'らくしふ要確定', memo: `らくしふの要確定から自動起案（bar_id ${r.bar_id}）`,
+    });
+    if (!res || !res.ok) {
+      if (btn) { btn.textContent = '再試行'; btn.disabled = false; }
+      if (rowEl) rowEl.classList.add('err');
+      return false;
+    }
+    if (rowEl) rowEl.classList.add('dup');
+    if (btn) btn.outerHTML = '<span class="muted" style="font-size:11px">✓ 起案</span>';
+    scRefresh();   // 新しい案件をリストへ反映
+    return true;
+  }
 
   // ===== 対象時間の入力ウィジェット（時・分プルダウン・分は既定00）=====
   // 手打ちが面倒なので、開始/終了を「時」「分」のselectで選ぶ。空欄なら変更内容から自動。
@@ -1303,6 +1433,7 @@
   repositionShiftPanel();
 
   $('#scReload').addEventListener('click', scRefresh);
+  $('#scDetect').addEventListener('click', renderDetect);
   const scSetFilter = (f) => {
     scFilter = f;
     localStorage.setItem('rfScFilter', f); // 日付遷移(フルリロード)しても選択を引き継ぐ
@@ -1337,6 +1468,16 @@
   });
   shiftPanel.addEventListener('click', async (ev) => {
     const t = ev.target;
+    if (t.id === 'scDetectClose') { $('#scDetectBox').style.display = 'none'; return; }
+    if (t.matches('.sc-draft')) { await draftFromDetect(+t.dataset.i); return; }
+    if (t.id === 'scDraftAll') {
+      t.disabled = true;
+      const targets = (detectRows || []).map((r, i) => ({ r, i }))
+        .filter((x) => !hasOpenCase(x.r.name, targetDate));
+      for (const { i } of targets) { await draftFromDetect(i); }
+      t.textContent = '完了';
+      return;
+    }
     if (t.matches('.sc-note-input button')) {
       const input = t.parentElement.querySelector('input');
       const text = (input.value || '').trim();
