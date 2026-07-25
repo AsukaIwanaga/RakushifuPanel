@@ -687,7 +687,7 @@
       </div>
       <div id="draft" class="draft muted">-</div>
       <div class="section-title" style="margin-top:6px">この日を らくしふへ反映
-        <button id="reflectPlan" title="海賊版の原案と今のらくしふを突き合わせ、差分を出す（送信はしません）">差分を出す</button>
+        <button id="reflectPlan" title="海賊版の原案どおりに、らくしふへシフトのラインを引く（新規作成／時間の引き直し。押した瞬間は書き込みません）">✏️ ラインを引く</button>
         <button id="ckPlan" title="温度・日付・廃棄のCKを、この日の勤務者に自動で割り付ける（シフト全域タグ。時間は変えません）">🌡 CK割付</button>
       </div>
       <div id="reflect" class="reflect muted">-</div>
@@ -2461,7 +2461,7 @@
         // 新規作成
         rows.push({
           kind: 'create', user_id: uid, name: u.name, genre: u.genre,
-          desc: `新規 ${hm(s)}-${hm(e)}` + (restApi.length ? `（休${rests.map((r) => hm(r[0]) + '-' + hm(r[1])).join(',')}）` : '')
+          desc: `新しく ${hm(s)}-${hm(e)} を引く` + (restApi.length ? `（休${rests.map((r) => hm(r[0]) + '-' + hm(r[1])).join(',')}）` : '')
             + (fullTaskIds.length ? `＋タスク${fullTaskIds.length}` : '')
             + (manualNotes.length ? `　⚠${manualNotes.join('・')}` : ''),
           payload: { schedule: {
@@ -2483,7 +2483,7 @@
         if (sameTime && sameRest) continue;   // 一致は出さない
         rows.push({
           kind: 'retime', user_id: uid, name: u.name, genre: u.genre,
-          desc: `変更 ${hm(ex.start_as_min)}-${hm(ex.end_as_min)} → ${hm(s)}-${hm(e)}`
+          desc: `${hm(ex.start_as_min)}-${hm(ex.end_as_min)} → ${hm(s)}-${hm(e)} に引き直す`
             + (sameRest ? '' : `／休憩を更新`)
             + (partialTasks ? `　⚠時間指定タスク${partialTasks}件は手動` : ''),
           bar_id: ex.id,
@@ -2512,20 +2512,20 @@
     } catch (e) { el.innerHTML = `<span class="err">失敗: ${esc(e.message)}</span>`; return; }
     const auto = reflectRows.filter((r) => !r.manual);
     const manual = reflectRows.filter((r) => r.manual);
-    if (!reflectRows.length) { el.innerHTML = '<span class="allok">✓ 原案と一致（反映する差分なし）</span>'; return; }
+    if (!reflectRows.length) { el.innerHTML = '<span class="allok">✓ 原案どおり引けています（引く線なし）</span>'; return; }
     const rowHtml = (r, i) => {
       const btn = r.manual ? '<span class="muted" style="font-size:11px">要手動</span>'
-        : `<button class="rap" data-i="${i}">反映</button>`;
+        : `<button class="rap" data-i="${i}">${r.kind === 'create' ? '線を引く' : '引き直す'}</button>`;
       return `<div class="rrow ${r.kind}" data-i="${i}">` +
         `<span class="rwho"><span class="dtag ${esc(r.genre || '')}" style="display:inline-block;` +
         `width:20px;text-align:center;border-radius:4px;color:#fff;font-size:10px">${esc(r.genre || '?')}</span> ` +
         `${esc(r.name)}</span><span class="rwhat">${esc(r.desc)}</span>${btn}</div>`;
     };
     el.innerHTML =
-      `<div class="rf-warn">確定送信はしません。反映は1行ずつご確認のうえ「反映」を押してください` +
-      `（削除・確定は行いません）。${rfCsrf() ? '' : '<b>⚠CSRFトークン未検出：このページをリロードしてください</b>'}</div>` +
-      `<div class="rsum">反映できる差分 ${auto.length}件${manual.length ? ` ／ 要手動 ${manual.length}件` : ''}</div>` +
-      (auto.length ? `<div style="margin:2px 0"><button id="reflectAll" title="上から順に1件ずつ反映（各件の成否を表示）">▶ ${auto.length}件を順に反映</button></div>` : '') +
+      `<div class="rf-warn">原案どおりにらくしふへ線を引きます。1行ずつご確認のうえボタンを押してください` +
+      `（削除・確定送信は行いません）。${rfCsrf() ? '' : '<b>⚠CSRFトークン未検出：このページをリロードしてください</b>'}</div>` +
+      `<div class="rsum">引ける線 ${auto.length}件${manual.length ? ` ／ 要手動 ${manual.length}件` : ''}</div>` +
+      (auto.length ? `<div style="margin:2px 0"><button id="reflectAll" title="上から順に1件ずつ線を引く（各件の成否を表示）">▶ ${auto.length}件をまとめて引く</button></div>` : '') +
       reflectRows.map(rowHtml).join('');
   }
 
