@@ -2502,7 +2502,7 @@
             date: ymd(date), start_hour: Math.floor(s / 60), start_minute: s % 60,
             end_hour: Math.floor(e / 60), end_minute: e % 60,
             rest_times: restApi, shift_pattern_id: null, off: false, off_type: 0,
-            memo_text: null, store_task_ids: fullTaskIds.length ? fullTaskIds : null,
+            memo_text: null, store_task_ids: fullTaskIds,
             instructedScheduleStoreTasks: [], company_special_holiday_id: null,
           } },
         });
@@ -2519,13 +2519,14 @@
         desc: (wasOff ? `休み → ${gl} ${hm(s)}-${hm(e)} を引く${restLabel}`
           : `${gl} ${hm(ex.start_as_min)}-${hm(ex.end_as_min)} → ${hm(s)}-${hm(e)} に引き直す${restLabel}`) + warnTxt,
         bar_id: ex.id,
+        // 実際の成功PUTに合わせた最小ボディ（shift_pattern_id/memo_text を入れると400）。
+        // store_task_ids は既存を保持（null不可＝配列で送る）。off は必ず外す。
         payload: { schedule: {
           id: ex.id, attending_store_id: ex.attending_store_id, attending_genre_id: ex.attending_genre_id,
           start_hour: Math.floor(s / 60), start_minute: s % 60,
           end_hour: Math.floor(e / 60), end_minute: e % 60,
-          rest_times: restApi, shift_pattern_id: ex.shift_pattern_id,
-          off: false, off_type: 0, memo_text: ex.memo_text,   // 原案は勤務なので off は必ず外す
-          store_task_ids: ex.store_task_ids, company_special_holiday_id: ex.company_special_holiday_id,
+          rest_times: restApi, off: false, off_type: 0,
+          store_task_ids: ex.store_task_ids || [], company_special_holiday_id: ex.company_special_holiday_id,
         } },
       });
     }
@@ -2727,12 +2728,13 @@
     if (btn) { btn.disabled = true; btn.textContent = '送信中'; }
     const ex = r.bar;
     const ids = Array.from(new Set([...(ex.store_task_ids || []), CK_TASK[r.task]]));
+    // 実際の成功PUTに合わせた最小ボディ（shift_pattern_id/memo_text を入れると400）
     const payload = { schedule: {
       id: ex.id, attending_store_id: ex.attending_store_id, attending_genre_id: ex.attending_genre_id,
       start_hour: Math.floor(ex.start_as_min / 60), start_minute: ex.start_as_min % 60,
       end_hour: Math.floor(ex.end_as_min / 60), end_minute: ex.end_as_min % 60,
-      rest_times: (ex.rest_times || []), shift_pattern_id: ex.shift_pattern_id,
-      off: ex.off, off_type: ex.off_type, memo_text: ex.memo_text,
+      rest_times: (ex.rest_times || []),
+      off: !!ex.off, off_type: ex.off_type || 0,
       store_task_ids: ids, company_special_holiday_id: ex.company_special_holiday_id,
     } };
     try {
