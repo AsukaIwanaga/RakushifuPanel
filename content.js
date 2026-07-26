@@ -620,6 +620,8 @@
       .reflect .rrow.create .rwhat { color: #1e7a44; }
       .reflect .rrow.retime .rwhat { color: #b45309; }
       .reflect .rrow.off .rwhat { color: #6b7280; }
+      .reflect .rrow.match { opacity: .7; }
+      .reflect .rrow.match .rwhat { color: #2c6e49; }
       .reflect .rrow.off .rap { border-color: #6b7280; background: #6b7280; }
       .reflect .rrow.manual { opacity: .8; }
       .reflect .rrow.manual .rwhat { color: #6b7280; }
@@ -2553,7 +2555,11 @@
       if (!wasOff) {
         const sameTime = ex.start_as_min === s && ex.end_as_min === e;
         const sameRest = restEq(apiRestToMin(ex.rest_times).sort(), rests.map((r) => [r[0], r[1]]).sort());
-        if (sameTime && sameRest) continue;   // 完全一致は出さない
+        if (sameTime && sameRest) {   // 既に原案どおり＝一致。反映は不要だが「見える」ように出す
+          rows.push({ kind: 'match', user_id: uid, name: g.name, genre: gl, manual: true,
+            desc: `${gl} ${hm(s)}-${hm(e)}${restLabel}` });
+          continue;
+        }
       }
       rows.push({
         kind: 'retime', user_id: uid, name: g.name, genre: gl,
@@ -2614,7 +2620,8 @@
       reflectRows = await buildReflectPlan(targetDate);
     } catch (e) { el.innerHTML = `<span class="err">失敗: ${esc(e.message)}</span>`; return; }
     const auto = reflectRows.filter((r) => !r.manual);
-    const manual = reflectRows.filter((r) => r.manual);
+    const matched = reflectRows.filter((r) => r.kind === 'match');
+    const manual = reflectRows.filter((r) => r.manual && r.kind !== 'match');
     if (!reflectRows.length) { el.innerHTML = '<span class="allok">✓ 原案どおり引けています（引く線なし）</span>'; return; }
     const rowHtml = (r, i) => {
       const label = r.kind === 'create' ? '線を引く' : r.kind === 'off' ? '休みにする' : '引き直す';
@@ -2625,12 +2632,20 @@
         `width:20px;text-align:center;border-radius:4px;color:#fff;font-size:10px">${esc(r.genre || '?')}</span> ` +
         `${esc(r.name)}</span><span class="rwhat">${esc(r.desc)}</span>${btn}</div>`;
     };
+    const matchHtml = matched.length
+      ? `<details style="margin-top:6px"><summary style="cursor:pointer;color:#2c6e49">✓ 既に一致 ${matched.length}件（他セクション応援も含む・反映不要）</summary>`
+        + matched.map((r) => `<div class="rrow match"><span class="rwho"><span class="dtag ${esc(r.genre || '')}" `
+          + `style="display:inline-block;width:20px;text-align:center;border-radius:4px;color:#fff;font-size:10px">${esc(r.genre || '?')}</span> `
+          + `${esc(r.name)}</span><span class="rwhat">${esc(r.desc)}</span></div>`).join('') + '</details>'
+      : '';
     el.innerHTML =
       `<div class="rf-warn">原案どおりにらくしふへ線を引きます。1行ずつご確認のうえボタンを押してください` +
       `（削除・確定送信は行いません）。${rfCsrf() ? '' : '<b>⚠CSRFトークン未検出：このページをリロードしてください</b>'}</div>` +
-      `<div class="rsum">反映できる ${auto.length}件（引く/引き直す/休みにする）${manual.length ? ` ／ 要手動 ${manual.length}件` : ''}</div>` +
+      `<div class="rsum">反映できる ${auto.length}件（引く/引き直す/休みにする）`
+      + `${manual.length ? ` ／ 要手動 ${manual.length}件` : ''}${matched.length ? ` ／ 一致 ${matched.length}件` : ''}</div>` +
       (auto.length ? `<div style="margin:2px 0"><button id="reflectAll" title="上から順に1件ずつ反映（各件の成否を表示）">▶ ${auto.length}件をまとめて反映</button></div>` : '') +
-      reflectRows.map(rowHtml).join('');
+      reflectRows.filter((r) => r.kind !== 'match').map((r) => rowHtml(r, reflectRows.indexOf(r))).join('') +
+      matchHtml;
   }
 
   // 1行を実際にPOST/PUTする。成功でDOMに✓、失敗で赤表示。確定には触れない。
