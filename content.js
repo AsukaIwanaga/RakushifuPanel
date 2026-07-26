@@ -2486,8 +2486,12 @@
       }
       if (!g.gid) { manualRow(`区分${g.glabel}の所属が不明→手動`); continue; }
       const s = merged[0].s, e = merged[0].e;
-      // 休憩は「タスクでない本体バー」から拾う（複数あれば連結）
-      const rests = [].concat(...g.bars.filter((b) => !b.task).map((b) => b.rests || []));
+      // 休憩は全バーから拾う（本体がポジション区間で表現される人でも取りこぼさない）。同一休憩は重複除去。
+      const restSeen = new Set();
+      const rests = [].concat(...g.bars.map((b) => b.rests || []))
+        .filter((r) => Array.isArray(r) && r.length === 2 && r[1] > r[0]
+          && !restSeen.has(`${r[0]}-${r[1]}`) && restSeen.add(`${r[0]}-${r[1]}`))
+        .sort((a, b) => a[0] - b[0]);
       const restApi = restsToApi(rests);
       const restLabel = restApi.length ? `（休${rests.map((r) => hm(r[0]) + '-' + hm(r[1])).join(',')}）` : '';
       // 全域一致の単一タスクだけ store_task_ids に付ける。部分区間タスクは手動注記。
@@ -2573,13 +2577,18 @@
     //   採取した休みPUTの最小ボディ形をそのまま使う。
     const nameByUid = {};
     for (const uu of (cur.users || [])) nameByUid[uu.id] = (uu.name || '').replace(/\s+/g, ' ').trim();
-    // 原案に1本でも勤務がある人は「休み提案」の対象にしない（応援でFK等が別区分に化けるため）。
-    // 完全に原案に出てこない人＝設計上その日は休み、だけを休み提案する。
-    const workingUids = new Set(Object.values(byUG).map((g) => g.uid));
+    // 原案の全勤務区間（区分問わず）。らくしふの線がこのどれとも重ならなければ「休みにする」。
+    // 時間ベースにすることで、原案でK勤務の人の余分なF線も消せる一方、応援(FK等)の時間帯は残す。
+    const draftSpans = {};
+    for (const a of asg) {
+      if (a.e <= a.s) continue;
+      (draftSpans[a.user_id] ||= []).push([a.s, a.e]);
+    }
+    const draftCovers = (uid, s0, e0) => (draftSpans[uid] || []).some(([a, b]) => a < e0 && b > s0);
     for (const s of cur.list) {
       if (s.off || s.start_as_min == null || s.end_as_min == null) continue;    // 既に休み/時間なし
       if (s.attending_genre_id !== 2 && s.attending_genre_id !== 3) continue;    // F/K以外は対象外
-      if (workingUids.has(s.user_id)) continue;                                  // 原案でどこかに働く→対象外
+      if (draftCovers(s.user_id, s.start_as_min, s.end_as_min)) continue;        // 原案の勤務と重なる→残す
       const gl = g2label(s.attending_genre_id);
       rows.push({
         kind: 'off', user_id: s.user_id, name: nameByUid[s.user_id] || String(s.user_id), genre: gl,
