@@ -2434,7 +2434,11 @@
     // 既存バーを (user_id, attending_genre_id) で引く。区分跨ぎの誤マッチを防ぐ。
     const curKey = (uid, g) => `${uid}:${g}`;
     const curByUG = {};
-    for (const s of cur.list) (curByUG[curKey(s.user_id, s.attending_genre_id)] ||= []).push(s);
+    const curByUser = {};
+    for (const s of cur.list) {
+      (curByUG[curKey(s.user_id, s.attending_genre_id)] ||= []).push(s);
+      (curByUser[s.user_id] ||= []).push(s);
+    }
     // FK・非生産・役割バーは所属区分に寄せる。所属genreの対応表。
     const belong = {};
     for (const uu of (cur.users || [])) belong[uu.id] = uu.belonging_genre_id;
@@ -2493,6 +2497,28 @@
       const gl = g2label(genreId);
 
       if (!ex) {
+        // その区分の既存バーは無い。ただし別区分で時間が重なる勤務があると、新規作成は
+        // 「時間が重複」で弾かれる。区分が変わっただけ（例 K→F）なら、その線を引き直す。
+        const overlap = (curByUser[uid] || []).filter((x) => !x.off
+          && x.start_as_min != null && x.end_as_min != null
+          && x.start_as_min < e && x.end_as_min > s);
+        if (overlap.length === 1) {
+          const o = overlap[0];
+          rows.push({
+            kind: 'retime', user_id: uid, name: g.name, genre: gl,
+            desc: `${g2label(o.attending_genre_id)} ${hm(o.start_as_min)}-${hm(o.end_as_min)} → ${gl} ${hm(s)}-${hm(e)} に引き直す（区分変更）${restLabel}` + warnTxt,
+            bar_id: o.id,
+            payload: { schedule: {
+              id: o.id, attending_store_id: o.attending_store_id, attending_genre_id: genreId,
+              start_hour: Math.floor(s / 60), start_minute: s % 60,
+              end_hour: Math.floor(e / 60), end_minute: e % 60,
+              rest_times: restApi, off: false, off_type: 0,
+              store_task_ids: o.store_task_ids || [], company_special_holiday_id: o.company_special_holiday_id,
+            } },
+          });
+          continue;
+        }
+        if (overlap.length > 1) { manualRow(`${gl} ${hm(s)}-${hm(e)}：既存の勤務が複数重なる→手動`); continue; }
         rows.push({
           kind: 'create', user_id: uid, name: g.name, genre: gl,
           desc: `新しく ${gl} ${hm(s)}-${hm(e)} を引く${restLabel}`
