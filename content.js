@@ -881,14 +881,24 @@
     const ins = (j.instructed || []).filter((s) => s.date === iso && !s.is_deleted);
     const desired = (j.desired || []).filter((s) => s.date === iso);
     const span = (s) => (s.off ? '休み' : `${hm(s.start_as_min)}-${hm(s.end_as_min)}`);
+    // 要確定が「その人の元々の希望」と一致するか。一致するものだけ依頼として扱う。
+    // 一致しない要確定（例: 休み希望なのに勤務で入っている＝反映漏れ由来）は無視する。
+    const matchesWish = (s, des) => {
+      if (!des) return false;                       // 希望が無いものは対象外（本人指定）
+      if (!!des.off !== !!s.off) return false;      // 休み↔勤務の食い違いは無視
+      if (des.off) return true;                     // 双方休み
+      return des.start_as_min === s.start_as_min && des.end_as_min === s.end_as_min;
+    };
     const rows = [];
     for (const s of ins) {
       if (s.is_shared) continue;                 // 確定・共有済み＝要確定ではない
+      if (s.off) continue;                        // 休みは依頼ではない（確定漏れの休みは無視）
+      const des = desired.find((x) => x.user_id === s.user_id);
+      if (!matchesWish(s, des)) continue;        // 元々の希望でないもの（反映漏れ由来）は無視
       // 差分の before は「同じ人・同じ区分の確定済みバー」だけ。別区分の確定は
       // 置き換えではなく“応援などの追加”なので混同しない（岩永の例）。
       const base = ins.find((x) => x.user_id === s.user_id && x.is_shared
         && x.attending_genre_id === s.attending_genre_id) || null;
-      const des = desired.find((x) => x.user_id === s.user_id);
       const gl = g2label(s.attending_genre_id);
       const now = (gl ? `${gl} ` : '') + span(s);
       let change;
@@ -1512,9 +1522,11 @@
     if (t.id === 'scDetectClose') { $('#scDetectBox').style.display = 'none'; return; }
     if (t.matches('.sc-draft')) { await draftFromDetect(+t.dataset.i); return; }
     if (t.id === 'scDraftAll') {
-      t.disabled = true;
       const targets = (detectRows || []).map((r, i) => ({ r, i }))
         .filter((x) => !hasOpenCase(x.r.name, targetDate));
+      // 一括で大量に起票して「面倒なことになる」のを防ぐ確認（本人指定 2026-07-26）
+      if (!confirm(`${targets.length}件の依頼をまとめて起票します。よろしいですか？\n（多い場合は1件ずつ「起案」を推奨）`)) return;
+      t.disabled = true;
       for (const { i } of targets) { await draftFromDetect(i); }
       t.textContent = '完了';
       return;
