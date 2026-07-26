@@ -2501,9 +2501,8 @@
             user_id: uid, attending_store_id: +cur.storeId, attending_genre_id: genreId,
             date: ymd(date), start_hour: Math.floor(s / 60), start_minute: s % 60,
             end_hour: Math.floor(e / 60), end_minute: e % 60,
-            rest_times: restApi, shift_pattern_id: null, off: false, off_type: 0,
-            memo_text: null, store_task_ids: fullTaskIds,
-            instructedScheduleStoreTasks: [], company_special_holiday_id: null,
+            rest_times: restApi, off: false, off_type: 0,
+            store_task_ids: fullTaskIds, company_special_holiday_id: null,
           } },
         });
         continue;
@@ -2605,7 +2604,11 @@
           'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
         body: JSON.stringify(r.payload),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        let detail = '';
+        try { detail = (await res.text() || '').slice(0, 300); } catch { /* noop */ }
+        throw new Error(`HTTP ${res.status}${detail ? ' ' + detail : ''}`);
+      }
       if (rowEl) { rowEl.classList.add('done'); rowEl.classList.remove('err'); }
       if (btn) { btn.textContent = '✓ 反映'; btn.disabled = true; }
       r.applied = true;
