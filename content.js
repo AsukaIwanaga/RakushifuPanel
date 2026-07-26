@@ -619,6 +619,8 @@
       .reflect .rrow .rwhat { flex: 1 1 auto; color: #444; }
       .reflect .rrow.create .rwhat { color: #1e7a44; }
       .reflect .rrow.retime .rwhat { color: #b45309; }
+      .reflect .rrow.off .rwhat { color: #6b7280; }
+      .reflect .rrow.off .rap { border-color: #6b7280; background: #6b7280; }
       .reflect .rrow.manual { opacity: .8; }
       .reflect .rrow.manual .rwhat { color: #6b7280; }
       .reflect .rrow.done { background: #f0faf3; }
@@ -2527,6 +2529,31 @@
         } },
       });
     }
+
+    // 休みの反映: らくしふに勤務(要確定含む)の線があるのに、原案ではその区分で働かせない人
+    //   → 休みにする(PUT off:true)。原案に(その区分で)いない＝設計上その区分は休み、という判断。
+    //   採取した休みPUTの最小ボディ形をそのまま使う。
+    const nameByUid = {};
+    for (const uu of (cur.users || [])) nameByUid[uu.id] = (uu.name || '').replace(/\s+/g, ' ').trim();
+    // 原案に1本でも勤務がある人は「休み提案」の対象にしない（応援でFK等が別区分に化けるため）。
+    // 完全に原案に出てこない人＝設計上その日は休み、だけを休み提案する。
+    const workingUids = new Set(Object.values(byUG).map((g) => g.uid));
+    for (const s of cur.list) {
+      if (s.off || s.start_as_min == null || s.end_as_min == null) continue;    // 既に休み/時間なし
+      if (s.attending_genre_id !== 2 && s.attending_genre_id !== 3) continue;    // F/K以外は対象外
+      if (workingUids.has(s.user_id)) continue;                                  // 原案でどこかに働く→対象外
+      const gl = g2label(s.attending_genre_id);
+      rows.push({
+        kind: 'off', user_id: s.user_id, name: nameByUid[s.user_id] || String(s.user_id), genre: gl,
+        desc: `${gl} ${hm(s.start_as_min)}-${hm(s.end_as_min)} → 休みにする`
+          + (s.is_shared || s.is_fixed ? '　⚠共有済み' : ''),
+        bar_id: s.id,
+        payload: { schedule: {
+          id: s.id, attending_store_id: s.attending_store_id, attending_genre_id: s.attending_genre_id,
+          rest_times: [], off: true, off_type: 0, company_special_holiday_id: s.company_special_holiday_id,
+        } },
+      });
+    }
     rows.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
     return rows;
   }
@@ -2543,8 +2570,9 @@
     const manual = reflectRows.filter((r) => r.manual);
     if (!reflectRows.length) { el.innerHTML = '<span class="allok">✓ 原案どおり引けています（引く線なし）</span>'; return; }
     const rowHtml = (r, i) => {
+      const label = r.kind === 'create' ? '線を引く' : r.kind === 'off' ? '休みにする' : '引き直す';
       const btn = r.manual ? '<span class="muted" style="font-size:11px">要手動</span>'
-        : `<button class="rap" data-i="${i}">${r.kind === 'create' ? '線を引く' : '引き直す'}</button>`;
+        : `<button class="rap" data-i="${i}">${label}</button>`;
       return `<div class="rrow ${r.kind}" data-i="${i}">` +
         `<span class="rwho"><span class="dtag ${esc(r.genre || '')}" style="display:inline-block;` +
         `width:20px;text-align:center;border-radius:4px;color:#fff;font-size:10px">${esc(r.genre || '?')}</span> ` +
@@ -2553,8 +2581,8 @@
     el.innerHTML =
       `<div class="rf-warn">原案どおりにらくしふへ線を引きます。1行ずつご確認のうえボタンを押してください` +
       `（削除・確定送信は行いません）。${rfCsrf() ? '' : '<b>⚠CSRFトークン未検出：このページをリロードしてください</b>'}</div>` +
-      `<div class="rsum">引ける線 ${auto.length}件${manual.length ? ` ／ 要手動 ${manual.length}件` : ''}</div>` +
-      (auto.length ? `<div style="margin:2px 0"><button id="reflectAll" title="上から順に1件ずつ線を引く（各件の成否を表示）">▶ ${auto.length}件をまとめて引く</button></div>` : '') +
+      `<div class="rsum">反映できる ${auto.length}件（引く/引き直す/休みにする）${manual.length ? ` ／ 要手動 ${manual.length}件` : ''}</div>` +
+      (auto.length ? `<div style="margin:2px 0"><button id="reflectAll" title="上から順に1件ずつ反映（各件の成否を表示）">▶ ${auto.length}件をまとめて反映</button></div>` : '') +
       reflectRows.map(rowHtml).join('');
   }
 
