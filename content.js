@@ -3059,11 +3059,32 @@
       if (s.attending_genre_id !== 2 && s.attending_genre_id !== 3) continue;
       const segs = byUG[`${s.user_id}:${s.attending_genre_id}`];
       if (!segs) continue;
-      // 原案の区間タスク一式（重ね対象のみ）
+      // 原案の休憩（全バーから拾い重複除去）。タスクは休憩と重複できない（らくしふ制約）。
+      const rseen = new Set();
+      const dRests = [].concat(...segs.map((b) => b.rests || []))
+        .filter((r) => Array.isArray(r) && r.length === 2 && r[1] > r[0]
+          && !rseen.has(`${r[0]}-${r[1]}`) && rseen.add(`${r[0]}-${r[1]}`))
+        .sort((a, b) => a[0] - b[0]);
+      // 区間[s,e]から休憩区間を差し引く（休憩に食い込むタスクは分割・除去）
+      const clip = (s0, e0) => {
+        let parts = [[s0, e0]];
+        for (const [rs, re] of dRests) {
+          const nx = [];
+          for (const [a, b] of parts) {
+            if (re <= a || rs >= b) { nx.push([a, b]); continue; }
+            if (rs > a) nx.push([a, Math.min(rs, b)]);
+            if (re < b) nx.push([Math.max(re, a), b]);
+          }
+          parts = nx;
+        }
+        return parts.filter(([a, b]) => b > a);
+      };
+      // 原案の区間タスク一式（重ね対象のみ・休憩でクリップ）
       const want = [];
       for (const seg of segs) {
         const id = overlayId(seg, s.attending_genre_id);
-        if (id) want.push({ id, start_as_min: seg.s, end_as_min: seg.e });
+        if (!id) continue;
+        for (const [a, b] of clip(seg.s, seg.e)) want.push({ id, start_as_min: a, end_as_min: b });
       }
       const cur0 = (s.instructed_schedule_store_tasks || [])
         .map((t) => ({ id: t.store_task_id, start_as_min: t.start_time_as_min, end_as_min: t.end_time_as_min }))
@@ -3076,7 +3097,10 @@
         user_id: s.user_id, name: nameOf[s.user_id] || String(s.user_id),
         genre: g2label(s.attending_genre_id), genre_id: s.attending_genre_id,
         desc: want.length ? want.map(label).join(' / ') : '（区間タスクを消す）',
-        sched: { id: s.id, rest_times: restToApiObj(apiRestToMin(s.rest_times)), store_tasks: want },
+        // 休憩も原案の値で送る（タスクと整合。休憩が空なららくしふ現状を維持）
+        sched: { id: s.id,
+          rest_times: restToApiObj(dRests.length ? dRests : apiRestToMin(s.rest_times)),
+          store_tasks: want },
       });
     }
     rows.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
