@@ -3154,7 +3154,21 @@
     ]);
     if (!draftR || !draftR.ok) throw new Error('ShiftDraft未達（原案が取れません）');
     const nameToId = {};
-    for (const [id, nm] of Object.entries(taskMap)) nameToId[nm] = +id;
+    // らくしふのタスク名は「QC (R)」「MS (S2)」等の注記付き。原案は「QC」「MS」で持つので、
+    // 注記（半角/全角カッコ以降）を落としたエイリアスも登録して名前ゆれを吸収する。
+    const stripNote = (s) => (s || '').replace(/\s*[（(].*$/, '').trim();
+    for (const [id, nm] of Object.entries(taskMap)) {
+      nameToId[nm] = +id;
+      const base = stripNote(nm);
+      if (base && !(base in nameToId)) nameToId[base] = +id;
+    }
+    // 原案キー→id。完全一致で無ければ注記落としで再照合（双方向）。
+    const taskNameToId = (key) => {
+      if (!key) return null;
+      if (key in nameToId) return nameToId[key];
+      const b = stripNote(key);
+      return (b in nameToId) ? nameToId[b] : null;
+    };
     const belong = {};
     for (const uu of (cur.users || [])) belong[uu.id] = uu.belonging_genre_id;
     // 外枠の反映と同じ寄せ方: 所属がF/Kでない人は既存らくしふ勤務の単一区分へ（FKタスクをその線に乗せる）
@@ -3182,7 +3196,7 @@
     // 区間タスクid: role(TRer/TRee) → task名 → genre名。ベース区分(F/K)と同じなら重ね不要=null。
     const FID = nameToId.F, KID = nameToId.K;
     const overlayId = (seg, baseGid) => {
-      let id = (seg.role && nameToId[seg.role]) || (seg.task && nameToId[seg.task]) || nameToId[seg.genre];
+      let id = taskNameToId(seg.role) || taskNameToId(seg.task) || taskNameToId(seg.genre);
       if (!id) return null;
       if ((baseGid === 2 && id === FID) || (baseGid === 3 && id === KID)) return null; // ベース区分はタグ不要
       return id;
