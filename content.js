@@ -614,6 +614,11 @@
         border: 1px solid var(--line2); background: var(--panel); color: var(--ink); cursor: pointer;
         letter-spacing: 0; text-transform: none; }
       .section-title button:hover { border-color: var(--ink); }
+      /* 反映を実行する系＝未実施のアクション。赤(アクセント)で「これから押す」と分かるように */
+      #reflectPlan, #taskPlan, #ckPlan, #reflectMonthScan, #ckMonthScan {
+        border-color: var(--accent); color: var(--accent); font-weight: 600; }
+      #reflectPlan:hover, #taskPlan:hover, #ckPlan:hover, #reflectMonthScan:hover, #ckMonthScan:hover {
+        background: var(--accent); color: #fff; border-color: var(--accent); }
       .section-title a#draftOpen { border: 0; color: var(--accent); text-decoration: none; }
       .section-title #draftMonth, .section-title #reflectMonthSel {
         margin-left: 2px; font-size: 11px; font-weight: 400; padding: 2px 4px;
