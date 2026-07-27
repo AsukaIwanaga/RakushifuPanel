@@ -615,21 +615,21 @@
         letter-spacing: 0; text-transform: none; }
       .section-title button:hover { border-color: var(--ink); }
       /* 反映を実行する系＝未実施のアクション。赤(アクセント)で「これから押す」と分かるように */
-      #reflectPlan, #taskPlan, #ckPlan, #reflectMonthScan, #ckMonthScan {
+      #reflectPlan, #taskPlan, #ckPlan, #reflectMonthScan, #taskMonthScan, #ckMonthScan {
         border-color: var(--accent); color: var(--accent); font-weight: 600; }
-      #reflectPlan:hover, #taskPlan:hover, #ckPlan:hover, #reflectMonthScan:hover, #ckMonthScan:hover {
+      #reflectPlan:hover, #taskPlan:hover, #ckPlan:hover, #reflectMonthScan:hover, #taskMonthScan:hover, #ckMonthScan:hover {
         background: var(--accent); color: #fff; border-color: var(--accent); }
       .section-title a#draftOpen { border: 0; color: var(--accent); text-decoration: none; }
       .section-title #draftMonth, .section-title #reflectMonthSel {
         margin-left: 2px; font-size: 11px; font-weight: 400; padding: 2px 4px;
         border: 1px solid var(--line2); border-radius: 0; background: var(--panel); color: var(--ink); }
       /* 一括実行系＝主アクション（インク塗り） */
-      #ckAll, #reflectAll, #taskAll, #rmRun, #ckmRun {
+      #ckAll, #reflectAll, #taskAll, #rmRun, #tmRun, #ckmRun {
         font-size: 11px; font-weight: 600; padding: 3px 12px; border-radius: 0;
         border: 1px solid var(--ink); background: var(--ink); color: var(--panel); cursor: pointer; }
-      #ckAll[disabled], #reflectAll[disabled], #taskAll[disabled], #rmRun[disabled], #ckmRun[disabled] {
+      #ckAll[disabled], #reflectAll[disabled], #taskAll[disabled], #rmRun[disabled], #tmRun[disabled], #ckmRun[disabled] {
         border-color: var(--line2); background: var(--line); color: var(--faint); }
-      #rmAllToggle, #ckmAllToggle {
+      #rmAllToggle, #tmAllToggle, #ckmAllToggle {
         font-size: 11px; padding: 2px 9px; border-radius: 0; border: 1px solid var(--line2);
         background: var(--panel); color: var(--ink); cursor: pointer; }
       .nav #ver { font-size: 10px; font-weight: 400; margin-left: 4px; color: var(--faint); }
@@ -736,10 +736,12 @@
       <div id="reflect" class="reflect muted">-</div>
       <div class="section-title" style="margin-top:6px">月まとめて
         <select id="reflectMonthSel" title="スキャンする月"></select>
-        <button id="reflectMonthScan" title="相違のある日を抽出し、選んだ日をまとめて反映">相違日→反映</button>
+        <button id="reflectMonthScan" title="相違のある日を抽出し、選んだ日をまとめて外枠を反映">外枠 相違日→反映</button>
+        <button id="taskMonthScan" title="中身(区間タスク)に相違のある日を抽出し、選んだ日をまとめて反映">中身 相違日→反映</button>
         <button id="ckMonthScan" title="CK未付与の日を抽出し、選んだ日にまとめてCK割付">CK未付与日→割付</button>
       </div>
       <div id="reflectMonth" class="reflect muted" style="display:none">-</div>
+      <div id="taskMonth" class="reflect muted" style="display:none">-</div>
       <div id="ckMonth" class="reflect muted" style="display:none">-</div>
     </div>
   `;
@@ -2913,6 +2915,69 @@
     renderSheet();   // 表示中日を取り直す
   }
 
+  // ===== 月まとめて（中身＝区間タスク）：相違のある日を抽出→チェックで選択→反映 =====
+  let taskMonthScan = null;  // [{day, rows, storeId}]
+  async function scanTaskMonth() {
+    const box = $('#taskMonth');
+    box.style.display = ''; box.className = 'reflect';
+    const ym = $('#reflectMonthSel').value;
+    const days = monthDays(ym);
+    box.innerHTML = `<span class="muted">${ym} の中身を全日スキャン中… 0/${days.length}</span>`;
+    taskMonthScan = [];
+    for (let k = 0; k < days.length; k++) {
+      const day = days[k];
+      try {
+        const res = await buildTaskPlan(parseYmd(day));
+        if (res.rows.length) taskMonthScan.push({ day, rows: res.rows, storeId: res.storeId });
+      } catch { /* その日は飛ばす */ }
+      box.querySelector('.muted') && (box.querySelector('.muted').textContent = `${ym} の中身を全日スキャン中… ${k + 1}/${days.length}`);
+    }
+    renderTaskMonthScan();
+  }
+  function renderTaskMonthScan() {
+    const box = $('#taskMonth');
+    if (!taskMonthScan.length) { box.innerHTML = '<span class="allok">✓ この月は中身も一致（引く区間タスクなし）</span>'; return; }
+    const total = taskMonthScan.reduce((a, s) => a + s.rows.length, 0);
+    const md = (d) => { const x = parseYmd(d); return `${x.getMonth() + 1}/${x.getDate()}(${WEEKDAYS[x.getDay()]})`; };
+    const rowHtml = (s) => `<label class="rmday"><input type="checkbox" class="tm-cb" data-day="${s.day}" checked> ` +
+      `<b>${md(s.day)}</b> <span class="rmc">${s.rows.length}人</span>` +
+      `<span class="rm-stat tm-stat" data-day="${s.day}"></span></label>`;
+    box.innerHTML =
+      `<div class="rf-warn">中身に相違のある ${taskMonthScan.length}日・計${total}人。チェックした日を上から順に反映します` +
+      `（区間タスクを原案どおり／そのシフトのタスクを丸ごと置換・確定送信・削除はしません）。</div>` +
+      `<div style="margin:3px 0"><button id="tmAllToggle">全解除</button> ` +
+      `<button id="tmRun">▶ 選択した日の中身を反映</button></div>` +
+      taskMonthScan.map(rowHtml).join('');
+  }
+  async function runTaskMonthReflect() {
+    const token = rfCsrf();
+    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return; }
+    const picked = [...$('#taskMonth').querySelectorAll('.tm-cb:checked')].map((c) => c.dataset.day);
+    if (!picked.length) { alert('反映する日が選ばれていません。'); return; }
+    const n = picked.reduce((a, d) => a + (taskMonthScan.find((s) => s.day === d)?.rows.length || 0), 0);
+    if (!confirm(`${picked.length}日・計${n}人の中身(区間タスク)をらくしふへ反映します。よろしいですか？\n（確定送信はしません）`)) return;
+    const runBtn = $('#tmRun'); if (runBtn) { runBtn.disabled = true; }
+    for (const day of picked) {
+      const s = taskMonthScan.find((x) => x.day === day);
+      const stat = $(`#taskMonth .tm-stat[data-day="${day}"]`);
+      if (!s) continue;
+      let ok = 0; let ng = 0;
+      for (const r of s.rows) {
+        if (stat) stat.textContent = `　送信中… ${ok + ng + 1}/${s.rows.length}`;
+        try { await taskAssignRequest(parseYmd(day), s.storeId, r.genre_id, r.sched, token); ok += 1; }
+        catch (e) { ng += 1; reportReflectFailure('中身(月)', parseYmd(day), r, e); }
+      }
+      if (stat) { stat.textContent = `　✓ ${ok}件${ng ? ` / 失敗${ng}` : ''}`; stat.style.color = ng ? 'var(--neg)' : 'var(--pos)'; }
+      const row = $(`#taskMonth .rmday .tm-cb[data-day="${day}"]`)?.closest('.rmday');
+      const cb = $(`#taskMonth .tm-cb[data-day="${day}"]`);
+      if (ng) { if (row) row.classList.add('failed'); }
+      else if (cb) cb.checked = false;
+    }
+    if (runBtn) { runBtn.textContent = '完了'; }
+    lastDraftDay = null;
+    renderSheet();
+  }
+
   // 対象日のCK割付プランを作る。既に付いている人はそのまま（重複して付けない）。
   async function buildCkPlan(date) {
     const [cur, siIds] = await Promise.all([fetchInstructedRaw(date), fetchSocialInsurance()]);
@@ -3537,6 +3602,16 @@
     if (ev.target.id === 'rmRun') { withReflectLock(runMonthReflect); return; }
     if (ev.target.id === 'rmAllToggle') {
       const cbs = [...$('#reflectMonth').querySelectorAll('.rm-cb')];
+      const anyOn = cbs.some((c) => c.checked);
+      cbs.forEach((c) => { c.checked = !anyOn; });
+      ev.target.textContent = anyOn ? '全選択' : '全解除';
+    }
+  });
+  $('#taskMonthScan').addEventListener('click', () => withReflectLock(scanTaskMonth));
+  $('#taskMonth').addEventListener('click', (ev) => {
+    if (ev.target.id === 'tmRun') { withReflectLock(runTaskMonthReflect); return; }
+    if (ev.target.id === 'tmAllToggle') {
+      const cbs = [...$('#taskMonth').querySelectorAll('.tm-cb')];
       const anyOn = cbs.some((c) => c.checked);
       cbs.forEach((c) => { c.checked = !anyOn; });
       ev.target.textContent = anyOn ? '全選択' : '全解除';
