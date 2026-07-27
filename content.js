@@ -629,6 +629,9 @@
       #rmAllToggle { font-size: 11px; padding: 1px 8px; border-radius: 5px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
       .rm-stat { font-size: 11px; }
       .reflect .rrow.off .rap { border-color: #6b7280; background: #6b7280; }
+      .reflect .tap, #taskAll { flex: 0 0 auto; font-size: 11px; padding: 1px 9px; border-radius: 5px;
+        border: 1px solid #7c3aed; background: #7c3aed; color: #fff; cursor: pointer; }
+      .reflect .tap[disabled], #taskAll[disabled] { border-color: #ccc; background: #eee; color: #999; }
       .reflect .rrow.manual { opacity: .8; }
       .reflect .rrow.manual .rwhat { color: #6b7280; }
       .reflect .rrow.done { background: #f0faf3; }
@@ -702,6 +705,7 @@
       <div class="section-title" style="margin-top:6px">この日を らくしふへ反映
         <button id="reflectPlan" title="海賊版の原案どおりに、らくしふへシフトのラインを引く（新規作成／時間の引き直し。押した瞬間は書き込みません）">✏️ ラインを引く</button>
         <button id="ckPlan" title="温度・日付・廃棄のCKを、この日の勤務者に自動で割り付ける（シフト全域タグ。時間は変えません）">🌡 CK割付</button>
+        <button id="taskPlan" title="FK/TRer/TRee/ポジションの区間タスクを原案どおり引く（そのシフトのタスクを丸ごと置換）">🏷 中身を引く</button>
       </div>
       <div id="reflect" class="reflect muted">-</div>
       <div class="section-title" style="margin-top:6px">月まとめて
@@ -2989,6 +2993,139 @@
     renderSheet();
   }
 
+  // ===== 中身(区間タスク)の反映：FK/TRer/TRee/ポジションを原案どおり引く =====
+  // 口: PUT /typed/v1/ajax/admin/schedules/task_assign/bulk（採取で確定）
+  //   body {date, store_id, genre_id, schedules:[{id, rest_times:[{start_hour,..}], store_tasks:[{id,start_as_min,end_as_min}]}]}
+  //   ★このシフトのタスクを"丸ごと置換"する。なので原案の区間タスク一式をまとめて送る。
+  const TASK_ASSIGN_URL = '/typed/v1/ajax/admin/schedules/task_assign/bulk';
+  async function taskAssignRequest(date, storeId, genreId, sched, token) {
+    const body = { date: ymd(date), store_id: +storeId, genre_id: genreId, schedules: [sched] };
+    const res = await fetch(TASK_ASSIGN_URL, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      let d = ''; try { d = (await res.text() || '').slice(0, 200); } catch { /* noop */ }
+      throw new Error(`HTTP ${res.status}${d ? ' ' + d : ''}`);
+    }
+    return true;
+  }
+  const restToApiObj = (rests) => (rests || [])
+    .filter((r) => Array.isArray(r) && r.length === 2 && r[1] > r[0])
+    .map(([s, e]) => ({ start_hour: Math.floor(s / 60), start_minute: s % 60, end_hour: Math.floor(e / 60), end_minute: e % 60 }));
+
+  let taskRows = null;
+  async function buildTaskPlan(date) {
+    const [draftR, cur, taskMap] = await Promise.all([
+      draftApi('/api/draft-day?date=' + ymd(date)),
+      fetchInstructedRaw(date),
+      fetchStoreTaskMap(new URLSearchParams(location.search).get('s')).catch(() => ({})),
+    ]);
+    if (!draftR || !draftR.ok) throw new Error('ShiftDraft未達（原案が取れません）');
+    const nameToId = {};
+    for (const [id, nm] of Object.entries(taskMap)) nameToId[nm] = +id;
+    const belong = {};
+    for (const uu of (cur.users || [])) belong[uu.id] = uu.belonging_genre_id;
+    const mapGenre = (gl, uid) => (gl === 'F' ? 2 : gl === 'K' ? 3 : (belong[uid] === 2 || belong[uid] === 3) ? belong[uid] : null);
+    const nameOf = {};
+    for (const uu of (cur.users || [])) nameOf[uu.id] = (uu.name || '').replace(/\s+/g, ' ').trim();
+    // 原案を (user, らくしふ区分) にまとめる
+    const byUG = {};
+    for (const a of (draftR.data.assignments || [])) {
+      if (a.e <= a.s) continue;
+      const gid = mapGenre(a.genre, a.user_id);
+      if (!gid) continue;
+      (byUG[`${a.user_id}:${gid}`] ||= []).push(a);
+    }
+    // 区間タスクid: role(TRer/TRee) → task名 → genre名。ベース区分(F/K)と同じなら重ね不要=null。
+    const FID = nameToId.F, KID = nameToId.K;
+    const overlayId = (seg, baseGid) => {
+      let id = (seg.role && nameToId[seg.role]) || (seg.task && nameToId[seg.task]) || nameToId[seg.genre];
+      if (!id) return null;
+      if ((baseGid === 2 && id === FID) || (baseGid === 3 && id === KID)) return null; // ベース区分はタグ不要
+      return id;
+    };
+    const sortT = (arr) => arr.slice().sort((a, b) => a.start_as_min - b.start_as_min || a.id - b.id);
+    const sameTasks = (a, b) => {
+      const A = sortT(a); const B = sortT(b);
+      if (A.length !== B.length) return false;
+      return A.every((x, i) => x.id === B[i].id && x.start_as_min === B[i].start_as_min && x.end_as_min === B[i].end_as_min);
+    };
+    const rows = [];
+    for (const s of cur.list) {
+      if (s.off || s.start_as_min == null) continue;
+      if (s.attending_genre_id !== 2 && s.attending_genre_id !== 3) continue;
+      const segs = byUG[`${s.user_id}:${s.attending_genre_id}`];
+      if (!segs) continue;
+      // 原案の区間タスク一式（重ね対象のみ）
+      const want = [];
+      for (const seg of segs) {
+        const id = overlayId(seg, s.attending_genre_id);
+        if (id) want.push({ id, start_as_min: seg.s, end_as_min: seg.e });
+      }
+      const cur0 = (s.instructed_schedule_store_tasks || [])
+        .map((t) => ({ id: t.store_task_id, start_as_min: t.start_time_as_min, end_as_min: t.end_time_as_min }))
+        // CK(温度/日付/廃棄)は全域タグ側で扱うので区間比較から除外
+        .filter((t) => ![CK_TASK.温度, CK_TASK.日付, CK_TASK.廃棄].includes(t.id));
+      if (sameTasks(want, cur0)) continue;   // 既に一致
+      if (!want.length && !cur0.length) continue;
+      const label = (t) => `${taskMap[t.id] || t.id} ${hm(t.start_as_min)}-${hm(t.end_as_min)}`;
+      rows.push({
+        user_id: s.user_id, name: nameOf[s.user_id] || String(s.user_id),
+        genre: g2label(s.attending_genre_id), genre_id: s.attending_genre_id,
+        desc: want.length ? want.map(label).join(' / ') : '（区間タスクを消す）',
+        sched: { id: s.id, rest_times: restToApiObj(apiRestToMin(s.rest_times)), store_tasks: want },
+      });
+    }
+    rows.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+    return { rows, storeId: cur.storeId };
+  }
+
+  async function renderTaskPlan() {
+    const el = $('#reflect');
+    el.className = 'reflect';
+    el.innerHTML = '<span class="muted">中身(区間タスク)を計算中…</span>';
+    let res;
+    try { res = await buildTaskPlan(targetDate); }
+    catch (e) { el.innerHTML = `<span class="err">失敗: ${esc(e.message)}</span>`; return; }
+    taskRows = res.rows; taskStoreId = res.storeId;
+    if (!taskRows.length) { el.innerHTML = '<span class="allok">✓ 中身も原案どおり（引く区間タスクなし）</span>'; return; }
+    const rowHtml = (r, i) => `<div class="rrow" data-i="${i}">` +
+      `<span class="rwho"><span class="dtag ${esc(r.genre)}" style="display:inline-block;width:20px;text-align:center;` +
+      `border-radius:4px;color:#fff;font-size:10px">${esc(r.genre)}</span> ${esc(r.name)}</span>` +
+      `<span class="rwhat" style="font-size:11px">${esc(r.desc)}</span><button class="tap" data-i="${i}">引く</button></div>`;
+    el.innerHTML =
+      '<div class="rf-warn">原案の<b>区間タスク（FK/TRer/TRee/ポジション）</b>をらくしふへ引きます。' +
+      'そのシフトのタスクを丸ごと置き換えます（確定送信・削除はしません）。まず1人で試してください。</div>' +
+      `<div class="rsum">引ける中身 ${taskRows.length}件</div>` +
+      `<div style="margin:2px 0"><button id="taskAll">▶ ${taskRows.length}件をまとめて引く</button></div>` +
+      taskRows.map(rowHtml).join('');
+  }
+  let taskStoreId = null;
+  async function applyTaskRow(i) {
+    const r = taskRows && taskRows[i];
+    if (!r) return false;
+    const token = rfCsrf();
+    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return false; }
+    const rowEl = $(`#reflect .rrow[data-i="${i}"]`);
+    const btn = rowEl && rowEl.querySelector('.tap');
+    if (btn) { btn.disabled = true; btn.textContent = '送信中'; }
+    try {
+      await taskAssignRequest(targetDate, taskStoreId, r.genre_id, r.sched, token);
+      if (rowEl) rowEl.classList.add('done');
+      if (btn) { btn.textContent = '✓ 引いた'; btn.disabled = true; }
+      renderSheet();
+      return true;
+    } catch (e) {
+      if (rowEl) rowEl.classList.add('err');
+      if (btn) { btn.textContent = '再試行'; btn.disabled = false; }
+      const w = rowEl && rowEl.querySelector('.rwhat'); if (w) w.textContent += `　→ 失敗: ${e.message}`;
+      return false;
+    }
+  }
+
   // ===== らくしふ各人の行に、その人のShiftDraft原案を薄いバーで重ねる =====
   // 目的: らくしふの確定ライン（.schedule-bar）の下に「海賊版らくしふで描いた場合のシフト」を
   //       薄く出し、確定作業の下敷きにする。休憩は描かない（本人指定）。
@@ -3224,7 +3361,17 @@
   });
   // 反映セクションのクリック（差分1件 or 一括）。確定には触れない。
   $('#ckPlan').addEventListener('click', renderCkPlan);
+  $('#taskPlan').addEventListener('click', renderTaskPlan);
   $('#reflect').addEventListener('click', async (ev) => {
+    const tp = ev.target.closest('.tap');
+    if (tp) { await applyTaskRow(+tp.dataset.i); return; }
+    if (ev.target.id === 'taskAll') {
+      if (!confirm(`${taskRows.length}件の中身(区間タスク)をまとめて引きます。よろしいですか？`)) return;
+      ev.target.disabled = true;
+      for (let i = 0; i < taskRows.length; i++) { await applyTaskRow(i); }
+      ev.target.textContent = '完了';
+      return;
+    }
     const ck = ev.target.closest('.ckap');
     if (ck) { await applyCkRow(+ck.dataset.i); return; }
     if (ev.target.id === 'ckAll') {
