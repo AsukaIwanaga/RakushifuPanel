@@ -2507,11 +2507,20 @@
       (curByUG[curKey(s.user_id, s.attending_genre_id)] ||= []).push(s);
       (curByUser[s.user_id] ||= []).push(s);
     }
-    // FK・非生産・役割バーは所属区分に寄せる。所属genreの対応表。
+    // FK・非生産・役割は基本「所属区分」に寄せる。所属がF/Kでない（社員等）人は、
+    // らくしふ本体にFK区分が無いので、その人の既存らくしふ勤務の区分（単一なら）に寄せる。
+    // （らくしふのFKは"区分"でなく"タスク"。FKの区間性は中身を引く=FKタスクで表現される）
     const belong = {};
     for (const uu of (cur.users || [])) belong[uu.id] = uu.belonging_genre_id;
+    const baseGenre = {};   // uid → 既存らくしふ勤務の単一区分（両方あれば0=曖昧）
+    for (const s of cur.list) {
+      if (s.off || (s.attending_genre_id !== 2 && s.attending_genre_id !== 3)) continue;
+      if (baseGenre[s.user_id] === undefined) baseGenre[s.user_id] = s.attending_genre_id;
+      else if (baseGenre[s.user_id] !== s.attending_genre_id) baseGenre[s.user_id] = 0;
+    }
     const mapGenre = (glabel, uid) => (glabel === 'F' ? 2 : glabel === 'K' ? 3
-      : (belong[uid] === 2 || belong[uid] === 3) ? belong[uid] : null);
+      : (belong[uid] === 2 || belong[uid] === 3) ? belong[uid]
+      : (baseGenre[uid] === 2 || baseGenre[uid] === 3) ? baseGenre[uid] : null);
 
     // 原案を (user_id, らくしふ区分) ごとにまとめる。区分をまたぐ人（応援）は区分別に線を持つ。
     const byUG = {};
@@ -2538,6 +2547,7 @@
     }
 
     const rows = [];
+    let splitSkipped = 0;   // 分割勤務は自動で弾く（本人指定）。件数だけ控える。
     for (const g of Object.values(byUG)) {
       const uid = g.uid;
       const manualRow = (desc) => rows.push({
@@ -2551,9 +2561,7 @@
         if (last && b.s <= last.e) last.e = Math.max(last.e, b.e);
         else merged.push({ s: b.s, e: b.e });
       }
-      if (merged.length > 1) {
-        manualRow(`分割勤務（${merged.map((m) => `${hm(m.s)}-${hm(m.e)}`).join(' , ')}）→手動`); continue;
-      }
+      if (merged.length > 1) { splitSkipped += 1; continue; }   // 分割勤務は自動で弾く（対象外）
       if (!g.gid) { manualRow(`区分${g.glabel}の所属が不明→手動`); continue; }
       const s = merged[0].s, e = merged[0].e;
       // 休憩は全バーから拾う（本体がポジション区間で表現される人でも取りこぼさない）。同一休憩は重複除去。
@@ -2683,6 +2691,7 @@
     // 名前順。ただし同じ人では 引き直し/休み を新規より先に（既存線を縮めてから新規を引く＝重複回避）
     const kindOrd = (r) => (r.kind === 'off' ? 0 : r.kind === 'retime' ? 1 : r.kind === 'create' ? 2 : 3);
     rows.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja') || (kindOrd(a) - kindOrd(b)));
+    rows.splitSkipped = splitSkipped;   // 分割勤務で弾いた件数（表示用）
     return rows;
   }
 
@@ -2717,7 +2726,8 @@
       `<div class="rf-warn">原案どおりにらくしふへ線を引きます。1行ずつご確認のうえボタンを押してください` +
       `（削除・確定送信は行いません）。${rfCsrf() ? '' : '<b>⚠CSRFトークン未検出：このページをリロードしてください</b>'}</div>` +
       `<div class="rsum">反映できる ${auto.length}件（引く/引き直す/休みにする）`
-      + `${manual.length ? ` ／ 要手動 ${manual.length}件` : ''}${matched.length ? ` ／ 一致 ${matched.length}件` : ''}</div>` +
+      + `${manual.length ? ` ／ 要手動 ${manual.length}件` : ''}${matched.length ? ` ／ 一致 ${matched.length}件` : ''}`
+      + `${reflectRows.splitSkipped ? ` ／ 分割勤務 ${reflectRows.splitSkipped}人は対象外` : ''}</div>` +
       (auto.length ? `<div style="margin:2px 0"><button id="reflectAll" title="上から順に1件ずつ反映（各件の成否を表示）">▶ ${auto.length}件をまとめて反映</button></div>` : '') +
       reflectRows.filter((r) => r.kind !== 'match').map((r) => rowHtml(r, reflectRows.indexOf(r))).join('') +
       matchHtml;
@@ -3083,7 +3093,16 @@
     for (const [id, nm] of Object.entries(taskMap)) nameToId[nm] = +id;
     const belong = {};
     for (const uu of (cur.users || [])) belong[uu.id] = uu.belonging_genre_id;
-    const mapGenre = (gl, uid) => (gl === 'F' ? 2 : gl === 'K' ? 3 : (belong[uid] === 2 || belong[uid] === 3) ? belong[uid] : null);
+    // 外枠の反映と同じ寄せ方: 所属がF/Kでない人は既存らくしふ勤務の単一区分へ（FKタスクをその線に乗せる）
+    const baseGenre = {};
+    for (const s of cur.list) {
+      if (s.off || (s.attending_genre_id !== 2 && s.attending_genre_id !== 3)) continue;
+      if (baseGenre[s.user_id] === undefined) baseGenre[s.user_id] = s.attending_genre_id;
+      else if (baseGenre[s.user_id] !== s.attending_genre_id) baseGenre[s.user_id] = 0;
+    }
+    const mapGenre = (gl, uid) => (gl === 'F' ? 2 : gl === 'K' ? 3
+      : (belong[uid] === 2 || belong[uid] === 3) ? belong[uid]
+      : (baseGenre[uid] === 2 || baseGenre[uid] === 3) ? baseGenre[uid] : null);
     const nameOf = {};
     for (const uu of (cur.users || [])) nameOf[uu.id] = (uu.name || '').replace(/\s+/g, ' ').trim();
     // 原案を (user, らくしふ区分) にまとめる
