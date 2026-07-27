@@ -2512,6 +2512,20 @@
       const g = (byUG[key] ||= { uid: a.user_id, name: a.name, gid, glabel: a.genre, bars: [] });
       g.bars.push(a);
     }
+    // 各(user,区分)の「原案での最終区間」= マージ結果（単一区間のときだけ）。
+    // 別区分の新規が既存線と重なるか調べるとき、既存線が原案で短くなる予定なら
+    // その"予定後の区間"で重複を見る（例: 鎌田 F 10-19→10-17 に縮む間にK 17-19を新規したい）。
+    const intendedSpan = {};
+    for (const [key, g] of Object.entries(byUG)) {
+      const bs = g.bars.filter((b) => b.e > b.s).sort((a, b) => a.s - b.s);
+      const mg = [];
+      for (const b of bs) {
+        const last = mg[mg.length - 1];
+        if (last && b.s <= last[1]) last[1] = Math.max(last[1], b.e);
+        else mg.push([b.s, b.e]);
+      }
+      if (mg.length === 1) intendedSpan[key] = mg[0];   // 単一区間の人だけ
+    }
 
     const rows = [];
     for (const g of Object.values(byUG)) {
@@ -2561,9 +2575,14 @@
       if (!ex) {
         // その区分の既存バーは無い。ただし別区分で時間が重なる勤務があると、新規作成は
         // 「時間が重複」で弾かれる。区分が変わっただけ（例 K→F）なら、その線を引き直す。
-        const overlap = (curByUser[uid] || []).filter((x) => !x.off
-          && x.start_as_min != null && x.end_as_min != null
-          && x.start_as_min < e && x.end_as_min > s);
+        // ★重複判定は既存線の「原案での最終区間」で見る。別グループが縮める予定の線
+        //   （例 鎌田F 10-19→10-17）とは、縮んだ後の区間で重ならなければ別物＝新規で引く。
+        const overlap = (curByUser[uid] || []).filter((x) => {
+          if (x.off || x.start_as_min == null || x.end_as_min == null) return false;
+          const eff = intendedSpan[curKey(uid, x.attending_genre_id)]
+            || [x.start_as_min, x.end_as_min];
+          return eff[0] < e && eff[1] > s;
+        });
         if (overlap.length === 1) {
           const o = overlap[0];
           rows.push({
@@ -2651,7 +2670,9 @@
         } },
       });
     }
-    rows.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja'));
+    // 名前順。ただし同じ人では 引き直し/休み を新規より先に（既存線を縮めてから新規を引く＝重複回避）
+    const kindOrd = (r) => (r.kind === 'off' ? 0 : r.kind === 'retime' ? 1 : r.kind === 'create' ? 2 : 3);
+    rows.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ja') || (kindOrd(a) - kindOrd(b)));
     return rows;
   }
 
