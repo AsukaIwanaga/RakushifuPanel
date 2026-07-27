@@ -3520,7 +3520,15 @@
   const withReflectLock = async (fn) => {
     if (reflectBusy) return;
     reflectBusy = true;
-    try { await fn(); } finally { reflectBusy = false; }
+    try { return await fn(); } finally { reflectBusy = false; }
+  };
+  // 反映(外枠/中身/CK)を実際に書き込んだら、少し置いてページをリロードする（本人指定）。
+  // らくしふ本体の表示を確定後の状態へ更新し、パネルも一致状態に組み直すため。まとめて引く時は最後に1回。
+  let reloadPending = false;
+  const scheduleReload = (didWrite) => {
+    if (!didWrite || reloadPending) return;
+    reloadPending = true;
+    setTimeout(() => location.reload(), 700);   // ✓表示を一瞬見せてから
   };
   $('#draftSend').addEventListener('click', sendWishes);
   $('#reflectPlan').addEventListener('click', () => withReflectLock(renderReflectPlan));
@@ -3558,40 +3566,49 @@
   $('#taskPlan').addEventListener('click', () => withReflectLock(renderTaskPlan));
   $('#reflect').addEventListener('click', async (ev) => {
     const tp = ev.target.closest('.tap');
-    if (tp) { const i = +tp.dataset.i; await withReflectLock(() => applyTaskRow(i)); return; }
+    if (tp) { const i = +tp.dataset.i; const ok = await withReflectLock(() => applyTaskRow(i)); scheduleReload(ok); return; }
     if (ev.target.id === 'taskAll') {
       if (!confirm(`${taskRows.length}件の中身(区間タスク)をまとめて引きます。よろしいですか？`)) return;
       const btn = ev.target;
-      await withReflectLock(async () => {
+      const n = await withReflectLock(async () => {
         btn.disabled = true;
-        for (let i = 0; i < taskRows.length; i++) { await applyTaskRow(i); }
+        let w = 0;
+        for (let i = 0; i < taskRows.length; i++) { if (await applyTaskRow(i)) w += 1; }
         btn.textContent = '完了';
+        return w;
       });
+      scheduleReload(n);
       return;
     }
     const ck = ev.target.closest('.ckap');
-    if (ck) { const i = +ck.dataset.i; await withReflectLock(() => applyCkRow(i)); return; }
+    if (ck) { const i = +ck.dataset.i; const ok = await withReflectLock(() => applyCkRow(i)); scheduleReload(ok); return; }
     if (ev.target.id === 'ckAll') {
       const btn = ev.target;
-      await withReflectLock(async () => {
+      const n = await withReflectLock(async () => {
         btn.disabled = true;
         const targets = (ckRows || []).map((r, i) => ({ r, i })).filter((x) => x.r.bar && !x.r.already);
-        for (const { i } of targets) { await applyCkRow(i); }
+        let w = 0;
+        for (const { i } of targets) { if (await applyCkRow(i)) w += 1; }
         btn.textContent = '完了';
+        return w;
       });
+      scheduleReload(n);
       return;
     }
     const one = ev.target.closest('.rap');
-    if (one) { const i = +one.dataset.i; await withReflectLock(() => applyReflectRow(i)); return; }
+    if (one) { const i = +one.dataset.i; const ok = await withReflectLock(() => applyReflectRow(i)); scheduleReload(ok); return; }
     if (ev.target.id === 'reflectAll') {
       const btn = ev.target;
-      await withReflectLock(async () => {
+      const n = await withReflectLock(async () => {
         btn.disabled = true;
         const targets = (reflectRows || [])
           .map((r, i) => ({ r, i })).filter((x) => !x.r.manual && !x.r.applied);
-        for (const { i } of targets) { await applyReflectRow(i); }   // 1件ずつ順に
+        let w = 0;
+        for (const { i } of targets) { if (await applyReflectRow(i)) w += 1; }   // 1件ずつ順に
         btn.textContent = '完了';
+        return w;
       });
+      scheduleReload(n);
     }
   });
   renderSheet();
