@@ -2548,18 +2548,23 @@
       if (baseGenre[s.user_id] === undefined) baseGenre[s.user_id] = s.attending_genre_id;
       else if (baseGenre[s.user_id] !== s.attending_genre_id) baseGenre[s.user_id] = 0;
     }
+    // F/Kはそのまま。FKだけ所属/ベースにフォールバック。MGT/非生産/勉強会/MTG等の
+    // 非オペ業務はF/K勤務ではない → null（外枠は引かない。管理時間は社員シフト等が持つ）。
     const mapGenre = (glabel, uid) => (glabel === 'F' ? 2 : glabel === 'K' ? 3
-      : (belong[uid] === 2 || belong[uid] === 3) ? belong[uid]
-      : (baseGenre[uid] === 2 || baseGenre[uid] === 3) ? baseGenre[uid] : null);
+      : glabel === 'FK' ? ((belong[uid] === 2 || belong[uid] === 3) ? belong[uid]
+        : (baseGenre[uid] === 2 || baseGenre[uid] === 3) ? baseGenre[uid] : null)
+      : null);
 
     // 各セグメントの区分を決める。F/Kはそのまま。FKは「直前のF/Kライン」に付ける
     // （無ければ直後→所属/ベース）。本人指定: FとKはそれぞれ／FKは前のラインに従う。
     const resolveGid = buildGidResolver(asg, mapGenre);
     // 原案を (user_id, らくしふ区分) ごとにまとめる。区分をまたぐ人（応援）は区分別に線を持つ。
+    // 区分がnull（MGT等の非オペ）は外枠を引かない＝スキップ。
     const byUG = {};
     for (const a of asg) {
       if (a.e <= a.s) continue;
       const gid = resolveGid(a);
+      if (gid == null) continue;
       const key = `${a.user_id}:${gid}`;
       const g = (byUG[key] ||= { uid: a.user_id, name: a.name, gid, glabel: a.genre, bars: [] });
       g.bars.push(a);
@@ -2697,18 +2702,22 @@
     //   採取した休みPUTの最小ボディ形をそのまま使う。
     const nameByUid = {};
     for (const uu of (cur.users || [])) nameByUid[uu.id] = (uu.name || '').replace(/\s+/g, ' ').trim();
-    // 原案の全勤務区間（区分問わず）。らくしふの線がこのどれとも重ならなければ「休みにする」。
-    // 時間ベースにすることで、原案でK勤務の人の余分なF線も消せる一方、応援(FK等)の時間帯は残す。
-    const draftSpans = {};
+    // 原案の勤務区間を「区分ごと」に持つ。らくしふのある区分の線が、原案の"同じ区分"の
+    // 勤務と重ならなければ「休みにする」。区分単位にすることで、区分が変わって不要になった
+    // 別区分の線（例 FKをFで引いた残り→原案はK）を確実に消せる（重複400の元を断つ）。
+    const draftSpansG = {};
     for (const a of asg) {
       if (a.e <= a.s) continue;
-      (draftSpans[a.user_id] ||= []).push([a.s, a.e]);
+      const gid = resolveGid(a);
+      if (gid !== 2 && gid !== 3) continue;
+      (draftSpansG[`${a.user_id}:${gid}`] ||= []).push([a.s, a.e]);
     }
-    const draftCovers = (uid, s0, e0) => (draftSpans[uid] || []).some(([a, b]) => a < e0 && b > s0);
+    const draftCoversG = (uid, gid, s0, e0) =>
+      (draftSpansG[`${uid}:${gid}`] || []).some(([a, b]) => a < e0 && b > s0);
     for (const s of cur.list) {
       if (s.off || s.start_as_min == null || s.end_as_min == null) continue;    // 既に休み/時間なし
       if (s.attending_genre_id !== 2 && s.attending_genre_id !== 3) continue;    // F/K以外は対象外
-      if (draftCovers(s.user_id, s.start_as_min, s.end_as_min)) continue;        // 原案の勤務と重なる→残す
+      if (draftCoversG(s.user_id, s.attending_genre_id, s.start_as_min, s.end_as_min)) continue; // 同区分の原案勤務と重なる→残す
       const gl = g2label(s.attending_genre_id);
       rows.push({
         kind: 'off', user_id: s.user_id, name: nameByUid[s.user_id] || String(s.user_id), genre: gl,
@@ -3156,8 +3165,9 @@
       else if (baseGenre[s.user_id] !== s.attending_genre_id) baseGenre[s.user_id] = 0;
     }
     const mapGenre = (gl, uid) => (gl === 'F' ? 2 : gl === 'K' ? 3
-      : (belong[uid] === 2 || belong[uid] === 3) ? belong[uid]
-      : (baseGenre[uid] === 2 || baseGenre[uid] === 3) ? baseGenre[uid] : null);
+      : gl === 'FK' ? ((belong[uid] === 2 || belong[uid] === 3) ? belong[uid]
+        : (baseGenre[uid] === 2 || baseGenre[uid] === 3) ? baseGenre[uid] : null)
+      : null);
     const nameOf = {};
     for (const uu of (cur.users || [])) nameOf[uu.id] = (uu.name || '').replace(/\s+/g, ' ').trim();
     // 原案を (user, らくしふ区分) にまとめる。FKは直前のラインに従う（外枠と同じ寄せ方）
