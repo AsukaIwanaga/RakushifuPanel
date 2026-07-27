@@ -622,6 +622,12 @@
       .reflect .rrow.off .rwhat { color: #6b7280; }
       .reflect .rrow.match { opacity: .7; }
       .reflect .rrow.match .rwhat { color: #2c6e49; }
+      .rmday { display: flex; align-items: center; gap: 6px; padding: 3px 0; border-top: 1px dotted #eee; font-size: 13px; }
+      .rmday .rmc { color: #b45309; }
+      #rmRun { font-size: 12px; padding: 2px 12px; border-radius: 5px; border: 1px solid #0e7490; background: #0e7490; color: #fff; cursor: pointer; }
+      #rmRun[disabled] { border-color: #ccc; background: #eee; color: #999; }
+      #rmAllToggle { font-size: 11px; padding: 1px 8px; border-radius: 5px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+      .rm-stat { font-size: 11px; }
       .reflect .rrow.off .rap { border-color: #6b7280; background: #6b7280; }
       .reflect .rrow.manual { opacity: .8; }
       .reflect .rrow.manual .rwhat { color: #6b7280; }
@@ -698,6 +704,11 @@
         <button id="ckPlan" title="温度・日付・廃棄のCKを、この日の勤務者に自動で割り付ける（シフト全域タグ。時間は変えません）">🌡 CK割付</button>
       </div>
       <div id="reflect" class="reflect muted">-</div>
+      <div class="section-title" style="margin-top:6px">月まとめて反映
+        <select id="reflectMonthSel" title="スキャンする月"></select>
+        <button id="reflectMonthScan" title="相違のある日を抽出し、選んだ日をまとめて反映">📅 相違のある日を出す</button>
+      </div>
+      <div id="reflectMonth" class="reflect muted" style="display:none">-</div>
     </div>
   `;
 
@@ -2648,6 +2659,24 @@
       matchHtml;
   }
 
+  // 1行分の実書き込み（POST=新規 / PUT=引直・休み）。DOM非依存。確定には触れない。
+  async function reflectRequest(r, token) {
+    const url = r.kind === 'create' ? '/ajax/admin/schedules' : `/ajax/admin/schedules/${r.bar_id}`;
+    const method = r.kind === 'create' ? 'POST' : 'PUT';
+    const res = await fetch(url, {
+      method, credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
+      body: JSON.stringify(r.payload),
+    });
+    if (!res.ok) {
+      let detail = '';
+      try { detail = (await res.text() || '').slice(0, 300); } catch { /* noop */ }
+      throw new Error(`HTTP ${res.status}${detail ? ' ' + detail : ''}`);
+    }
+    return true;
+  }
+
   // 1行を実際にPOST/PUTする。成功でDOMに✓、失敗で赤表示。確定には触れない。
   async function applyReflectRow(i) {
     const r = reflectRows && reflectRows[i];
@@ -2657,20 +2686,8 @@
     const rowEl = $(`#reflect .rrow[data-i="${i}"]`);
     const btn = rowEl && rowEl.querySelector('.rap');
     if (btn) { btn.disabled = true; btn.textContent = '送信中'; }
-    const url = r.kind === 'create' ? '/ajax/admin/schedules' : `/ajax/admin/schedules/${r.bar_id}`;
-    const method = r.kind === 'create' ? 'POST' : 'PUT';
     try {
-      const res = await fetch(url, {
-        method, credentials: 'include',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json',
-          'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
-        body: JSON.stringify(r.payload),
-      });
-      if (!res.ok) {
-        let detail = '';
-        try { detail = (await res.text() || '').slice(0, 300); } catch { /* noop */ }
-        throw new Error(`HTTP ${res.status}${detail ? ' ' + detail : ''}`);
-      }
+      await reflectRequest(r, token);
       if (rowEl) { rowEl.classList.add('done'); rowEl.classList.remove('err'); }
       if (btn) { btn.textContent = '✓ 反映'; btn.disabled = true; }
       r.applied = true;
@@ -2684,6 +2701,82 @@
       if (w) w.textContent += `　→ 失敗: ${e.message}`;
       return false;
     }
+  }
+
+  // ===== 月まとめて反映：相違のある日を抽出→チェックで選択→実行 =====
+  let monthScan = null;  // [{day, rows, auto, counts}]
+  const monthDays = (ym) => {
+    const [y, m] = ym.split('-').map(Number);
+    const n = new Date(y, m, 0).getDate();
+    return Array.from({ length: n }, (_, i) => `${ym}-${String(i + 1).padStart(2, '0')}`);
+  };
+  async function scanReflectMonth() {
+    const box = $('#reflectMonth');
+    box.style.display = ''; box.className = 'reflect';
+    const ym = $('#reflectMonthSel').value;
+    const days = monthDays(ym);
+    box.innerHTML = `<span class="muted">${ym} を全日スキャン中… 0/${days.length}</span>`;
+    monthScan = [];
+    for (let k = 0; k < days.length; k++) {
+      const day = days[k];
+      try {
+        const rows = await buildReflectPlan(parseYmd(day));
+        const auto = rows.filter((r) => !r.manual && r.kind !== 'match');
+        const manual = rows.filter((r) => r.manual && r.kind !== 'match');
+        if (auto.length) {
+          const c = { create: 0, retime: 0, off: 0 };
+          for (const r of auto) c[r.kind] = (c[r.kind] || 0) + 1;
+          monthScan.push({ day, rows, auto, manual: manual.length, counts: c });
+        }
+      } catch { /* その日は飛ばす */ }
+      box.querySelector('.muted') && (box.querySelector('.muted').textContent = `${ym} を全日スキャン中… ${k + 1}/${days.length}`);
+    }
+    renderMonthScan();
+  }
+  function renderMonthScan() {
+    const box = $('#reflectMonth');
+    if (!monthScan.length) { box.innerHTML = '<span class="allok">✓ この月は相違なし（全日一致）</span>'; return; }
+    const total = monthScan.reduce((a, s) => a + s.auto.length, 0);
+    const md = (d) => { const x = parseYmd(d); return `${x.getMonth() + 1}/${x.getDate()}(${WEEKDAYS[x.getDay()]})`; };
+    const rowHtml = (s) => {
+      const c = s.counts;
+      const parts = [c.create ? `引く${c.create}` : '', c.retime ? `引直${c.retime}` : '', c.off ? `休み${c.off}` : '']
+        .filter(Boolean).join(' ');
+      return `<label class="rmday"><input type="checkbox" class="rm-cb" data-day="${s.day}" checked> ` +
+        `<b>${md(s.day)}</b> <span class="rmc">${parts}</span>` +
+        `${s.manual ? `<span class="muted" style="font-size:10px">（手動${s.manual}）</span>` : ''}` +
+        `<span class="rm-stat" data-day="${s.day}"></span></label>`;
+    };
+    box.innerHTML =
+      `<div class="rf-warn">相違のある ${monthScan.length}日・計${total}件。チェックした日を上から順に反映します` +
+      `（引く/引き直す/休みにする。削除・確定送信はしません／手動分は入りません）。</div>` +
+      `<div style="margin:3px 0"><button id="rmAllToggle">全解除</button> ` +
+      `<button id="rmRun">▶ 選択した日を反映</button></div>` +
+      monthScan.map(rowHtml).join('');
+  }
+  async function runMonthReflect() {
+    const token = rfCsrf();
+    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return; }
+    const picked = [...$('#reflectMonth').querySelectorAll('.rm-cb:checked')].map((c) => c.dataset.day);
+    if (!picked.length) { alert('反映する日が選ばれていません。'); return; }
+    const n = picked.reduce((a, d) => a + (monthScan.find((s) => s.day === d)?.auto.length || 0), 0);
+    if (!confirm(`${picked.length}日・計${n}件をらくしふへ反映します。よろしいですか？\n（確定送信はしません）`)) return;
+    const runBtn = $('#rmRun'); if (runBtn) { runBtn.disabled = true; }
+    for (const day of picked) {
+      const s = monthScan.find((x) => x.day === day);
+      const stat = $(`#reflectMonth .rm-stat[data-day="${day}"]`);
+      if (!s) continue;
+      let ok = 0; let ng = 0;
+      for (const r of s.auto) {
+        if (stat) stat.textContent = `　送信中… ${ok + ng + 1}/${s.auto.length}`;
+        try { await reflectRequest(r, token); ok += 1; } catch { ng += 1; }
+      }
+      if (stat) { stat.textContent = `　✓ ${ok}件${ng ? ` / 失敗${ng}` : ''}`; stat.style.color = ng ? '#b02a2a' : '#2c6e49'; }
+      const cb = $(`#reflectMonth .rm-cb[data-day="${day}"]`); if (cb) cb.checked = false;
+    }
+    if (runBtn) { runBtn.textContent = '完了'; }
+    lastDraftDay = null;
+    renderSheet();   // 表示中日を取り直す
   }
 
   // 対象日のCK割付プランを作る。既に付いている人はそのまま（重複して付けない）。
@@ -3011,17 +3104,33 @@
 
   // 希望送信の対象月: 前月〜3ヶ月先。原案作成は翌月分が通常なので翌月を既定にする
   {
-    const sel = $('#draftMonth'), now = new Date();
-    for (let d = -1; d <= 3; d++) {
-      const dt = new Date(now.getFullYear(), now.getMonth() + d, 1);
-      const v = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}`;
-      const o = document.createElement('option');
-      o.value = v; o.textContent = v; o.selected = (d === 1);
-      sel.appendChild(o);
+    const now = new Date();
+    for (const selId of ['#draftMonth', '#reflectMonthSel']) {
+      const sel = $(selId);
+      for (let d = -1; d <= 3; d++) {
+        const dt = new Date(now.getFullYear(), now.getMonth() + d, 1);
+        const v = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}`;
+        const o = document.createElement('option');
+        o.value = v; o.textContent = v; o.selected = (d === 1);
+        sel.appendChild(o);
+      }
     }
+    // 反映スキャンは表示中の月を既定に
+    const cm = `${targetDate.getFullYear()}-${pad2(targetDate.getMonth() + 1)}`;
+    if ([...$('#reflectMonthSel').options].some((o) => o.value === cm)) $('#reflectMonthSel').value = cm;
   }
   $('#draftSend').addEventListener('click', sendWishes);
   $('#reflectPlan').addEventListener('click', renderReflectPlan);
+  $('#reflectMonthScan').addEventListener('click', scanReflectMonth);
+  $('#reflectMonth').addEventListener('click', (ev) => {
+    if (ev.target.id === 'rmRun') { runMonthReflect(); return; }
+    if (ev.target.id === 'rmAllToggle') {
+      const cbs = [...$('#reflectMonth').querySelectorAll('.rm-cb')];
+      const anyOn = cbs.some((c) => c.checked);
+      cbs.forEach((c) => { c.checked = !anyOn; });
+      ev.target.textContent = anyOn ? '全選択' : '全解除';
+    }
+  });
   // 反映セクションのクリック（差分1件 or 一括）。確定には触れない。
   $('#ckPlan').addEventListener('click', renderCkPlan);
   $('#reflect').addEventListener('click', async (ev) => {
