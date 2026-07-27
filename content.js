@@ -3493,11 +3493,18 @@
     const cm = `${targetDate.getFullYear()}-${pad2(targetDate.getMonth() + 1)}`;
     if ([...$('#reflectMonthSel').options].some((o) => o.value === cm)) $('#reflectMonthSel').value = cm;
   }
+  // 反映系の排他ロック。連打しても実行中は無視＝並行実行しない（本人指定）。
+  let reflectBusy = false;
+  const withReflectLock = async (fn) => {
+    if (reflectBusy) return;
+    reflectBusy = true;
+    try { await fn(); } finally { reflectBusy = false; }
+  };
   $('#draftSend').addEventListener('click', sendWishes);
-  $('#reflectPlan').addEventListener('click', renderReflectPlan);
-  $('#reflectMonthScan').addEventListener('click', scanReflectMonth);
+  $('#reflectPlan').addEventListener('click', () => withReflectLock(renderReflectPlan));
+  $('#reflectMonthScan').addEventListener('click', () => withReflectLock(scanReflectMonth));
   $('#reflectMonth').addEventListener('click', (ev) => {
-    if (ev.target.id === 'rmRun') { runMonthReflect(); return; }
+    if (ev.target.id === 'rmRun') { withReflectLock(runMonthReflect); return; }
     if (ev.target.id === 'rmAllToggle') {
       const cbs = [...$('#reflectMonth').querySelectorAll('.rm-cb')];
       const anyOn = cbs.some((c) => c.checked);
@@ -3514,9 +3521,9 @@
       () => { ev.target.textContent = '✓ コピーした'; },
       () => { try { document.execCommand('copy'); ev.target.textContent = '✓ コピーした'; } catch { /* noop */ } });
   });
-  $('#ckMonthScan').addEventListener('click', scanCkMonth);
+  $('#ckMonthScan').addEventListener('click', () => withReflectLock(scanCkMonth));
   $('#ckMonth').addEventListener('click', (ev) => {
-    if (ev.target.id === 'ckmRun') { runCkMonth(); return; }
+    if (ev.target.id === 'ckmRun') { withReflectLock(runCkMonth); return; }
     if (ev.target.id === 'ckmAllToggle') {
       const cbs = [...$('#ckMonth').querySelectorAll('.ckm-cb')];
       const anyOn = cbs.some((c) => c.checked);
@@ -3525,35 +3532,44 @@
     }
   });
   // 反映セクションのクリック（差分1件 or 一括）。確定には触れない。
-  $('#ckPlan').addEventListener('click', renderCkPlan);
-  $('#taskPlan').addEventListener('click', renderTaskPlan);
+  $('#ckPlan').addEventListener('click', () => withReflectLock(renderCkPlan));
+  $('#taskPlan').addEventListener('click', () => withReflectLock(renderTaskPlan));
   $('#reflect').addEventListener('click', async (ev) => {
     const tp = ev.target.closest('.tap');
-    if (tp) { await applyTaskRow(+tp.dataset.i); return; }
+    if (tp) { const i = +tp.dataset.i; await withReflectLock(() => applyTaskRow(i)); return; }
     if (ev.target.id === 'taskAll') {
       if (!confirm(`${taskRows.length}件の中身(区間タスク)をまとめて引きます。よろしいですか？`)) return;
-      ev.target.disabled = true;
-      for (let i = 0; i < taskRows.length; i++) { await applyTaskRow(i); }
-      ev.target.textContent = '完了';
+      const btn = ev.target;
+      await withReflectLock(async () => {
+        btn.disabled = true;
+        for (let i = 0; i < taskRows.length; i++) { await applyTaskRow(i); }
+        btn.textContent = '完了';
+      });
       return;
     }
     const ck = ev.target.closest('.ckap');
-    if (ck) { await applyCkRow(+ck.dataset.i); return; }
+    if (ck) { const i = +ck.dataset.i; await withReflectLock(() => applyCkRow(i)); return; }
     if (ev.target.id === 'ckAll') {
-      ev.target.disabled = true;
-      const targets = (ckRows || []).map((r, i) => ({ r, i })).filter((x) => x.r.bar && !x.r.already);
-      for (const { i } of targets) { await applyCkRow(i); }
-      ev.target.textContent = '完了';
+      const btn = ev.target;
+      await withReflectLock(async () => {
+        btn.disabled = true;
+        const targets = (ckRows || []).map((r, i) => ({ r, i })).filter((x) => x.r.bar && !x.r.already);
+        for (const { i } of targets) { await applyCkRow(i); }
+        btn.textContent = '完了';
+      });
       return;
     }
     const one = ev.target.closest('.rap');
-    if (one) { await applyReflectRow(+one.dataset.i); return; }
+    if (one) { const i = +one.dataset.i; await withReflectLock(() => applyReflectRow(i)); return; }
     if (ev.target.id === 'reflectAll') {
-      ev.target.disabled = true;
-      const targets = (reflectRows || [])
-        .map((r, i) => ({ r, i })).filter((x) => !x.r.manual && !x.r.applied);
-      for (const { i } of targets) { await applyReflectRow(i); }   // 1件ずつ順に
-      ev.target.textContent = '完了';
+      const btn = ev.target;
+      await withReflectLock(async () => {
+        btn.disabled = true;
+        const targets = (reflectRows || [])
+          .map((r, i) => ({ r, i })).filter((x) => !x.r.manual && !x.r.applied);
+        for (const { i } of targets) { await applyReflectRow(i); }   // 1件ずつ順に
+        btn.textContent = '完了';
+      });
     }
   });
   renderSheet();
