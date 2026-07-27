@@ -433,56 +433,68 @@
 
   shadow.innerHTML = `
     <style>
-      :host { all: initial; }
-      * { box-sizing: border-box; font-family: -apple-system, "Hiragino Sans", sans-serif; }
-      /* 印刷時はパネルとボタンを紙に出さない（注入した行だけ印刷される） */
+      /* ===== E系 設計トークン（案E＝ミニマル/細ゴシック を原点）===== */
+      :host {
+        all: initial;
+        --paper:#fbfbfa; --panel:#ffffff; --ink:#161616; --ink2:#474743; --faint:#8c8c88;
+        --line:#eae9e5; --line2:#d9d8d2;
+        --accent:#d3402a;                 /* 赤：主アクション・強調 一点 */
+        --neg:#bd3a2c; --pos:#3f7a57; --warn:#a97016; --mut:#8c8c88;
+        --tintneg:#faeae7; --tintwarn:#f7efe1; --tintpos:#eef5f0;
+      }
+      * { box-sizing: border-box;
+        font-family: "Hiragino Sans", "Helvetica Neue", "Yu Gothic", "YuGothic", -apple-system, sans-serif;
+        font-weight: 400; letter-spacing: .004em; }
+      .num, .num * { font-variant-numeric: tabular-nums; }
       @media print { #toggle, #panel { display: none !important; } }
-      #toggle {
-        position: fixed; right: 12px; top: 12px; z-index: 2147483646;
-        width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
-        background: #2c6e49; color: #fff; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
+      /* ---- トグル（四角・角丸なし・SVGアイコン・選択中は赤下線）---- */
+      #toggle, #shiftToggle, #reflectToggle {
+        position: fixed; top: 12px; z-index: 2147483646;
+        width: 42px; height: 42px; border-radius: 0; cursor: pointer;
+        border: 1px solid var(--line2); background: var(--panel); color: var(--ink2);
+        display: grid; place-items: center; padding: 0;
       }
+      #toggle { right: 12px; } #shiftToggle { right: 60px; } #reflectToggle { right: 108px; }
+      #toggle:hover, #shiftToggle:hover, #reflectToggle:hover { color: var(--ink); border-color: var(--ink); }
+      #toggle.on, #shiftToggle.on, #reflectToggle.on { color: var(--ink); border-color: var(--ink);
+        box-shadow: inset 0 -2px 0 var(--accent); }
+      #toggle svg, #shiftToggle svg, #reflectToggle svg {
+        width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.4;
+        stroke-linecap: round; stroke-linejoin: round; }
       #toggle .badge, #shiftToggle .badge {
-        position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px;
-        border-radius: 9px; background: #d64545; color: #fff; font-size: 11px;
-        line-height: 18px; padding: 0 4px; display: none;
-      }
-      #shiftToggle {
-        position: fixed; right: 62px; top: 12px; z-index: 2147483646;
-        width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
-        background: #6b46a8; color: #fff; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
-      }
-      #reflectToggle {
-        position: fixed; right: 112px; top: 12px; z-index: 2147483646;
-        width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
-        background: #0e7490; color: #fff; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,.3);
+        position: absolute; top: -8px; right: -8px; min-width: 17px; height: 17px;
+        border-radius: 0; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+        line-height: 17px; padding: 0 4px; display: none;
       }
       @media print { #reflectToggle, #reflectPanel { display: none !important; } }
       #reflectPanel {
-        position: fixed; right: 12px; top: 64px; z-index: 2147483647;
-        width: 460px; max-width: calc(100vw - 24px);
-        max-height: calc(100vh - 80px); overflow-y: auto;
-        background: #fff; border: 1px solid #0e7490; border-radius: 10px;
-        box-shadow: 0 4px 20px rgba(0,0,0,.25); padding: 12px; display: none;
-        font-size: 15px; color: #222;
+        position: fixed; right: 12px; top: 62px; z-index: 2147483647;
+        width: 468px; max-width: calc(100vw - 24px);
+        max-height: calc(100vh - 78px); overflow-y: auto;
+        background: var(--panel); border: 1px solid var(--line2); border-radius: 0;
+        box-shadow: 0 8px 30px rgba(20,20,18,.12); padding: 0 16px 14px; display: none;
+        font-size: 13px; color: var(--ink);
       }
       #reflectPanel.open { display: block; }
-      #reflectPanel .rp-head { display: flex; align-items: baseline; gap: 8px;
-        border-bottom: 2px solid #0e7490; padding-bottom: 5px; margin-bottom: 8px; }
-      #reflectPanel .rp-head b { font-size: 16px; color: #0e7490; }
+      #reflectPanel .rp-head { display: flex; align-items: baseline; gap: 12px;
+        border-bottom: 2px solid var(--ink); padding: 15px 0 10px; margin-bottom: 4px;
+        position: sticky; top: 0; background: var(--panel); z-index: 1; }
+      #reflectPanel .rp-head b { font-size: 16px; font-weight: 600; color: var(--ink); }
+      #reflectPanel .rp-head .muted { color: var(--faint); }
       #rfCapBox { border: 1px solid #0e7490; background: #ecfeff; border-radius: 6px;
         padding: 6px 8px; margin-bottom: 6px; }
       #shiftPanel {
-        position: fixed; right: 62px; top: 64px; z-index: 2147483647;
+        position: fixed; right: 60px; top: 62px; z-index: 2147483647;
         width: 490px; max-width: calc(100vw - 24px);
-        max-height: calc(100vh - 80px); overflow-y: auto;
-        background: #fff; border: 1px solid #ccc; border-radius: 10px;
-        box-shadow: 0 4px 20px rgba(0,0,0,.25); padding: 12px; display: none;
-        font-size: 15px; color: #222;
+        max-height: calc(100vh - 78px); overflow-y: auto;
+        background: var(--panel); border: 1px solid var(--line2); border-radius: 0;
+        box-shadow: 0 8px 30px rgba(20,20,18,.12); padding: 14px 16px; display: none;
+        font-size: 13px; color: var(--ink);
       }
       #shiftPanel.open { display: block; }
-      .sc-head { display: flex; gap: 5px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-      .sc-head b { flex: 1; font-size: 16px; }
+      .sc-head { display: flex; gap: 7px; align-items: baseline; margin-bottom: 12px; flex-wrap: wrap;
+        border-bottom: 2px solid var(--ink); padding-bottom: 10px; }
+      .sc-head b { flex: 1; font-size: 16px; font-weight: 600; }
       #scDetectBox { border: 1px solid #f0c36d; background: #fffbef; border-radius: 6px;
         padding: 6px 8px; margin-bottom: 8px; font-size: 12px; }
       .sc-detect-head { font-weight: 700; margin-bottom: 4px; }
@@ -548,32 +560,35 @@
       }
       @media print { #shiftToggle, #shiftPanel { display: none !important; } }
       #panel {
-        position: fixed; right: 12px; top: 64px; z-index: 2147483646;
+        position: fixed; right: 12px; top: 62px; z-index: 2147483646;
         width: 680px; max-width: calc(100vw - 24px);
-        max-height: calc(100vh - 80px); overflow-y: auto;
-        background: #fff; border: 1px solid #ccc; border-radius: 10px;
-        box-shadow: 0 4px 20px rgba(0,0,0,.25); padding: 10px; display: none;
-        font-size: 13px; color: #222;
+        max-height: calc(100vh - 78px); overflow-y: auto;
+        background: var(--panel); border: 1px solid var(--line2); border-radius: 0;
+        box-shadow: 0 8px 30px rgba(20,20,18,.12); padding: 0 14px 12px; display: none;
+        font-size: 13px; color: var(--ink);
       }
       #tableWrap { overflow-x: auto; }
       #panel.open { display: block; }
-      .nav { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-      .nav b { flex: 1; text-align: center; font-size: 14px; }
+      .nav { display: flex; align-items: center; gap: 7px; padding: 13px 0 10px; margin-bottom: 10px;
+        border-bottom: 2px solid var(--ink); position: sticky; top: 0; background: var(--panel); z-index: 1; }
+      .nav b { flex: 1; text-align: left; font-size: 16px; font-weight: 600; }
       .nav button {
-        border: 1px solid #ccc; background: #f5f5f5; border-radius: 5px;
-        cursor: pointer; padding: 3px 10px; font-size: 13px;
+        border: 1px solid var(--line2); background: var(--panel); border-radius: 0;
+        cursor: pointer; padding: 4px 11px; font-size: 12px; color: var(--ink);
       }
-      .nav button.accent { background: #2c6e49; color: #fff; border-color: #2c6e49; font-weight: 700; }
-      .stats { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
-      .chip { background: #eef4f0; border-radius: 5px; padding: 2px 7px; }
-      .chip b { color: #2c6e49; }
-      table { border-collapse: collapse; width: 100%; }
-      th, td { border: 1px solid #ddd; padding: 2px 5px; text-align: center; font-size: 12px; white-space: nowrap; }
-      th { background: #f0f0f0; color: #555; }
-      th.row-head, td.row-head { text-align: left; color: #333; font-weight: 600; }
-      td.now, th.now { background: #fff7d6; }
-      tr.le td { color: #1a5fb4; font-weight: 600; }
-      tr.sum td { font-weight: 600; }
+      .nav button:hover { border-color: var(--ink); }
+      .nav button.accent { background: var(--ink); color: var(--panel); border-color: var(--ink); font-weight: 600; }
+      .stats { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
+      .chip { background: transparent; border: 1px solid var(--line); border-radius: 0; padding: 2px 8px; color: var(--ink2); }
+      .chip b { color: var(--ink); font-weight: 600; }
+      table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+      th, td { border: 0; border-bottom: 1px solid var(--line); padding: 3px 6px; text-align: right; font-size: 11px; white-space: nowrap; }
+      th { background: transparent; color: var(--faint); font-weight: 500; font-size: 10px; }
+      th.row-head, td.row-head { text-align: left; color: var(--ink2); font-weight: 600;
+        position: sticky; left: 0; background: var(--panel); }
+      td.now, th.now { background: var(--tintwarn); }
+      tr.le td { color: var(--ink2); font-weight: 600; }
+      tr.sum td { font-weight: 600; border-top: 1.5px solid var(--line2); }
       td.total, th.total { border-left: 2px solid #999; font-weight: 700; background: #fafafa; }
       tr.act-first td { border-top: 2px solid #999; }
       tr.act td { color: #6b21a8; }
@@ -587,59 +602,61 @@
       tr.diff td.short-lite { color: #b02a2a; font-weight: 700; } /* |不足|<1: 白地に赤字 */
       tr.diff td.over-lite { color: #1e7a44; font-weight: 700; }  /* 0<余剰<1: 白地に緑字 */
       th.short-mark { background: #d64545; color: #fff; }
-      .section-title { font-weight: 700; margin: 8px 0 4px; font-size: 13px; }
-      .section-title #draftSend { margin-left: 4px; font-size: 11px; padding: 0 8px; border-radius: 5px;
-        border: 1px solid #ccc; background: #fff; cursor: pointer; }
-      .section-title #reflectPlan, .section-title #ckPlan { margin-left: 4px; font-size: 11px;
-        padding: 0 8px; border-radius: 5px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
-      #ckAll { font-size: 11px; padding: 1px 10px; border-radius: 5px;
-        border: 1px solid #16a34a; background: #16a34a; color: #fff; cursor: pointer; }
-      #ckAll[disabled] { border-color: #ccc; background: #eee; color: #999; }
-      .reflect .ckap { flex: 0 0 auto; font-size: 11px; padding: 1px 8px; border-radius: 5px;
-        border: 1px solid #16a34a; background: #16a34a; color: #fff; cursor: pointer; }
-      .reflect .ckap[disabled] { border-color: #ccc; background: #eee; color: #999; cursor: default; }
-      #reflectAll { font-size: 11px; padding: 1px 10px; border-radius: 5px;
-        border: 1px solid #16a34a; background: #16a34a; color: #fff; cursor: pointer; }
-      #reflectAll[disabled] { border-color: #ccc; background: #eee; color: #999; }
-      .section-title #draftMonth { margin-left: 6px; font-size: 11px; font-weight: 400; padding: 0 2px;
-        border: 1px solid #ccc; border-radius: 5px; background: #fff; }
-      .section-title #draftOpen { font-weight: 400; font-size: 11px; margin-left: 4px; color: #2c6e49; }
-      .nav #ver { font-size: 10px; font-weight: 400; margin-left: 4px; }
+      .section-title { font-weight: 600; margin: 14px 0 8px; font-size: 10.5px;
+        letter-spacing: .14em; text-transform: uppercase; color: var(--faint);
+        border-bottom: 1px solid var(--line); padding-bottom: 5px;
+        display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+      /* 見出し内のアクションボタン（外枠/中身/CK/希望送信/スキャン等）を1系統に統一 */
+      .section-title button, .section-title a#draftOpen {
+        margin-left: 2px; font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 0;
+        border: 1px solid var(--line2); background: var(--panel); color: var(--ink); cursor: pointer;
+        letter-spacing: 0; text-transform: none; }
+      .section-title button:hover { border-color: var(--ink); }
+      .section-title a#draftOpen { border: 0; color: var(--accent); text-decoration: none; }
+      .section-title #draftMonth, .section-title #reflectMonthSel {
+        margin-left: 2px; font-size: 11px; font-weight: 400; padding: 2px 4px;
+        border: 1px solid var(--line2); border-radius: 0; background: var(--panel); color: var(--ink); }
+      /* 一括実行系＝主アクション（インク塗り） */
+      #ckAll, #reflectAll, #taskAll, #rmRun, #ckmRun {
+        font-size: 11px; font-weight: 600; padding: 3px 12px; border-radius: 0;
+        border: 1px solid var(--ink); background: var(--ink); color: var(--panel); cursor: pointer; }
+      #ckAll[disabled], #reflectAll[disabled], #taskAll[disabled], #rmRun[disabled], #ckmRun[disabled] {
+        border-color: var(--line2); background: var(--line); color: var(--faint); }
+      #rmAllToggle, #ckmAllToggle {
+        font-size: 11px; padding: 2px 9px; border-radius: 0; border: 1px solid var(--line2);
+        background: var(--panel); color: var(--ink); cursor: pointer; }
+      .nav #ver { font-size: 10px; font-weight: 400; margin-left: 4px; color: var(--faint); }
       .draft .dli { padding: 1px 0; font-size: 12px; }
-      .draft .dtag { display: inline-block; width: 24px; text-align: center; border-radius: 4px;
-        color: #fff; font-size: 10px; font-weight: 700; margin-right: 5px; }
-      .draft .dtag.F { background: #2563eb; } .draft .dtag.K { background: #d97706; }
-      .draft .dtag.FK { background: #0e7490; }
-      .reflect { font-size: 12px; }
-      .reflect .rf-warn { color: #92400e; background: #fef3c7; border: 1px solid #fcd34d;
-        border-radius: 5px; padding: 4px 7px; margin-bottom: 5px; }
-      .reflect .rrow { display: flex; align-items: center; gap: 6px; padding: 3px 0;
-        border-bottom: 1px dotted #eee; }
-      .reflect .rrow .rwho { flex: 0 0 auto; font-weight: 700; min-width: 72px; }
-      .reflect .rrow .rwhat { flex: 1 1 auto; color: #444; }
-      .reflect .rrow.create .rwhat { color: #1e7a44; }
-      .reflect .rrow.retime .rwhat { color: #b45309; }
-      .reflect .rrow.off .rwhat { color: #6b7280; }
-      .reflect .rrow.match { opacity: .7; }
-      .reflect .rrow.match .rwhat { color: #2c6e49; }
-      .rmday { display: flex; align-items: center; gap: 6px; padding: 3px 0; border-top: 1px dotted #eee; font-size: 13px; }
-      .rmday .rmc { color: #b45309; }
-      #rmRun { font-size: 12px; padding: 2px 12px; border-radius: 5px; border: 1px solid #0e7490; background: #0e7490; color: #fff; cursor: pointer; }
-      #rmRun[disabled] { border-color: #ccc; background: #eee; color: #999; }
-      #rmAllToggle { font-size: 11px; padding: 1px 8px; border-radius: 5px; border: 1px solid #ccc; background: #fff; cursor: pointer; }
+      .draft .dtag { display: inline-block; width: 22px; text-align: center; border-radius: 0;
+        color: #fff; font-size: 10px; font-weight: 700; margin-right: 6px; }
+      .draft .dtag.F { background: #2b3f74; } .draft .dtag.K { background: #245a3a; }
+      .draft .dtag.FK { background: #4a3a6b; }
+      /* ---- 反映の結果リスト ---- */
+      .reflect { font-size: 12.5px; }
+      .reflect .rf-warn { color: var(--ink2); background: transparent; border: 0;
+        border-left: 2px solid var(--accent); border-radius: 0; padding: 2px 0 2px 9px; margin-bottom: 9px; font-size: 11.5px; }
+      .reflect .rsum { margin: 6px 0; font-weight: 400; color: var(--faint); font-size: 12px; }
+      .reflect .rsum b { color: var(--ink); font-weight: 600; }
+      .reflect .rrow { display: flex; align-items: baseline; gap: 10px; padding: 8px 0;
+        border-bottom: 1px solid var(--line); }
+      .reflect .rrow .rwho { flex: 0 0 auto; font-weight: 500; min-width: 96px; }
+      .reflect .rrow .rwhat { flex: 1 1 auto; color: var(--faint); font-variant-numeric: tabular-nums; }
+      .reflect .rrow.create .rwhat em, .reflect .rrow.retime .rwhat em, .reflect .rrow.off .rwhat em { font-style: normal; color: var(--ink); }
+      .reflect .rrow.match { opacity: .75; }
+      .reflect .rrow.match .rwhat { color: var(--pos); }
+      .reflect .rrow.manual .rwhat { color: var(--faint); }
+      .reflect .rrow.done { opacity: .55; }
+      .reflect .rrow.err .rwhat { color: var(--neg); }
+      /* 行アクション＝赤テキストボタン（塗らない・ミニマル） */
+      .reflect .rap, .reflect .ckap, .reflect .tap {
+        flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 1px 2px; border-radius: 0;
+        border: 0; background: none; color: var(--accent); cursor: pointer; white-space: nowrap; }
+      .reflect .rrow.off .rap { color: var(--mut); }
+      .reflect .rap[disabled], .reflect .ckap[disabled], .reflect .tap[disabled] {
+        color: var(--faint); cursor: default; }
+      .rmday { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
+      .rmday .rmc { color: var(--warn); font-variant-numeric: tabular-nums; }
       .rm-stat { font-size: 11px; }
-      .reflect .rrow.off .rap { border-color: #6b7280; background: #6b7280; }
-      .reflect .tap, #taskAll { flex: 0 0 auto; font-size: 11px; padding: 1px 9px; border-radius: 5px;
-        border: 1px solid #7c3aed; background: #7c3aed; color: #fff; cursor: pointer; }
-      .reflect .tap[disabled], #taskAll[disabled] { border-color: #ccc; background: #eee; color: #999; }
-      .reflect .rrow.manual { opacity: .8; }
-      .reflect .rrow.manual .rwhat { color: #6b7280; }
-      .reflect .rrow.done { background: #f0faf3; }
-      .reflect .rrow.err .rwhat { color: #b02a2a; }
-      .reflect .rap { flex: 0 0 auto; font-size: 11px; padding: 1px 8px; border-radius: 5px;
-        border: 1px solid #16a34a; background: #16a34a; color: #fff; cursor: pointer; }
-      .reflect .rap[disabled] { border-color: #ccc; background: #eee; color: #999; cursor: default; }
-      .reflect .rsum { margin: 4px 0; font-weight: 700; }
       .section-title.fold { cursor: pointer; user-select: none; }
       .unconfirmed { display: flex; flex-wrap: wrap; gap: 4px; }
       .unconfirmed .day {
@@ -657,9 +674,9 @@
       .tasks .task.ext .tid { color: #a15c00; background: #fdf3e3; }
       .tasks .task .tnote { color: #888; font-size: 11px; }
     </style>
-    <button id="toggle" title="客数予測パネル">📊<span class="badge" id="badge"></span></button>
-    <button id="shiftToggle" title="シフト変更依頼">🔁<span class="badge" id="shiftBadge"></span></button>
-    <button id="reflectToggle" title="海賊版らくしふ → らくしふへ反映">🔀</button>
+    <button id="toggle" title="客数予測パネル"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="badge" id="badge"></span></button>
+    <button id="shiftToggle" title="シフト変更依頼"><svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span class="badge" id="shiftBadge"></span></button>
+    <button id="reflectToggle" title="海賊版らくしふ → らくしふへ反映"><svg viewBox="0 0 24 24"><path d="M3 6h13M3 6l3-3M3 6l3 3M21 18H8M21 18l-3-3M21 18l-3 3"/></svg></button>
     <div id="shiftPanel">
       <div class="sc-head">
         <b>シフト変更依頼</b>
@@ -703,15 +720,15 @@
       <div id="draft" class="draft muted">-</div>
       <div id="rfCapBox" style="display:none"></div>
       <div class="section-title" style="margin-top:6px">この日を らくしふへ反映
-        <button id="reflectPlan" title="海賊版の原案どおりに、らくしふへシフトのラインを引く（新規作成／時間の引き直し。押した瞬間は書き込みません）">✏️ ラインを引く</button>
-        <button id="ckPlan" title="温度・日付・廃棄のCKを、この日の勤務者に自動で割り付ける（シフト全域タグ。時間は変えません）">🌡 CK割付</button>
-        <button id="taskPlan" title="FK/TRer/TRee/ポジションの区間タスクを原案どおり引く（そのシフトのタスクを丸ごと置換）">🏷 中身を引く</button>
+        <button id="reflectPlan" title="海賊版の原案どおりに、らくしふへシフトのラインを引く（新規作成／時間の引き直し。押した瞬間は書き込みません）">外枠を引く</button>
+        <button id="ckPlan" title="温度・日付・廃棄のCKを、この日の勤務者に自動で割り付ける（シフト全域タグ。時間は変えません）">CK割付</button>
+        <button id="taskPlan" title="FK/TRer/TRee/ポジションの区間タスクを原案どおり引く（そのシフトのタスクを丸ごと置換）">中身 FK/TR</button>
       </div>
       <div id="reflect" class="reflect muted">-</div>
       <div class="section-title" style="margin-top:6px">月まとめて
         <select id="reflectMonthSel" title="スキャンする月"></select>
-        <button id="reflectMonthScan" title="相違のある日を抽出し、選んだ日をまとめて反映">📅 相違日→反映</button>
-        <button id="ckMonthScan" title="CK未付与の日を抽出し、選んだ日にまとめてCK割付">🌡 CK未付与日→割付</button>
+        <button id="reflectMonthScan" title="相違のある日を抽出し、選んだ日をまとめて反映">相違日→反映</button>
+        <button id="ckMonthScan" title="CK未付与の日を抽出し、選んだ日にまとめてCK割付">CK未付与日→割付</button>
       </div>
       <div id="reflectMonth" class="reflect muted" style="display:none">-</div>
       <div id="ckMonth" class="reflect muted" style="display:none">-</div>
@@ -737,20 +754,24 @@
     if (reflectPanel.classList.contains('open')) { reflectPanel.style.right = `${right}px`; }
   }
 
+  // トグルボタンの選択中スタイル(.on)をパネルの開閉に同期する
+  const syncToggle = (btnSel, isOpen) => $(btnSel).classList.toggle('on', isOpen);
   $('#toggle').addEventListener('click', () => {
     panel.classList.toggle('open');
     localStorage.setItem('rfPanelOpen', panel.classList.contains('open') ? '1' : '0');
+    syncToggle('#toggle', panel.classList.contains('open'));
     repositionShiftPanel();
   });
-  if (localStorage.getItem('rfPanelOpen') === '1') panel.classList.add('open');
+  if (localStorage.getItem('rfPanelOpen') === '1') { panel.classList.add('open'); syncToggle('#toggle', true); }
 
   // 🔀 海賊版→らくしふ反映パネル（右寄せ・他パネルと重ならない）
   $('#reflectToggle').addEventListener('click', () => {
     reflectPanel.classList.toggle('open');
     localStorage.setItem('rfReflectOpen', reflectPanel.classList.contains('open') ? '1' : '0');
+    syncToggle('#reflectToggle', reflectPanel.classList.contains('open'));
     repositionShiftPanel();
   });
-  if (localStorage.getItem('rfReflectOpen') === '1') reflectPanel.classList.add('open');
+  if (localStorage.getItem('rfReflectOpen') === '1') { reflectPanel.classList.add('open'); syncToggle('#reflectToggle', true); }
 
   // 対象日はらくしふ画面(URLのfrom=)に完全追従（独自の日付移動は廃止）
   $('#reload').addEventListener('click', () => {
@@ -1496,10 +1517,11 @@
   $('#shiftToggle').addEventListener('click', () => {
     shiftPanel.classList.toggle('open');
     localStorage.setItem('rfShiftOpen', shiftPanel.classList.contains('open') ? '1' : '0');
+    syncToggle('#shiftToggle', shiftPanel.classList.contains('open'));
     repositionShiftPanel();
     if (shiftPanel.classList.contains('open')) scRefresh();
   });
-  if (localStorage.getItem('rfShiftOpen') === '1') { shiftPanel.classList.add('open'); }
+  if (localStorage.getItem('rfShiftOpen') === '1') { shiftPanel.classList.add('open'); syncToggle('#shiftToggle', true); }
   repositionShiftPanel();
 
   $('#scReload').addEventListener('click', scRefresh);
