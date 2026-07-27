@@ -615,9 +615,9 @@
         letter-spacing: 0; text-transform: none; }
       .section-title button:hover { border-color: var(--ink); }
       /* 反映を実行する系＝未実施のアクション。赤(アクセント)で「これから押す」と分かるように */
-      #reflectPlan, #taskPlan, #ckPlan, #reflectMonthScan, #taskMonthScan, #ckMonthScan {
+      #reflectPlan, #taskPlan, #ckPlan, #reflectMonthScan, #taskMonthScan, #ckMonthScan, #memoLE {
         border-color: var(--accent); color: var(--accent); font-weight: 600; }
-      #reflectPlan:hover, #taskPlan:hover, #ckPlan:hover, #reflectMonthScan:hover, #taskMonthScan:hover, #ckMonthScan:hover {
+      #reflectPlan:hover, #taskPlan:hover, #ckPlan:hover, #reflectMonthScan:hover, #taskMonthScan:hover, #ckMonthScan:hover, #memoLE:hover {
         background: var(--accent); color: #fff; border-color: var(--accent); }
       .section-title a#draftOpen { border: 0; color: var(--accent); text-decoration: none; }
       .section-title #draftMonth, .section-title #reflectMonthSel {
@@ -753,6 +753,9 @@
         <button id="rangeRunAll" title="指定期間を、外枠→CK→中身の順にらくしふへ反映（確定送信・削除はしません）">▶ 順に反映</button>
       </div>
       <div id="rangeRun" class="reflect muted" style="display:none">-</div>
+      <div class="section-title" style="margin-top:6px">店舗メモ</div>
+      <div style="margin:2px 0"><button id="memoLE" title="次の1週間で店舗メモが空の日に、LE客数の予測を【修正客数】###として入れる（既存メモがある日は触りません）">LE客数を店舗メモへ（次1週間・空の日）</button></div>
+      <div id="memoRun" class="reflect muted" style="display:none">-</div>
     </div>
   `;
 
@@ -3051,6 +3054,61 @@
     renderSheet();
   }
 
+  // ===== 店舗メモに「【修正客数】###」(LE客数の日予測) を入れる（次1週間・空の日だけ） =====
+  // 口: GET/POST /ajax/(admin/)dailymemos（実測で確定）。既存メモがある日は触らない。
+  const MEMO_GENRES = ['2', '3', '4', '17'];
+  async function dailyMemoMap(storeId, fromStr, toStr) {
+    const q = new URLSearchParams(); q.set('store_id', storeId);
+    for (const g of MEMO_GENRES) q.append('genre_ids[]', g);
+    q.set('from_date', fromStr); q.set('to_date', toStr);
+    const r = await fetch('/ajax/admin/dailymemos?' + q, {
+      credentials: 'include', headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (!r.ok) throw new Error(`店舗メモ取得 HTTP ${r.status}`);
+    return (await r.json()).store_memo || {};
+  }
+  async function dailyMemoPost(storeId, dateStr, text, token) {
+    const res = await fetch('/ajax/dailymemos', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
+      body: JSON.stringify({ dailymemo_id: `${dateStr}__store_memo`, store_id: +storeId, dailymemo: text }),
+    });
+    if (!res.ok) { let t = ''; try { t = await res.text(); } catch { /* noop */ } throw new Error(`HTTP ${res.status} ${t}`.slice(0, 200)); }
+    return true;
+  }
+  async function runMemoLE() {
+    const token = rfCsrf();
+    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return; }
+    const storeId = new URLSearchParams(location.search).get('s');
+    if (!storeId) { alert('store_id 不明'); return; }
+    // 次の1週間（今日から7日ぶん）
+    const days = [];
+    const b = new Date(); b.setHours(0, 0, 0, 0);
+    for (let i = 0; i < 7; i++) { const d = new Date(b); d.setDate(d.getDate() + i); days.push(d); }
+    const box = $('#memoRun'); box.style.display = ''; box.className = 'reflect';
+    box.innerHTML = '<span class="muted">店舗メモを確認中…</span>';
+    let memo;
+    try { memo = await dailyMemoMap(storeId, ymd(days[0]), ymd(days[6])); }
+    catch (e) { box.innerHTML = `<span class="err">失敗: ${esc(e.message)}</span>`; return; }
+    const btn = $('#memoLE'); if (btn) { btn.disabled = true; }
+    const lines = []; let wrote = 0; let skip = 0; let ng = 0;
+    for (const d of days) {
+      const ds = ymd(d);
+      if ((memo[ds] || '').trim()) { skip += 1; lines.push(`${ds}　既存メモあり → 触らない`); continue; }
+      let total = null;
+      try { const s = await fetchSheet(d); if (s && !s.error) total = s.hourly?.LE?.total; } catch { /* noop */ }
+      if (total == null || total === '') { skip += 1; lines.push(`${ds}　LE値なし(範囲外?) → スキップ`); continue; }
+      const text = `【修正客数】${total}`;
+      try { await dailyMemoPost(storeId, ds, text, token); wrote += 1; lines.push(`${ds}　✓ ${text}`); }
+      catch (e) { ng += 1; lines.push(`${ds}　<span style="color:var(--neg)">失敗 ${esc(e.message)}</span>`); reportReflectFailure('店舗メモ', d, { name: '', genre: 'memo', payload: { date: ds, text } }, e); }
+    }
+    box.innerHTML = `<div class="rf-warn">次の1週間、空の店舗メモに【修正客数】(LE客数)を入れました` +
+      `（書込 ${wrote} / スキップ ${skip}${ng ? ` / <span style="color:var(--neg)">失敗 ${ng}</span>` : ''}）。既存メモは触りません。</div>` +
+      lines.map((l) => `<div style="font-size:11px">${l}</div>`).join('');
+    if (btn) { btn.disabled = false; }
+  }
+
   // 対象日のCK割付プランを作る。既に付いている人はそのまま（重複して付けない）。
   async function buildCkPlan(date) {
     const [cur, siIds] = await Promise.all([fetchInstructedRaw(date), fetchSocialInsurance()]);
@@ -3697,6 +3755,7 @@
     }
   });
   $('#rangeRunAll').addEventListener('click', () => withReflectLock(runRangeAll));
+  $('#memoLE').addEventListener('click', () => withReflectLock(runMemoLE));
   $('#taskMonthScan').addEventListener('click', () => withReflectLock(scanTaskMonth));
   $('#taskMonth').addEventListener('click', (ev) => {
     if (ev.target.id === 'tmRun') { withReflectLock(runTaskMonthReflect); return; }

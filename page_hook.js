@@ -9,13 +9,10 @@
     } catch { return false; }
   };
   // らくしふの保存通信(GET以外の/ajax)を採取するための対象判定。
-  // 正確なURL・メソッド・ボディを特定して新しい反映(店舗メモ等)を作るのに使う（採取のみ）。
-  // ※調査中は全ての非GET /ajax を対象にして、未知のエンドポイント(店舗メモ)も拾えるようにする。
-  const isCapture = (method, url) => {
-    try {
-      return method && method.toUpperCase() !== 'GET' && String(url).includes('/ajax');
-    } catch { return false; }
-  };
+  // 未知のエンドポイントを特定するときだけ有効化する（通常運用では反映POSTが多発し
+  // 採取ボックスが邪魔なのでOFF）。task_assign・/schedules・/dailymemos は特定済み。
+  // 再調査時は下を `String(url).includes('/ajax')` 等に戻す。
+  const isCapture = (/* method, url */) => false;
   const capture = (method, url, body) => {
     let b = body;
     try { if (typeof b !== 'string') b = JSON.stringify(b); } catch { b = String(b); }
