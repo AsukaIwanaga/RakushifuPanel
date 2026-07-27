@@ -663,6 +663,8 @@
         color: var(--faint); cursor: default; }
       .rmday { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 12.5px; }
       .rmday .rmc { color: var(--warn); font-variant-numeric: tabular-nums; }
+      .rmday.failed { border-left: 2px solid var(--neg); padding-left: 6px; }
+      .rmday.failed .d, .rmday.failed .ckm-d { color: var(--neg); font-weight: 700; }
       .rm-stat { font-size: 11px; }
       .section-title.fold { cursor: pointer; user-select: none; }
       .unconfirmed { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -2764,6 +2766,18 @@
       matchHtml;
   }
 
+  // 反映失敗を海賊版サーバ(:8790)へ自動送信（原因調査用・義務化）。送信失敗は握りつぶす。
+  async function reportReflectFailure(kind, date, r, err) {
+    try {
+      await draftApi('/api/reflect-failure', {
+        kind, date: ymd(date), at: new Date().toISOString(), href: location.href,
+        name: r?.name || '', genre: r?.genre || '', row_kind: r?.kind || '',
+        bar_id: r?.bar_id || null, error: String(err && err.message || err || ''),
+        payload: r?.payload || r?.sched || null,
+      });
+    } catch { /* 送信失敗は無視 */ }
+  }
+
   // 1行分の実書き込み（POST=新規 / PUT=引直・休み）。DOM非依存。確定には触れない。
   async function reflectRequest(r, token) {
     const url = r.kind === 'create' ? '/ajax/admin/schedules' : `/ajax/admin/schedules/${r.bar_id}`;
@@ -2804,6 +2818,7 @@
       if (btn) { btn.textContent = '再試行'; btn.disabled = false; }
       const w = rowEl && rowEl.querySelector('.rwhat');
       if (w) w.textContent += `　→ 失敗: ${e.message}`;
+      reportReflectFailure('外枠', targetDate, r, e);
       return false;
     }
   }
@@ -2874,10 +2889,15 @@
       let ok = 0; let ng = 0;
       for (const r of s.auto) {
         if (stat) stat.textContent = `　送信中… ${ok + ng + 1}/${s.auto.length}`;
-        try { await reflectRequest(r, token); ok += 1; } catch { ng += 1; }
+        try { await reflectRequest(r, token); ok += 1; }
+        catch (e) { ng += 1; reportReflectFailure('外枠(月)', parseYmd(day), r, e); }
       }
-      if (stat) { stat.textContent = `　✓ ${ok}件${ng ? ` / 失敗${ng}` : ''}`; stat.style.color = ng ? '#b02a2a' : '#2c6e49'; }
-      const cb = $(`#reflectMonth .rm-cb[data-day="${day}"]`); if (cb) cb.checked = false;
+      if (stat) { stat.textContent = `　✓ ${ok}件${ng ? ` / 失敗${ng}` : ''}`; stat.style.color = ng ? 'var(--neg)' : 'var(--pos)'; }
+      // 失敗が無い日だけチェックを外す。失敗が残る日はチェックしたまま＝常に見える（本人指定）
+      const row = $(`#reflectMonth .rmday[data-day="${day}"]`) || (stat && stat.closest('.rmday'));
+      const cb = $(`#reflectMonth .rm-cb[data-day="${day}"]`);
+      if (ng) { if (row) row.classList.add('failed'); }
+      else if (cb) cb.checked = false;
     }
     if (runBtn) { runBtn.textContent = '完了'; }
     lastDraftDay = null;
@@ -3025,6 +3045,7 @@
       if (btn) { btn.textContent = '再試行'; btn.disabled = false; }
       const w = rowEl && rowEl.querySelector('.rwhat');
       if (w) w.textContent += `　→ 失敗: ${e.message}`;
+      reportReflectFailure('CK', targetDate, { name: r.label || '', genre: r.genre || '', kind: r.task || 'ck', bar_id: r.bar && r.bar.id, payload: null }, e);
       return false;
     }
   }
@@ -3080,10 +3101,13 @@
       let ok = 0; let ng = 0;
       for (const r of s.todo) {
         if (stat) stat.textContent = `　送信中… ${ok + ng + 1}/${s.todo.length}`;
-        try { await ckRequest(r.bar, r.task, token); ok += 1; } catch { ng += 1; }
+        try { await ckRequest(r.bar, r.task, token); ok += 1; }
+        catch (e) { ng += 1; reportReflectFailure('CK(月)', parseYmd(day), { name: '', genre: '', kind: r.task, bar_id: r.bar && r.bar.id, payload: null }, e); }
       }
-      if (stat) { stat.textContent = `　✓ ${ok}件${ng ? ` / 失敗${ng}` : ''}`; stat.style.color = ng ? '#b02a2a' : '#2c6e49'; }
-      const cb = $(`#ckMonth .ckm-cb[data-day="${day}"]`); if (cb) cb.checked = false;
+      if (stat) { stat.textContent = `　✓ ${ok}件${ng ? ` / 失敗${ng}` : ''}`; stat.style.color = ng ? 'var(--neg)' : 'var(--pos)'; }
+      const cb = $(`#ckMonth .ckm-cb[data-day="${day}"]`);
+      if (ng) { const row = stat && stat.closest('.rmday'); if (row) row.classList.add('failed'); }
+      else if (cb) cb.checked = false;
     }
     if (runBtn) runBtn.textContent = '完了';
     renderSheet();
@@ -3252,6 +3276,7 @@
       if (rowEl) rowEl.classList.add('err');
       if (btn) { btn.textContent = '再試行'; btn.disabled = false; }
       const w = rowEl && rowEl.querySelector('.rwhat'); if (w) w.textContent += `　→ 失敗: ${e.message}`;
+      reportReflectFailure('中身', targetDate, r, e);
       return false;
     }
   }
