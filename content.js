@@ -487,7 +487,7 @@
       #reflectPanel .rp-head { display: flex; align-items: baseline; gap: 12px;
         border-bottom: 2px solid var(--ink); padding: 15px 0 10px; margin-bottom: 4px;
         position: sticky; top: 0; background: var(--panel); z-index: 1; }
-      #reflectPanel .rp-head b { font-size: 16px; font-weight: 600; color: var(--ink); }
+      #reflectPanel .rp-head b { font-size: 16px; font-weight: 600; color: var(--ink); white-space: nowrap; }
       #reflectPanel .rp-head .muted { color: var(--faint); }
       #rfCapBox { border: 0; border-left: 2px solid var(--accent); background: transparent; border-radius: 0;
         padding: 4px 0 4px 9px; margin-bottom: 8px; }
@@ -502,7 +502,7 @@
       #shiftPanel.open { display: block; }
       .sc-head { display: flex; gap: 7px; align-items: baseline; margin-bottom: 12px; flex-wrap: wrap;
         border-bottom: 2px solid var(--ink); padding-bottom: 10px; }
-      .sc-head b { flex: 1; font-size: 16px; font-weight: 600; }
+      .sc-head b { flex: 1 0 auto; font-size: 16px; font-weight: 600; white-space: nowrap; }
       #scDetectBox { border: 0; border-left: 2px solid var(--warn); background: transparent; border-radius: 0;
         padding: 4px 0 4px 9px; margin-bottom: 10px; font-size: 12px; }
       .sc-detect-head { font-weight: 600; margin-bottom: 4px; }
@@ -573,7 +573,7 @@
       #panel.open { display: block; }
       .nav { display: flex; align-items: center; gap: 7px; padding: 13px 0 10px; margin-bottom: 10px;
         border-bottom: 2px solid var(--ink); position: sticky; top: 0; background: var(--panel); z-index: 1; }
-      .nav b { flex: 1; text-align: left; font-size: 16px; font-weight: 600; }
+      .nav b { flex: 1 0 auto; text-align: left; font-size: 16px; font-weight: 600; white-space: nowrap; }
       .nav button {
         border: 1px solid var(--line2); background: var(--panel); border-radius: 0;
         cursor: pointer; padding: 4px 11px; font-size: 12px; color: var(--ink);
@@ -676,9 +676,9 @@
       .tasks .task.ext .tid { color: var(--warn); border-color: var(--warn); background: transparent; }
       .tasks .task .tnote { color: var(--faint); font-size: 11px; }
     </style>
-    <button id="toggle" title="客数予測パネル"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="badge" id="badge"></span></button>
-    <button id="shiftToggle" title="シフト変更依頼"><svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span class="badge" id="shiftBadge"></span></button>
-    <button id="reflectToggle" title="海賊版らくしふ → らくしふへ反映"><svg viewBox="0 0 24 24"><path d="M3 6h13M3 6l3-3M3 6l3 3M21 18H8M21 18l-3-3M21 18l-3 3"/></svg></button>
+    <button id="toggle" title="客数予測パネル（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="badge" id="badge"></span></button>
+    <button id="shiftToggle" title="シフト変更依頼（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span class="badge" id="shiftBadge"></span></button>
+    <button id="reflectToggle" title="海賊版らくしふ → らくしふへ反映（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M3 6h13M3 6l3-3M3 6l3 3M21 18H8M21 18l-3-3M21 18l-3 3"/></svg></button>
     <button id="rfUpdate" style="display:none"></button>
     <div id="shiftPanel">
       <div class="sc-head">
@@ -758,21 +758,32 @@
 
   // トグルボタンの選択中スタイル(.on)をパネルの開閉に同期する
   const syncToggle = (btnSel, isOpen) => $(btnSel).classList.toggle('on', isOpen);
-  $('#toggle').addEventListener('click', () => {
-    panel.classList.toggle('open');
+  // 3パネルは既定で「どれか1つだけ表示」。Shift+クリックのときだけ他を閉じず複数表示。
+  const PANELS = { '#toggle': () => panel, '#shiftToggle': () => shiftPanel, '#reflectToggle': () => reflectPanel };
+  const persistPanels = () => {
     localStorage.setItem('rfPanelOpen', panel.classList.contains('open') ? '1' : '0');
+    localStorage.setItem('rfShiftOpen', shiftPanel.classList.contains('open') ? '1' : '0');
+    localStorage.setItem('rfReflectOpen', reflectPanel.classList.contains('open') ? '1' : '0');
     syncToggle('#toggle', panel.classList.contains('open'));
+    syncToggle('#shiftToggle', shiftPanel.classList.contains('open'));
+    syncToggle('#reflectToggle', reflectPanel.classList.contains('open'));
+  };
+  function clickTogglePanel(sel, ev) {
+    const p = PANELS[sel]();
+    const willOpen = !p.classList.contains('open');
+    if (!ev.shiftKey) {                       // 単独表示: 他の2つを閉じる
+      for (const s of Object.keys(PANELS)) { if (s !== sel) PANELS[s]().classList.remove('open'); }
+    }
+    p.classList.toggle('open', willOpen);
+    persistPanels();
     repositionShiftPanel();
-  });
+    if (sel === '#shiftToggle' && shiftPanel.classList.contains('open')) scRefresh();
+  }
+  $('#toggle').addEventListener('click', (ev) => clickTogglePanel('#toggle', ev));
   if (localStorage.getItem('rfPanelOpen') === '1') { panel.classList.add('open'); syncToggle('#toggle', true); }
 
   // 🔀 海賊版→らくしふ反映パネル（右寄せ・他パネルと重ならない）
-  $('#reflectToggle').addEventListener('click', () => {
-    reflectPanel.classList.toggle('open');
-    localStorage.setItem('rfReflectOpen', reflectPanel.classList.contains('open') ? '1' : '0');
-    syncToggle('#reflectToggle', reflectPanel.classList.contains('open'));
-    repositionShiftPanel();
-  });
+  $('#reflectToggle').addEventListener('click', (ev) => clickTogglePanel('#reflectToggle', ev));
   if (localStorage.getItem('rfReflectOpen') === '1') { reflectPanel.classList.add('open'); syncToggle('#reflectToggle', true); }
 
   // 対象日はらくしふ画面(URLのfrom=)に完全追従（独自の日付移動は廃止）
@@ -1516,13 +1527,7 @@
     }
   }
 
-  $('#shiftToggle').addEventListener('click', () => {
-    shiftPanel.classList.toggle('open');
-    localStorage.setItem('rfShiftOpen', shiftPanel.classList.contains('open') ? '1' : '0');
-    syncToggle('#shiftToggle', shiftPanel.classList.contains('open'));
-    repositionShiftPanel();
-    if (shiftPanel.classList.contains('open')) scRefresh();
-  });
+  $('#shiftToggle').addEventListener('click', (ev) => clickTogglePanel('#shiftToggle', ev));
   if (localStorage.getItem('rfShiftOpen') === '1') { shiftPanel.classList.add('open'); syncToggle('#shiftToggle', true); }
   repositionShiftPanel();
 
