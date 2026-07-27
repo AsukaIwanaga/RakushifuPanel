@@ -2127,6 +2127,8 @@
     // タスク割当保存の採取（中身の反映を作るための一時機能）。反映パネルに出す。
     if (ev.data?.__rfCapture) {
       const c = ev.data.__rfCapture;
+      // 採取をShiftDraftへ転送（Claudeがログでエンドポイントを特定できるように）。反映失敗と同じ仕組み。
+      try { draftApi('/api/reflect-capture', { method: c.method, url: c.url, body: c.body, at: new Date().toISOString(), href: location.href }); } catch { /* noop */ }
       const box = $('#rfCapBox');
       if (box) {
         box.style.display = '';

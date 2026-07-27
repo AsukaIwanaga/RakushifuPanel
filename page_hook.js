@@ -8,13 +8,12 @@
       return method && method.toUpperCase() !== 'GET' && String(url).includes('/ajax');
     } catch { return false; }
   };
-  // タスク割当(ポジション/固定作業)の保存通信を1回採取するための対象判定。
-  // 正確なURL・メソッド・ボディを特定して「中身の反映」を作るのに使う（採取のみ）。
+  // らくしふの保存通信(GET以外の/ajax)を採取するための対象判定。
+  // 正確なURL・メソッド・ボディを特定して新しい反映(店舗メモ等)を作るのに使う（採取のみ）。
+  // ※調査中は全ての非GET /ajax を対象にして、未知のエンドポイント(店舗メモ)も拾えるようにする。
   const isCapture = (method, url) => {
     try {
-      const u = String(url);
-      return method && method.toUpperCase() !== 'GET'
-        && (u.includes('task_assign') || u.includes('/schedules'));
+      return method && method.toUpperCase() !== 'GET' && String(url).includes('/ajax');
     } catch { return false; }
   };
   const capture = (method, url, body) => {
