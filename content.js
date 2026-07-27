@@ -466,7 +466,15 @@
         border-radius: 0; background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
         line-height: 17px; padding: 0 4px; display: none;
       }
-      @media print { #reflectToggle, #reflectPanel { display: none !important; } }
+      /* 更新ボタン：更新が来ていたら常に画面上部に出す（トグルの左隣・赤で目立たせる） */
+      #rfUpdate {
+        position: fixed; top: 12px; right: 158px; z-index: 2147483646; height: 42px;
+        border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 0;
+        cursor: pointer; padding: 0 14px; font-size: 12.5px; font-weight: 600; letter-spacing: .01em;
+        box-shadow: 0 2px 10px rgba(211,64,42,.35); white-space: nowrap;
+      }
+      #rfUpdate:hover { filter: brightness(1.07); }
+      @media print { #reflectToggle, #reflectPanel, #rfUpdate { display: none !important; } }
       #reflectPanel {
         position: fixed; right: 12px; top: 62px; z-index: 2147483647;
         width: 468px; max-width: calc(100vw - 24px);
@@ -671,6 +679,7 @@
     <button id="toggle" title="客数予測パネル"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="badge" id="badge"></span></button>
     <button id="shiftToggle" title="シフト変更依頼"><svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span class="badge" id="shiftBadge"></span></button>
     <button id="reflectToggle" title="海賊版らくしふ → らくしふへ反映"><svg viewBox="0 0 24 24"><path d="M3 6h13M3 6l3-3M3 6l3 3M21 18H8M21 18l-3-3M21 18l-3 3"/></svg></button>
+    <button id="rfUpdate" style="display:none"></button>
     <div id="shiftPanel">
       <div class="sc-head">
         <b>シフト変更依頼</b>
@@ -691,7 +700,6 @@
         <b id="dateLabel">-</b>
         <button id="reqBasis" title="必要人数(REQ)の基準を切り替え。LE=客数から算出 / モデルWS=モデルWSの計画人数">基準: LE</button>
         <select id="wsTplSel" title="この日に適用するモデルWS型。自動=曜日割当に従う（変更はLE Makerのparams.jsonに保存＝海賊版と共通）"></select>
-        <button id="rfUpdate" style="display:none"></button>
         <button id="reload" class="accent">更新</button>
         <span id="ver" class="muted"></span>
       </div>
