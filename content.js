@@ -3184,17 +3184,24 @@
       : null);
     const nameOf = {};
     for (const uu of (cur.users || [])) nameOf[uu.id] = (uu.name || '').replace(/\s+/g, ' ').trim();
+    // 区間タスクid: role(TRer/TRee) → task名 → genre名。ベース区分(F/K)と同じなら重ね不要=null。
+    const FID = nameToId.F, KID = nameToId.K, FKID = nameToId.FK;
     // 原案を (user, らくしふ区分) にまとめる。FKは直前のラインに従う（外枠と同じ寄せ方）
     const resolveGid = buildGidResolver(draftR.data.assignments || [], mapGenre);
     const byUG = {};
     for (const a of (draftR.data.assignments || [])) {
       if (a.e <= a.s) continue;
-      const gid = resolveGid(a);
+      let gid = resolveGid(a);
+      if (!gid) {
+        // 非生産/MGT等でも、固定作業のタスクがらくしふタスクに解決できるなら本人のベースF/K線へ
+        // 乗せる（例: スタンバイ・勉強会・商品管理）。素のF/K/FKは対象外（外枠が持つ）。
+        const tid = taskNameToId(a.role) || taskNameToId(a.task);
+        const bg = baseGenre[a.user_id];
+        if (tid && ![FID, KID, FKID].includes(tid) && (bg === 2 || bg === 3)) gid = bg;
+      }
       if (!gid) continue;
       (byUG[`${a.user_id}:${gid}`] ||= []).push(a);
     }
-    // 区間タスクid: role(TRer/TRee) → task名 → genre名。ベース区分(F/K)と同じなら重ね不要=null。
-    const FID = nameToId.F, KID = nameToId.K;
     const overlayId = (seg, baseGid) => {
       let id = taskNameToId(seg.role) || taskNameToId(seg.task) || taskNameToId(seg.genre);
       if (!id) return null;
@@ -3219,9 +3226,10 @@
         .filter((r) => Array.isArray(r) && r.length === 2 && r[1] > r[0]
           && !rseen.has(`${r[0]}-${r[1]}`) && rseen.add(`${r[0]}-${r[1]}`))
         .sort((a, b) => a[0] - b[0]);
-      // 区間[s,e]から休憩区間を差し引く（休憩に食い込むタスクは分割・除去）
+      // 区間[s,e]をまず らくしふシフト範囲へ丸める（出勤前スタンバイ等シフト外は落とす＝400防止）、
+      // その上で休憩区間を差し引く（休憩に食い込むタスクは分割・除去）。
       const clip = (s0, e0) => {
-        let parts = [[s0, e0]];
+        let parts = [[Math.max(s0, s.start_as_min), Math.min(e0, s.end_as_min)]];
         for (const [rs, re] of dRests) {
           const nx = [];
           for (const [a, b] of parts) {
