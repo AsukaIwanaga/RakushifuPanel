@@ -2078,9 +2078,12 @@
       const box = $('#rfCapBox');
       if (box) {
         box.style.display = '';
-        box.innerHTML = '<div style="font-weight:700;color:#0e7490">📥 保存通信を採取（コピーして共有してください）</div>' +
-          `<div style="font-size:11px;margin:2px 0"><b>${esc(c.method)}</b> ${esc(c.url)}</div>` +
-          `<textarea readonly style="width:100%;height:90px;font-size:11px;box-sizing:border-box">${esc(c.body || '')}</textarea>`;
+        // URLも本文と一緒にコピーできるよう、テキスト欄に「METHOD URL / body」でまとめて入れる
+        const dump = `${c.method} ${c.url}\n\n${c.body || ''}`;
+        box.innerHTML = '<div style="font-weight:700;color:#0e7490">📥 保存通信を採取</div>' +
+          '<div style="font-size:11px;margin:2px 0">下の枠を<b>全部コピー</b>して貼ってください（URLも入っています）</div>' +
+          `<textarea readonly style="width:100%;height:110px;font-size:11px;box-sizing:border-box">${esc(dump)}</textarea>` +
+          '<div style="margin-top:3px"><button id="rfCapCopy">📋 全部コピー</button></div>';
       }
       return;
     }
@@ -3199,6 +3202,15 @@
       cbs.forEach((c) => { c.checked = !anyOn; });
       ev.target.textContent = anyOn ? '全選択' : '全解除';
     }
+  });
+  $('#rfCapBox').addEventListener('click', (ev) => {
+    if (ev.target.id !== 'rfCapCopy') return;
+    const ta = $('#rfCapBox textarea');
+    if (!ta) return;
+    ta.select();
+    navigator.clipboard.writeText(ta.value).then(
+      () => { ev.target.textContent = '✓ コピーした'; },
+      () => { try { document.execCommand('copy'); ev.target.textContent = '✓ コピーした'; } catch { /* noop */ } });
   });
   $('#ckMonthScan').addEventListener('click', scanCkMonth);
   $('#ckMonth').addEventListener('click', (ev) => {
