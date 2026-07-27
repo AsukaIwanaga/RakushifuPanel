@@ -481,8 +481,8 @@
         position: sticky; top: 0; background: var(--panel); z-index: 1; }
       #reflectPanel .rp-head b { font-size: 16px; font-weight: 600; color: var(--ink); }
       #reflectPanel .rp-head .muted { color: var(--faint); }
-      #rfCapBox { border: 1px solid #0e7490; background: #ecfeff; border-radius: 6px;
-        padding: 6px 8px; margin-bottom: 6px; }
+      #rfCapBox { border: 0; border-left: 2px solid var(--accent); background: transparent; border-radius: 0;
+        padding: 4px 0 4px 9px; margin-bottom: 8px; }
       #shiftPanel {
         position: fixed; right: 60px; top: 62px; z-index: 2147483647;
         width: 490px; max-width: calc(100vw - 24px);
@@ -495,68 +495,62 @@
       .sc-head { display: flex; gap: 7px; align-items: baseline; margin-bottom: 12px; flex-wrap: wrap;
         border-bottom: 2px solid var(--ink); padding-bottom: 10px; }
       .sc-head b { flex: 1; font-size: 16px; font-weight: 600; }
-      #scDetectBox { border: 1px solid #f0c36d; background: #fffbef; border-radius: 6px;
-        padding: 6px 8px; margin-bottom: 8px; font-size: 12px; }
-      .sc-detect-head { font-weight: 700; margin-bottom: 4px; }
-      #scDraftAll { font-size: 11px; padding: 1px 10px; border-radius: 5px;
-        border: 1px solid #d97706; background: #d97706; color: #fff; cursor: pointer; }
-      .sc-drow { display: flex; align-items: center; gap: 6px; padding: 3px 0;
-        border-top: 1px dotted #eadfbf; }
-      .sc-drow .sc-dwho { flex: 0 0 auto; font-weight: 700; min-width: 76px; }
-      .sc-drow .sc-dwhat { flex: 1 1 auto; color: #7a5b12; }
-      .sc-drow.dup { opacity: .55; }
-      .sc-drow.err .sc-dwhat { color: #b02a2a; }
-      .sc-draft { flex: 0 0 auto; font-size: 11px; padding: 1px 9px; border-radius: 5px;
-        border: 1px solid #d97706; background: #d97706; color: #fff; cursor: pointer; }
-      .sc-draft[disabled] { border-color: #ccc; background: #eee; color: #999; cursor: default; }
+      #scDetectBox { border: 0; border-left: 2px solid var(--warn); background: transparent; border-radius: 0;
+        padding: 4px 0 4px 9px; margin-bottom: 10px; font-size: 12px; }
+      .sc-detect-head { font-weight: 600; margin-bottom: 4px; }
+      #scDraftAll { font-size: 11px; font-weight: 600; padding: 3px 12px; border-radius: 0;
+        border: 1px solid var(--ink); background: var(--ink); color: var(--panel); cursor: pointer; }
+      .sc-drow { display: flex; align-items: baseline; gap: 8px; padding: 6px 0;
+        border-top: 1px solid var(--line); }
+      .sc-drow .sc-dwho { flex: 0 0 auto; font-weight: 500; min-width: 76px; }
+      .sc-drow .sc-dwhat { flex: 1 1 auto; color: var(--ink2); }
+      .sc-drow.dup { opacity: .5; }
+      .sc-drow.err .sc-dwhat { color: var(--neg); }
+      .sc-draft { flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 1px 2px; border-radius: 0;
+        border: 0; background: none; color: var(--accent); cursor: pointer; }
+      .sc-draft[disabled] { color: var(--faint); cursor: default; }
       .sc-head button {
-        border: 1px solid #ccc; background: #f5f5f5; border-radius: 5px;
-        cursor: pointer; padding: 4px 10px; font-size: 14px;
+        border: 1px solid var(--line2); background: var(--panel); border-radius: 0;
+        cursor: pointer; padding: 4px 10px; font-size: 12px; color: var(--ink);
       }
-      .sc-head button.on { background: #6b46a8; color: #fff; border-color: #6b46a8; }
-      .sc-card { border: 1px solid #e2e2e2; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
-      .sc-card.done { opacity: .55; }
-      .sc-title { font-weight: 700; font-size: 15px; }
-      .sc-title .undone { color: #b02a2a; }
-      .sc-meta { color: #888; font-size: 13px; font-weight: 400; }
-      .sc-checks { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0; }
-      .sc-checks label { font-size: 14px; display: flex; gap: 5px; align-items: center; cursor: pointer; }
-      .sc-checks input { width: 15px; height: 15px; }
-      .sc-notes { color: #777; font-size: 13px; margin: 3px 0; }
-      .sc-note-input { display: flex; gap: 4px; margin-top: 4px; }
-      .sc-note-input input { flex: 1; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; font-size: 14px; }
+      .sc-head button:hover { border-color: var(--ink); }
+      .sc-head button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); font-weight: 600; }
+      .sc-card { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 11px 0; margin-bottom: 0; }
+      .sc-card.done { opacity: .5; }
+      .sc-title { font-weight: 600; font-size: 14px; }
+      .sc-title .undone { color: var(--neg); font-weight: 600; }
+      .sc-meta { color: var(--faint); font-size: 12px; font-weight: 400; }
+      .sc-checks { display: flex; flex-wrap: wrap; gap: 5px 16px; margin: 8px 0; }
+      .sc-checks label { font-size: 12.5px; display: flex; gap: 6px; align-items: center; cursor: pointer; color: var(--ink2); }
+      .sc-checks input { width: 14px; height: 14px; accent-color: var(--accent); }
+      .sc-notes { color: var(--faint); font-size: 12px; margin: 3px 0; }
+      .sc-note-input { display: flex; gap: 5px; margin-top: 5px; }
+      .sc-note-input input { flex: 1; border: 1px solid var(--line2); border-radius: 0; padding: 4px 8px; font-size: 13px; background: var(--panel); color: var(--ink); }
       .sc-note-input button, #scNewForm button {
-        border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer;
-        padding: 3px 10px; font-size: 14px;
+        border: 1px solid var(--line2); background: var(--panel); border-radius: 0; cursor: pointer;
+        padding: 3px 11px; font-size: 12.5px; color: var(--ink);
       }
-      .sc-del-btn { float: right; border: none; background: none; cursor: pointer; font-size: 13px; opacity: .5; padding: 0 2px; }
-      .sc-del-btn:hover { opacity: 1; }
-      .sc-rej-btn { float: right; border: none; background: none; cursor: pointer; font-size: 13px; opacity: .5; padding: 0 2px; }
-      .sc-rej-btn:hover { opacity: 1; }
-      .sc-edit-btn { float: right; border: none; background: none; cursor: pointer; font-size: 12px; opacity: .5; padding: 0 2px; }
-      .sc-edit-btn:hover { opacity: 1; }
-      .sc-edit-form { border: 1px dashed #b9a3dd; border-radius: 8px; padding: 6px; margin: 4px 0; }
-      .sc-edit-form input { width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; font-size: 14px; margin-bottom: 4px; box-sizing: border-box; }
-      .sc-edit-form .sc-edit-do { border: 1px solid #6b46a8; background: #6b46a8; color: #fff; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
-      .sc-edit-form .sc-edit-cancel { border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
-      .sc-reqtime { font-size: 13px; color: #444; margin-bottom: 4px; display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
-      #scNewForm select.rf-tsel, .sc-edit-form select.rf-tsel { width: auto !important; min-width: 44px; padding: 3px 4px; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; margin: 0; background: #fff; }
-      .sc-unrej-btn { float: right; border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; font-size: 11px; padding: 1px 6px; }
-      .sc-title .rejected { color: #6b7280; }
-      .sc-title .sc-nodate { font-size: 10px; font-weight: 700; color: #b45309; background: #fdf3e3;
-        border: 1px solid #e8cfa4; border-radius: 4px; padding: 1px 4px; white-space: nowrap; }
-      .sc-rej-form { display: flex; gap: 4px; margin-top: 4px; }
-      .sc-rej-form input { flex: 1; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px; font-size: 14px; }
-      .sc-rej-form .sc-rej-do { border: 1px solid #6b7280; background: #6b7280; color: #fff; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
-      .sc-rej-form .sc-rej-cancel { border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
-      .sc-del-form { display: flex; gap: 4px; margin-top: 4px; }
-      .sc-del-form input { flex: 1; border: 1px solid #d99; border-radius: 4px; padding: 4px 8px; font-size: 14px; }
-      .sc-del-form .sc-del-do { border: 1px solid #c0392b; background: #c0392b; color: #fff; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
-      .sc-del-form .sc-del-cancel { border: 1px solid #ccc; background: #f5f5f5; border-radius: 4px; cursor: pointer; padding: 3px 10px; font-size: 14px; }
-      #scNewForm { border: 1px dashed #b9a3dd; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+      .sc-del-btn, .sc-rej-btn, .sc-edit-btn { float: right; border: none; background: none; cursor: pointer; font-size: 12px; opacity: .5; padding: 0 2px; }
+      .sc-del-btn:hover, .sc-rej-btn:hover, .sc-edit-btn:hover { opacity: 1; }
+      .sc-edit-form { border: 0; border-left: 2px solid var(--line2); border-radius: 0; padding: 4px 0 4px 10px; margin: 6px 0; }
+      .sc-edit-form input { width: 100%; border: 1px solid var(--line2); border-radius: 0; padding: 4px 8px; font-size: 13px; margin-bottom: 5px; box-sizing: border-box; background: var(--panel); color: var(--ink); }
+      .sc-edit-form .sc-edit-do { border: 1px solid var(--ink); background: var(--ink); color: var(--panel); border-radius: 0; cursor: pointer; padding: 3px 11px; font-size: 12.5px; }
+      .sc-edit-form .sc-edit-cancel { border: 1px solid var(--line2); background: var(--panel); border-radius: 0; cursor: pointer; padding: 3px 11px; font-size: 12.5px; color: var(--ink); }
+      .sc-reqtime { font-size: 12.5px; color: var(--ink2); margin-bottom: 5px; display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+      #scNewForm select.rf-tsel, .sc-edit-form select.rf-tsel { width: auto !important; min-width: 44px; padding: 3px 4px; font-size: 13px; border: 1px solid var(--line2); border-radius: 0; margin: 0; background: var(--panel); color: var(--ink); }
+      .sc-unrej-btn { float: right; border: 1px solid var(--line2); background: var(--panel); border-radius: 0; cursor: pointer; font-size: 11px; padding: 1px 7px; color: var(--ink); }
+      .sc-title .rejected { color: var(--mut); }
+      .sc-title .sc-nodate { font-size: 10px; font-weight: 700; color: var(--warn); background: transparent;
+        border: 1px solid var(--warn); border-radius: 0; padding: 1px 4px; white-space: nowrap; }
+      .sc-rej-form, .sc-del-form { display: flex; gap: 5px; margin-top: 5px; }
+      .sc-rej-form input, .sc-del-form input { flex: 1; border: 1px solid var(--line2); border-radius: 0; padding: 4px 8px; font-size: 13px; background: var(--panel); color: var(--ink); }
+      .sc-rej-form .sc-rej-do { border: 1px solid var(--mut); background: var(--mut); color: #fff; border-radius: 0; cursor: pointer; padding: 3px 11px; font-size: 12.5px; }
+      .sc-del-form .sc-del-do { border: 1px solid var(--neg); background: var(--neg); color: #fff; border-radius: 0; cursor: pointer; padding: 3px 11px; font-size: 12.5px; }
+      .sc-rej-form .sc-rej-cancel, .sc-del-form .sc-del-cancel { border: 1px solid var(--line2); background: var(--panel); border-radius: 0; cursor: pointer; padding: 3px 11px; font-size: 12.5px; color: var(--ink); }
+      #scNewForm { border: 0; border-left: 2px solid var(--line2); border-radius: 0; padding: 4px 0 6px 10px; margin-bottom: 10px; }
       #scNewForm input, #scNewForm select {
-        width: 100%; border: 1px solid #ccc; border-radius: 4px; padding: 4px 8px;
-        font-size: 14px; margin-bottom: 4px; background: #fff;
+        width: 100%; border: 1px solid var(--line2); border-radius: 0; padding: 4px 8px;
+        font-size: 13px; margin-bottom: 5px; background: var(--panel); color: var(--ink);
       }
       @media print { #shiftToggle, #shiftPanel { display: none !important; } }
       #panel {
@@ -658,21 +652,21 @@
       .rmday .rmc { color: var(--warn); font-variant-numeric: tabular-nums; }
       .rm-stat { font-size: 11px; }
       .section-title.fold { cursor: pointer; user-select: none; }
-      .unconfirmed { display: flex; flex-wrap: wrap; gap: 4px; }
+      .unconfirmed { display: flex; flex-wrap: wrap; gap: 5px; }
       .unconfirmed .day {
-        background: #fdecec; color: #b02a2a; border: 1px solid #e8b4b4;
-        border-radius: 5px; padding: 2px 7px;
+        background: transparent; color: var(--neg); border: 1px solid var(--neg);
+        border-radius: 0; padding: 2px 8px; font-variant-numeric: tabular-nums;
       }
-      .allok { color: #2c6e49; font-weight: 600; }
-      .err { color: #b02a2a; }
-      .muted { color: #888; font-size: 12px; }
-      .tasks .task { display: flex; gap: 6px; padding: 2px 0; border-bottom: 1px dotted #eee; align-items: flex-start; }
+      .allok { color: var(--pos); font-weight: 600; }
+      .err { color: var(--neg); }
+      .muted { color: var(--faint); font-size: 12px; }
+      .tasks .task { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--line); align-items: flex-start; }
       .tasks .task .tid {
-        flex: 0 0 auto; font-weight: 700; color: #2c6e49; font-size: 12px;
-        background: #eef4f0; border-radius: 4px; padding: 0 5px; align-self: center;
+        flex: 0 0 auto; font-weight: 600; color: var(--ink2); font-size: 11px;
+        background: transparent; border: 1px solid var(--line2); border-radius: 0; padding: 0 5px; align-self: center;
       }
-      .tasks .task.ext .tid { color: #a15c00; background: #fdf3e3; }
-      .tasks .task .tnote { color: #888; font-size: 11px; }
+      .tasks .task.ext .tid { color: var(--warn); border-color: var(--warn); background: transparent; }
+      .tasks .task .tnote { color: var(--faint); font-size: 11px; }
     </style>
     <button id="toggle" title="客数予測パネル"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="badge" id="badge"></span></button>
     <button id="shiftToggle" title="シフト変更依頼"><svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span class="badge" id="shiftBadge"></span></button>
