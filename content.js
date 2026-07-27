@@ -624,11 +624,13 @@
         margin-left: 2px; font-size: 11px; font-weight: 400; padding: 2px 4px;
         border: 1px solid var(--line2); border-radius: 0; background: var(--panel); color: var(--ink); }
       /* 一括実行系＝主アクション（インク塗り） */
-      #ckAll, #reflectAll, #taskAll, #rmRun, #tmRun, #ckmRun {
+      #ckAll, #reflectAll, #taskAll, #rmRun, #tmRun, #ckmRun, #rangeRunAll {
         font-size: 11px; font-weight: 600; padding: 3px 12px; border-radius: 0;
         border: 1px solid var(--ink); background: var(--ink); color: var(--panel); cursor: pointer; }
-      #ckAll[disabled], #reflectAll[disabled], #taskAll[disabled], #rmRun[disabled], #tmRun[disabled], #ckmRun[disabled] {
+      #ckAll[disabled], #reflectAll[disabled], #taskAll[disabled], #rmRun[disabled], #tmRun[disabled], #ckmRun[disabled], #rangeRunAll[disabled] {
         border-color: var(--line2); background: var(--line); color: var(--faint); }
+      .rf-date { font-size: 11px; padding: 2px 4px; border: 1px solid var(--line2); border-radius: 0;
+        background: var(--panel); color: var(--ink); font-family: inherit; }
       #rmAllToggle, #tmAllToggle, #ckmAllToggle {
         font-size: 11px; padding: 2px 9px; border-radius: 0; border: 1px solid var(--line2);
         background: var(--panel); color: var(--ink); cursor: pointer; }
@@ -743,6 +745,14 @@
       <div id="reflectMonth" class="reflect muted" style="display:none">-</div>
       <div id="taskMonth" class="reflect muted" style="display:none">-</div>
       <div id="ckMonth" class="reflect muted" style="display:none">-</div>
+      <div class="section-title" style="margin-top:6px">期間まとめて（外枠→CK→中身の順）</div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:2px 0">
+        <input type="date" id="rangeFrom" class="rf-date">
+        <span style="font-size:11px;color:var(--ink2)">〜</span>
+        <input type="date" id="rangeTo" class="rf-date">
+        <button id="rangeRunAll" title="指定期間を、外枠→CK→中身の順にらくしふへ反映（確定送信・削除はしません）">▶ 順に反映</button>
+      </div>
+      <div id="rangeRun" class="reflect muted" style="display:none">-</div>
     </div>
   `;
 
@@ -2978,6 +2988,67 @@
     renderSheet();
   }
 
+  // ===== 期間まとめて：指定期間を「外枠→CK→中身」の順にらくしふへ反映 =====
+  // 各フェーズは日ごとにその都度らくしふをGETしてプランを組む（外枠反映で変わった状態を
+  // CK/中身が正しく参照できるよう、フェーズを跨いで最新を取り直す）。確定送信・削除はしない。
+  const rangeDays = (from, to) => {
+    const out = []; const d = parseYmd(from); const end = parseYmd(to);
+    while (d <= end) { out.push(ymd(d)); d.setDate(d.getDate() + 1); }
+    return out;
+  };
+  async function runRangeAll() {
+    const token = rfCsrf();
+    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return; }
+    const from = $('#rangeFrom').value; const to = $('#rangeTo').value;
+    if (!from || !to) { alert('期間（開始・終了）を指定してください。'); return; }
+    if (from > to) { alert('開始日が終了日より後になっています。'); return; }
+    const days = rangeDays(from, to);
+    if (days.length > 62) { alert('期間が長すぎます（62日以内で指定してください）。'); return; }
+    if (!confirm(`${from} 〜 ${to}（${days.length}日）を\n① 外枠 → ② CK → ③ 中身 の順にらくしふへ反映します。\nよろしいですか？（確定送信・削除はしません）`)) return;
+    const box = $('#rangeRun'); box.style.display = ''; box.className = 'reflect';
+    const btn = $('#rangeRunAll'); if (btn) { btn.disabled = true; }
+    const done = [];
+    const paint = (cur) => { box.innerHTML = done.map((l) => `<div>${l}</div>`).join('') + (cur ? `<div class="muted">${cur}</div>` : ''); };
+    // ① 外枠
+    let ok = 0; let ng = 0;
+    for (let i = 0; i < days.length; i++) {
+      paint(`① 外枠 反映中… ${i + 1}/${days.length}日（${ok}件${ng ? ` / 失敗${ng}` : ''}）`);
+      let rows; try { rows = await buildReflectPlan(parseYmd(days[i])); } catch { continue; }
+      for (const r of rows.filter((x) => !x.manual && x.kind !== 'match')) {
+        try { await reflectRequest(r, token); ok += 1; }
+        catch (e) { ng += 1; reportReflectFailure('外枠(期間)', parseYmd(days[i]), r, e); }
+      }
+    }
+    done.push(`① 外枠: ${ok}件${ng ? ` / <span style="color:var(--neg)">失敗${ng}</span>` : ' ✓'}`);
+    // ② CK
+    ok = 0; ng = 0;
+    for (let i = 0; i < days.length; i++) {
+      paint(`② CK 割付中… ${i + 1}/${days.length}日（${ok}件${ng ? ` / 失敗${ng}` : ''}）`);
+      let res; try { res = await buildCkPlan(parseYmd(days[i])); } catch { continue; }
+      for (const x of (res.plan || []).filter((y) => y.bar && !y.already)) {
+        try { await ckRequest(x.bar, x.task, token); ok += 1; }
+        catch (e) { ng += 1; reportReflectFailure('CK(期間)', parseYmd(days[i]), { name: res.nameOf?.[x.bar?.user_id] || '', genre: 'CK', kind: x.task, bar_id: x.bar?.id }, e); }
+      }
+    }
+    done.push(`② CK: ${ok}件${ng ? ` / <span style="color:var(--neg)">失敗${ng}</span>` : ' ✓'}`);
+    // ③ 中身
+    ok = 0; ng = 0;
+    for (let i = 0; i < days.length; i++) {
+      paint(`③ 中身 反映中… ${i + 1}/${days.length}日（${ok}件${ng ? ` / 失敗${ng}` : ''}）`);
+      let res; try { res = await buildTaskPlan(parseYmd(days[i])); } catch { continue; }
+      for (const r of res.rows) {
+        try { await taskAssignRequest(parseYmd(days[i]), res.storeId, r.genre_id, r.sched, token); ok += 1; }
+        catch (e) { ng += 1; reportReflectFailure('中身(期間)', parseYmd(days[i]), r, e); }
+      }
+    }
+    done.push(`③ 中身: ${ok}件${ng ? ` / <span style="color:var(--neg)">失敗${ng}</span>` : ' ✓'}`);
+    done.push('<b>完了</b>（失敗があれば原因は自動送信済み）');
+    paint('');
+    if (btn) { btn.disabled = false; }
+    lastDraftDay = null;
+    renderSheet();
+  }
+
   // 対象日のCK割付プランを作る。既に付いている人はそのまま（重複して付けない）。
   async function buildCkPlan(date) {
     const [cur, siIds] = await Promise.all([fetchInstructedRaw(date), fetchSocialInsurance()]);
@@ -3588,6 +3659,13 @@
     // 反映スキャンは表示中の月を既定に
     const cm = `${targetDate.getFullYear()}-${pad2(targetDate.getMonth() + 1)}`;
     if ([...$('#reflectMonthSel').options].some((o) => o.value === cm)) $('#reflectMonthSel').value = cm;
+    // 期間まとめての既定＝表示中の日から月末まで
+    const rf = $('#rangeFrom'); const rt = $('#rangeTo');
+    if (rf && rt) {
+      const eom = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0);
+      rf.value = ymd(targetDate);
+      rt.value = ymd(eom);
+    }
   }
   // 反映系の排他ロック。連打しても実行中は無視＝並行実行しない（本人指定）。
   let reflectBusy = false;
@@ -3616,6 +3694,7 @@
       ev.target.textContent = anyOn ? '全選択' : '全解除';
     }
   });
+  $('#rangeRunAll').addEventListener('click', () => withReflectLock(runRangeAll));
   $('#taskMonthScan').addEventListener('click', () => withReflectLock(scanTaskMonth));
   $('#taskMonth').addEventListener('click', (ev) => {
     if (ev.target.id === 'tmRun') { withReflectLock(runTaskMonthReflect); return; }
