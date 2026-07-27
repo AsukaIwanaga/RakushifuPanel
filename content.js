@@ -3282,6 +3282,9 @@
     const rows = [];
     for (const s of cur.list) {
       if (s.off || s.start_as_min == null) continue;
+      // 他店応援のシフトは対象外（別店のシフトに業務割振を付けると
+      // 「対象の店舗…への出勤ではないシフト」400。実測: 岩永8/25 store73のF）。
+      if (String(s.attending_store_id) !== String(cur.storeId)) continue;
       if (s.attending_genre_id !== 2 && s.attending_genre_id !== 3) continue;
       const segs = byUG[`${s.user_id}:${s.attending_genre_id}`];
       if (!segs) continue;
@@ -3306,6 +3309,10 @@
         }
         return parts.filter(([a, b]) => b > a);
       };
+      // 休憩を「このバーの出勤範囲」でクリップ（範囲外は落とす・またぐ分は縮める）
+      const clipRestToBar = (rests) => (rests || [])
+        .map(([a, b]) => [Math.max(a, s.start_as_min), Math.min(b, s.end_as_min)])
+        .filter(([a, b]) => b > a);
       // 原案の区間タスク一式（重ね対象のみ・休憩でクリップ）
       const want = [];
       for (const seg of segs) {
@@ -3324,9 +3331,11 @@
         user_id: s.user_id, name: nameOf[s.user_id] || String(s.user_id),
         genre: g2label(s.attending_genre_id), genre_id: s.attending_genre_id,
         desc: want.length ? want.map(label).join(' / ') : '（区間タスクを消す）',
-        // 休憩も原案の値で送る（タスクと整合。休憩が空なららくしふ現状を維持）
+        // 休憩も原案の値で送る（タスクと整合）。ただし**このバーの出勤範囲でクリップ**する。
+        // らくしふが同一(人,区分)を複数バーに割っていると、別バーの休憩が混入して
+        // 「出勤時間外の休憩」400になるため（実測: 鎌田8/4・米川8/14/22・岩永8/19）。
         sched: { id: s.id,
-          rest_times: restToApiObj(dRests.length ? dRests : apiRestToMin(s.rest_times)),
+          rest_times: restToApiObj(clipRestToBar(dRests.length ? dRests : apiRestToMin(s.rest_times))),
           store_tasks: want },
       });
     }
