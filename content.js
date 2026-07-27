@@ -704,11 +704,13 @@
         <button id="ckPlan" title="温度・日付・廃棄のCKを、この日の勤務者に自動で割り付ける（シフト全域タグ。時間は変えません）">🌡 CK割付</button>
       </div>
       <div id="reflect" class="reflect muted">-</div>
-      <div class="section-title" style="margin-top:6px">月まとめて反映
+      <div class="section-title" style="margin-top:6px">月まとめて
         <select id="reflectMonthSel" title="スキャンする月"></select>
-        <button id="reflectMonthScan" title="相違のある日を抽出し、選んだ日をまとめて反映">📅 相違のある日を出す</button>
+        <button id="reflectMonthScan" title="相違のある日を抽出し、選んだ日をまとめて反映">📅 相違日→反映</button>
+        <button id="ckMonthScan" title="CK未付与の日を抽出し、選んだ日にまとめてCK割付">🌡 CK未付与日→割付</button>
       </div>
       <div id="reflectMonth" class="reflect muted" style="display:none">-</div>
+      <div id="ckMonth" class="reflect muted" style="display:none">-</div>
     </div>
   `;
 
@@ -2876,17 +2878,9 @@
   }
 
   // 1件付与: 既存 store_task_ids にCKのidを足して PUT（時間は既存のまま送る）
-  async function applyCkRow(i) {
-    const r = ckRows && ckRows[i];
-    if (!r || !r.bar || r.already) return false;
-    const token = rfCsrf();
-    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return false; }
-    const rowEl = $(`#reflect .rrow[data-i="${i}"]`);
-    const btn = rowEl && rowEl.querySelector('.ckap');
-    if (btn) { btn.disabled = true; btn.textContent = '送信中'; }
-    const ex = r.bar;
-    const ids = Array.from(new Set([...(ex.store_task_ids || []), CK_TASK[r.task]]));
-    // 実際の成功PUTに合わせた最小ボディ（shift_pattern_id/memo_text を入れると400）
+  // CK1件の実書き込み（既存 store_task_ids にCK idを足すPUT）。DOM非依存。
+  async function ckRequest(ex, task, token) {
+    const ids = Array.from(new Set([...(ex.store_task_ids || []), CK_TASK[task]]));
     const payload = { schedule: {
       id: ex.id, attending_store_id: ex.attending_store_id, attending_genre_id: ex.attending_genre_id,
       start_hour: Math.floor(ex.start_as_min / 60), start_minute: ex.start_as_min % 60,
@@ -2895,14 +2889,29 @@
       off: !!ex.off, off_type: ex.off_type || 0,
       store_task_ids: ids, company_special_holiday_id: ex.company_special_holiday_id,
     } };
+    const res = await fetch(`/ajax/admin/schedules/${ex.id}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      let d = ''; try { d = (await res.text() || '').slice(0, 200); } catch { /* noop */ }
+      throw new Error(`HTTP ${res.status}${d ? ' ' + d : ''}`);
+    }
+    return true;
+  }
+
+  async function applyCkRow(i) {
+    const r = ckRows && ckRows[i];
+    if (!r || !r.bar || r.already) return false;
+    const token = rfCsrf();
+    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return false; }
+    const rowEl = $(`#reflect .rrow[data-i="${i}"]`);
+    const btn = rowEl && rowEl.querySelector('.ckap');
+    if (btn) { btn.disabled = true; btn.textContent = '送信中'; }
     try {
-      const res = await fetch(`/ajax/admin/schedules/${ex.id}`, {
-        method: 'PUT', credentials: 'include',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json',
-          'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-Token': token },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await ckRequest(r.bar, r.task, token);
       r.already = true;
       if (rowEl) rowEl.classList.add('done');
       if (btn) { btn.textContent = '✓ 付与'; btn.disabled = true; }
@@ -2915,6 +2924,66 @@
       if (w) w.textContent += `　→ 失敗: ${e.message}`;
       return false;
     }
+  }
+
+  // ===== CK割付：月まとめて（未付与の日を抽出→チェック選択→実行）=====
+  let ckMonthScan = null;  // [{day, todo:[{bar,task}], counts}]
+  async function scanCkMonth() {
+    const box = $('#ckMonth');
+    $('#reflectMonth').style.display = 'none';
+    box.style.display = ''; box.className = 'reflect';
+    const ym = $('#reflectMonthSel').value;
+    const days = monthDays(ym);
+    box.innerHTML = `<span class="muted">${ym} のCKを全日スキャン中… 0/${days.length}</span>`;
+    ckMonthScan = [];
+    for (let k = 0; k < days.length; k++) {
+      const day = days[k];
+      try {
+        const res = await buildCkPlan(parseYmd(day));
+        const todo = res.plan.filter((r) => r.bar && !r.already);
+        if (todo.length) ckMonthScan.push({ day, todo });
+      } catch { /* 飛ばす */ }
+      const m = box.querySelector('.muted'); if (m) m.textContent = `${ym} のCKを全日スキャン中… ${k + 1}/${days.length}`;
+    }
+    renderCkMonthScan();
+  }
+  function renderCkMonthScan() {
+    const box = $('#ckMonth');
+    if (!ckMonthScan.length) { box.innerHTML = '<span class="allok">✓ この月はCK未付与なし</span>'; return; }
+    const total = ckMonthScan.reduce((a, s) => a + s.todo.length, 0);
+    const md = (d) => { const x = parseYmd(d); return `${x.getMonth() + 1}/${x.getDate()}(${WEEKDAYS[x.getDay()]})`; };
+    const rowHtml = (s) => `<label class="rmday"><input type="checkbox" class="ckm-cb" data-day="${s.day}" checked> ` +
+      `<b>${md(s.day)}</b> <span class="rmc">CK ${s.todo.length}件</span>` +
+      `<span class="ckm-stat" data-day="${s.day}"></span></label>`;
+    box.innerHTML =
+      `<div class="rf-warn">CK未付与の ${ckMonthScan.length}日・計${total}件。チェックした日にCK（温度/日付/廃棄）を付与します` +
+      `（シフト全域タグ・時間は変えません／確定送信はしません）。</div>` +
+      `<div style="margin:3px 0"><button id="ckmAllToggle">全解除</button> ` +
+      `<button id="ckmRun">▶ 選択した日にCK割付</button></div>` +
+      ckMonthScan.map(rowHtml).join('');
+  }
+  async function runCkMonth() {
+    const token = rfCsrf();
+    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return; }
+    const picked = [...$('#ckMonth').querySelectorAll('.ckm-cb:checked')].map((c) => c.dataset.day);
+    if (!picked.length) { alert('付与する日が選ばれていません。'); return; }
+    const n = picked.reduce((a, d) => a + (ckMonthScan.find((s) => s.day === d)?.todo.length || 0), 0);
+    if (!confirm(`${picked.length}日・計${n}件にCKを付与します。よろしいですか？`)) return;
+    const runBtn = $('#ckmRun'); if (runBtn) runBtn.disabled = true;
+    for (const day of picked) {
+      const s = ckMonthScan.find((x) => x.day === day);
+      const stat = $(`#ckMonth .ckm-stat[data-day="${day}"]`);
+      if (!s) continue;
+      let ok = 0; let ng = 0;
+      for (const r of s.todo) {
+        if (stat) stat.textContent = `　送信中… ${ok + ng + 1}/${s.todo.length}`;
+        try { await ckRequest(r.bar, r.task, token); ok += 1; } catch { ng += 1; }
+      }
+      if (stat) { stat.textContent = `　✓ ${ok}件${ng ? ` / 失敗${ng}` : ''}`; stat.style.color = ng ? '#b02a2a' : '#2c6e49'; }
+      const cb = $(`#ckMonth .ckm-cb[data-day="${day}"]`); if (cb) cb.checked = false;
+    }
+    if (runBtn) runBtn.textContent = '完了';
+    renderSheet();
   }
 
   // ===== らくしふ各人の行に、その人のShiftDraft原案を薄いバーで重ねる =====
@@ -3126,6 +3195,16 @@
     if (ev.target.id === 'rmRun') { runMonthReflect(); return; }
     if (ev.target.id === 'rmAllToggle') {
       const cbs = [...$('#reflectMonth').querySelectorAll('.rm-cb')];
+      const anyOn = cbs.some((c) => c.checked);
+      cbs.forEach((c) => { c.checked = !anyOn; });
+      ev.target.textContent = anyOn ? '全選択' : '全解除';
+    }
+  });
+  $('#ckMonthScan').addEventListener('click', scanCkMonth);
+  $('#ckMonth').addEventListener('click', (ev) => {
+    if (ev.target.id === 'ckmRun') { runCkMonth(); return; }
+    if (ev.target.id === 'ckmAllToggle') {
+      const cbs = [...$('#ckMonth').querySelectorAll('.ckm-cb')];
       const anyOn = cbs.some((c) => c.checked);
       cbs.forEach((c) => { c.checked = !anyOn; });
       ev.target.textContent = anyOn ? '全選択' : '全解除';
