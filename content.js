@@ -2616,7 +2616,12 @@
         if (last && b.s <= last.e) last.e = Math.max(last.e, b.e);
         else merged.push({ s: b.s, e: b.e });
       }
-      if (merged.length > 1) { splitSkipped += 1; continue; }   // 分割勤務は自動で弾く（対象外）
+      if (merged.length > 1) {
+        // 同区分が複数区間（分割 or F→K→Fのように別区分を挟む）。自動では引かないが、
+        // 「対象外」で黙って隠すと相違が見えなくなるので、区間つきで要手動として必ず表示する。
+        manualRow(`${g.glabel} ${merged.map((m) => `${hm(m.s)}-${hm(m.e)}`).join(' / ')}：分割（別区分を挟む等）→手動で個別に引く`);
+        continue;
+      }
       if (!g.gid) { manualRow(`区分${g.glabel}の所属が不明→手動`); continue; }
       const s = merged[0].s, e = merged[0].e;
       // 休憩は全バーから拾う（本体がポジション区間で表現される人でも取りこぼさない）。同一休憩は重複除去。
@@ -2746,6 +2751,29 @@
           rest_times: [], off: true, off_type: 0, company_special_holiday_id: s.company_special_holiday_id,
         } },
       });
+    }
+    // 総労働時間クロスチェック（防止対策・本人指定）: 原案とらくしふの F+K 実働(分)が
+    // 人ごとに違うのに、他のロジックで何も出ていない＝「一致に見えて実は相違」を拾う。
+    const netMin = (s0, e0, rr) => Math.max(0, (e0 - s0) - (rr || []).reduce((a, r) => a + Math.max(0, r[1] - r[0]), 0));
+    const draftNet = {};
+    for (const a of asg) {
+      const gid = resolveGid(a);
+      if (gid !== 2 && gid !== 3) continue;
+      draftNet[a.user_id] = (draftNet[a.user_id] || 0) + netMin(a.s, a.e, a.rests);
+    }
+    const rkNet = {};
+    for (const s of cur.list) {
+      if (s.off || s.start_as_min == null || s.end_as_min == null) continue;
+      if (s.attending_genre_id !== 2 && s.attending_genre_id !== 3) continue;
+      if (String(s.attending_store_id) !== String(cur.storeId)) continue;
+      rkNet[s.user_id] = (rkNet[s.user_id] || 0) + netMin(s.start_as_min, s.end_as_min, apiRestToMin(s.rest_times));
+    }
+    for (const uid of new Set([...Object.keys(draftNet), ...Object.keys(rkNet)].map(Number))) {
+      const dn = draftNet[uid] || 0; const rn = rkNet[uid] || 0;
+      if (Math.abs(dn - rn) < 15) continue;                    // 15分未満のズレは無視
+      if (rows.some((r) => r.user_id === uid && r.kind !== 'match')) continue; // 既に何か出てる人は重複させない
+      rows.push({ kind: 'manual', user_id: uid, name: nameByUid[uid] || String(uid), genre: '', manual: true,
+        desc: `総労働時間が違う（原案 ${(dn / 60).toFixed(1)}h ／ らくしふ ${(rn / 60).toFixed(1)}h）→要確認` });
     }
     // 名前順。ただし同じ人では 引き直し/休み を新規より先に（既存線を縮めてから新規を引く＝重複回避）
     const kindOrd = (r) => (r.kind === 'off' ? 0 : r.kind === 'retime' ? 1 : r.kind === 'create' ? 2 : 3);
