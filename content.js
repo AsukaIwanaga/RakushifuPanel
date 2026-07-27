@@ -1880,7 +1880,9 @@
   // help-info（ツールチップ）にも現れるため誤検出し、見出しと帯の対応が1つずつズレていた
   // （実DOMで確認: 見出し6件検出 vs 帯4件）。実際のセクションは
   // フロア/キッチン/清掃/正社員 の4つで、清掃・正社員はクルーREQの比較対象外。
-  const CAT_OF = { 'フロア': 'F', 'キッチン': 'K' };
+  // 直前の .table-title の見出しで F/K を決める。完全一致だと、実セッションで見出しに
+  // ツールバー文字（業務割振/シフト拡大…）が連結されると外れてキッチンが出ない不具合になる。
+  // 見出しはセクション名で始まるので前方一致で判定（清掃/正社員は null＝対象外）。
   function sectionCatOf(el) {
     let sec = null;
     for (const t of document.querySelectorAll('.table-title')) {
@@ -1888,7 +1890,8 @@
         sec = (t.textContent || '').trim();
       }
     }
-    return CAT_OF[sec] || null;
+    if (!sec) return null;
+    return sec.startsWith('フロア') ? 'F' : sec.startsWith('キッチン') ? 'K' : null;
   }
 
   function updateStrips(catDiffs, tipFor, catActs, basisName) {
