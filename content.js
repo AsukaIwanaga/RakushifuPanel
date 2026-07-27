@@ -2488,6 +2488,34 @@
   const apiRestToMin = (rt) => (rt || [])
     .map((r) => [r.start_hour * 60 + r.start_minute, r.end_hour * 60 + r.end_minute]);
 
+  // 各原案セグメント → らくしふ区分(2/3)。F/Kはそのまま。FKは直前のF/Kライン、
+  // 無ければ直後、それも無ければ mapGenre(所属/ベース)。本人指定(FKは前のラインに従う)。
+  function buildGidResolver(asg, mapGenre) {
+    const map = new Map();
+    const byU = {};
+    for (const a of asg) { if (a.e > a.s) (byU[a.user_id] ||= []).push(a); }
+    for (const uid of Object.keys(byU)) {
+      const segs = byU[uid].slice().sort((x, y) => x.s - y.s || x.e - y.e);
+      for (const a of segs) {                       // 先にF/Kを確定
+        if (a.genre === 'F') map.set(a, 2);
+        else if (a.genre === 'K') map.set(a, 3);
+      }
+      for (let i = 0; i < segs.length; i++) {
+        const a = segs[i];
+        if (map.has(a)) continue;
+        if (a.genre === 'FK') {
+          let g = null;
+          for (let j = i - 1; j >= 0 && !g; j--) { const v = map.get(segs[j]); if (v === 2 || v === 3) g = v; }
+          for (let j = i + 1; j < segs.length && !g; j++) { const v = map.get(segs[j]); if (v === 2 || v === 3) g = v; }
+          map.set(a, g || mapGenre('FK', +uid));
+        } else {
+          map.set(a, mapGenre(a.genre, +uid));      // MGT/非生産/役割等
+        }
+      }
+    }
+    return (a) => map.get(a);
+  }
+
   // 対象日の差分プランを組む。行: {kind, user_id, name, genre, payload, desc, manual?}
   async function buildReflectPlan(date) {
     const [draftR, cur, taskMap] = await Promise.all([
@@ -2522,11 +2550,14 @@
       : (belong[uid] === 2 || belong[uid] === 3) ? belong[uid]
       : (baseGenre[uid] === 2 || baseGenre[uid] === 3) ? baseGenre[uid] : null);
 
+    // 各セグメントの区分を決める。F/Kはそのまま。FKは「直前のF/Kライン」に付ける
+    // （無ければ直後→所属/ベース）。本人指定: FとKはそれぞれ／FKは前のラインに従う。
+    const resolveGid = buildGidResolver(asg, mapGenre);
     // 原案を (user_id, らくしふ区分) ごとにまとめる。区分をまたぐ人（応援）は区分別に線を持つ。
     const byUG = {};
     for (const a of asg) {
       if (a.e <= a.s) continue;
-      const gid = mapGenre(a.genre, a.user_id);
+      const gid = resolveGid(a);
       const key = `${a.user_id}:${gid}`;
       const g = (byUG[key] ||= { uid: a.user_id, name: a.name, gid, glabel: a.genre, bars: [] });
       g.bars.push(a);
@@ -3105,11 +3136,12 @@
       : (baseGenre[uid] === 2 || baseGenre[uid] === 3) ? baseGenre[uid] : null);
     const nameOf = {};
     for (const uu of (cur.users || [])) nameOf[uu.id] = (uu.name || '').replace(/\s+/g, ' ').trim();
-    // 原案を (user, らくしふ区分) にまとめる
+    // 原案を (user, らくしふ区分) にまとめる。FKは直前のラインに従う（外枠と同じ寄せ方）
+    const resolveGid = buildGidResolver(draftR.data.assignments || [], mapGenre);
     const byUG = {};
     for (const a of (draftR.data.assignments || [])) {
       if (a.e <= a.s) continue;
-      const gid = mapGenre(a.genre, a.user_id);
+      const gid = resolveGid(a);
       if (!gid) continue;
       (byUG[`${a.user_id}:${gid}`] ||= []).push(a);
     }
