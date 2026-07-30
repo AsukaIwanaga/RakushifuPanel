@@ -1294,24 +1294,16 @@
           : zenin
             ? `🙋 休み募集(${scStatusLabel(c)}): ${c.requester || ''}さんの代わり ${c.change || ''}`.trim()
             : `🔄 ${scStatusLabel(c)}: ${c.title}`;
-        // 海賊版と同じ「黄枠」で出す：薄い塗り＋実線枠＋角丸で対象時間帯を囲う。
-        // 枠はクリック透過(pointer-events:none)でシフト編集を妨げず、ホバー用の小チップを左端に別置きする。
-        // 拒否は赤枠＋赤チップ。
-        const bg = rejected ? '#dc2626' : '#f5b301';
-        const fill = rejected ? 'rgba(220,38,38,.14)' : 'rgba(245,179,1,.18)';
-        const band = document.createElement('div');
-        band.className = 'rf-req-line';
-        band.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:${2 + top}px;bottom:2px;` +
-          `z-index:4;pointer-events:none;box-sizing:border-box;border:1.5px solid ${bg};` +
-          `border-radius:4px;background:${fill};`;
-        track.appendChild(band);
-        const chip = document.createElement('div');
-        chip.className = 'rf-req-line';
-        chip.dataset.tip = title;
-        chip.style.cssText = `position:absolute;left:${s - 360}px;top:${top}px;width:15px;height:15px;` +
-          `z-index:5;cursor:default;box-sizing:border-box;border-radius:4px;background:${bg};` +
-          `border:1px solid ${rejected ? '#b91c1c' : '#d99500'};box-shadow:0 1px 2px rgba(0,0,0,.2);`;
-        track.appendChild(chip);
+        // 当たり判定を稼ぐため要素は少し高め(10px)にし、色帯は上4pxだけ描く(背景グラデ)。
+        // ホバーは自前ツールチップ(即時表示)。ネイティブtitleの「?」カーソル＋遅延はやめる。
+        const bg = rejected ? '#dc2626' : '#f5c518';
+        const line = document.createElement('div');
+        line.className = 'rf-req-line';
+        line.dataset.tip = title;
+        line.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:${top}px;` +
+          'height:8px;z-index:4;cursor:default;' +
+          `background:linear-gradient(${bg},${bg}) top left/100% 4px no-repeat;`;
+        track.appendChild(line);
         if (rejected) {
           const x = document.createElement('div');
           x.className = 'rf-req-x';
