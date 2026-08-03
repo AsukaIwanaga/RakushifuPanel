@@ -2056,6 +2056,81 @@
     }
   }
 
+  // ===== セクション見出しに モデルWS選択＋F/K/FK/非生産の時間数 PLAN/SCH を注入 =====
+  // （本人指定2026-08-03。フロア/キッチン両方の見出しバーに同じものを出す）
+  // PLAN=その日に適用されるモデルWS型（counts=レーン＋固定作業の区分別人時・非生産=固定作業のみ）
+  // SCH =いま らくしふ上で組まれている実シフトの人時（実F/実K/実FK・非生産はTR=研修枠で代用）
+  let lastWsSum = null;
+  function updateWsSummary(actual, le) {
+    document.querySelectorAll('.rf-ws-sum').forEach((e) => e.remove());
+    lastWsSum = { actual, le };
+    if (!onOneDayTarget()) return;
+    const params = leMakerCache && leMakerCache.params;
+    if (!params || !params.ws || !Array.isArray(params.ws.templates)) return;
+    const iso = ymd(targetDate);
+    const leSum = le ? num(le.total) : 0;
+    const tpl = wsTplFor(params, iso, leSum);
+    const ovr = ((params.byDate || {})[iso] || {}).wsTpl || '';
+    const autoT = wsAutoTpl(params, iso, leSum);
+    const r1 = (v) => Math.round((Number(v) || 0) * 10) / 10;
+    const sum18 = (a) => r1((a || []).reduce((x, y) => x + (Number(y) || 0), 0));
+    const planH = { F: 0, K: 0, FK: 0 };
+    let planFix = 0;
+    if (tpl) {
+      for (const s of ['F', 'K', 'FK']) planH[s] = sum18((tpl.counts || {})[s]);
+      let fx = 0;
+      for (const id in (tpl.fixedHours || {})) fx += sum18(tpl.fixedHours[id]);
+      planFix = r1(fx);
+    }
+    const sch = actual ? { F: r1(actual.sum.F), K: r1(actual.sum.K), FK: r1(actual.sum.FK),
+                           TR: sum18(actual.TR) } : null;
+    const tpls = [...params.ws.templates].sort((a, b) =>
+      String(a.name || '').localeCompare(String(b.name || ''), 'ja', { numeric: true }));
+    const opts = `<option value="">自動${autoT ? `（${autoT.name}）` : ''}</option>` +
+      tpls.map((t) => `<option value="${t.id}"${ovr === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
+    const seg = (lbl, p, s2) =>
+      `<span style="white-space:nowrap"><b style="color:#374151">${lbl}</b>` +
+      ` <span style="color:#b45309" title="PLAN=モデルWS">${p}</span>` +
+      `<span style="color:#9aa8b5">/</span>` +
+      `<span style="color:#6b21a8" title="SCH=らくしふの実シフト">${s2 == null ? '-' : s2}</span></span>`;
+    for (const t of document.querySelectorAll('.table-title')) {
+      const secTxt = (t.textContent || '').trim();
+      if (!(secTxt.startsWith('フロア') || secTxt.startsWith('キッチン'))) continue;
+      if (t.querySelector('.rf-ws-sum')) continue;
+      const bar = document.createElement('span');
+      bar.className = 'rf-ws-sum';
+      bar.style.cssText = 'display:inline-flex;align-items:center;gap:9px;margin-left:14px;' +
+        'font:400 11px/1.4 -apple-system,"Hiragino Sans",sans-serif;padding:2px 8px;' +
+        'background:#eef2ff;border:1px solid #dfe5ff;border-radius:6px;vertical-align:middle;';
+      bar.innerHTML =
+        `<b style="color:#3730a3;font-size:11px">📐 モデルWS</b>` +
+        `<select class="rf-ws-sel" title="この日に適用するモデルWS型。自動=条件/曜日割当に従う（変更はparams.jsonに保存＝スケジューラーと共通）" ` +
+        `style="font-size:11px;padding:0 2px;max-width:150px">${opts}</select>` +
+        `<span style="color:#9aa8b5">h:</span>` +
+        seg('F', planH.F, sch && sch.F) + seg('K', planH.K, sch && sch.K) +
+        seg('FK', planH.FK, sch && sch.FK) +
+        seg('非生産', planFix, sch && sch.TR) +
+        `<span style="color:#9aa8b5;font-size:9px" title="PLAN非生産=モデルWSの固定作業／SCH非生産=らくしふのTR(研修)枠で代用">琥珀=PLAN/紫=SCH</span>`;
+      bar.querySelector('.rf-ws-sel').addEventListener('change', async (ev) => {
+        const sel = ev.target;
+        const p2 = (leMakerCache && leMakerCache.params) || {};
+        if (!p2.ws) { alert('モデルWSが読めていません。更新を押して再取得してください'); return; }
+        sel.disabled = true;
+        const r = await draftApi('/le/ws', {
+          ws: p2.ws, _rev: p2._rev || 0, byDateWsTpl: { [iso]: sel.value || null },
+        });
+        sel.disabled = false;
+        if (!r || !r.ok) {
+          alert(`モデルWSの割当保存に失敗: ${(r && r.data && r.data.msg) || (r && r.error) || '通信エラー'}`);
+          return;
+        }
+        leMakerCache = null;
+        renderSheet();
+      });
+      t.appendChild(bar);
+    }
+  }
+
   // ===== 前年客数・修正客数の下に LE客数 行と 必要人数(REQ計) 行を注入 =====
   // 印刷画面用: .custom-field-rows(前年/修正客数)へ行を追加。
   // グループはDOM順=編集画面のセクション順(フロア→キッチン)前提で F/K を割当
@@ -2383,6 +2458,8 @@
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'}`;
     updateStrips(catDiffs, tip,
       hasActual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null, basisName);
+    try { updateWsSummary(hasActual ? actual : null, hourly['LE']); }
+    catch (e) { console.warn('[rf] wsSummary', e); }
     updateLERows(hourly['LE'],
       { sum: req, f: reqF, k: reqK, fk: reqFK, sub: secondary, basisName, subName },
       hasActual ? actual : null);
@@ -3768,6 +3845,7 @@
     guarded('weekBadges', () => { if (lastWeekStats) updateWeekBadges(lastWeekStats); });
     guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs, lastStrip.basisName); });
     guarded('leRows', () => { if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); });
+    guarded('wsSum', () => { if (lastWsSum && !document.querySelector('.rf-ws-sum')) updateWsSummary(lastWsSum.actual, lastWsSum.le); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
     // 原案ゴースト: 対象日に原案があるのに消えていたら張り直す
