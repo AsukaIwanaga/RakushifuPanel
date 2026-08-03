@@ -1517,7 +1517,8 @@
     f.style.display = '';
   }
 
-  function scOpenNewFor(name) {
+  // opts: { dateStr:"8/7", reqTime:"19:00-20:00", change:"…" } — 勤務予定モーダル等からのプリセット用
+  function scOpenNewFor(name, opts) {
     shiftPanel.classList.add('open');
     localStorage.setItem('rfShiftOpen', '1');
     repositionShiftPanel();
@@ -1525,13 +1526,71 @@
     refreshCrewDatalist();
     $('#scNewForm').style.display = '';
     $('#scNewTarget').value = name.replace(/\s+/g, '');
-    $('#scNewDate').value = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
+    $('#scNewDate').value = (opts && opts.dateStr) || `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
     $('#scNewDateEnd').value = '';
     if ($('#scNewKind').value === 'crew') {
       $('#scNewRequester').value = name.replace(/\s+/g, '');
     }
+    if (opts && opts.reqTime) {
+      const p = reqTimeToHM(opts.reqTime);
+      if (p) {
+        const set = (cls, v) => { const el = $('#scNewForm').querySelector(`.scn-${cls}`); if (el) el.value = v; };
+        set('sh', p.sh); set('sm', p.sm); set('eh', p.eh); set('em', p.em);
+      }
+    }
+    if (opts && opts.change) $('#scNewChange').value = opts.change;
     $('#scNewChange').focus();
     scRefresh();
+  }
+
+  // ===== らくしふ「勤務予定」編集モーダルに「❗依頼作成」を足す（本人指定2026-08-03）=====
+  // モーダル（人・日・現在の勤務時間）をプリセットして、上の新規起票フォームを開くだけ。
+  // らくしふ本体には何も書き込まない。モーダルはそのまま（閉じるのは本人）。
+  function injectModalReqBtn(root) {
+    if (!root || root.querySelector('.rf-modal-req')) return;
+    const txt = root.innerText || '';
+    const cancel = [...root.querySelectorAll('button')].find((b) => (b.textContent || '').trim() === 'キャンセル');
+    if (!cancel) return;
+    const m = /(\d{1,2})\s*\((日|月|火|水|木|金|土)\)\s*([^\n]+)/.exec(txt);
+    const name = m ? m[3].trim() : '';
+    const day = m ? Number(m[1]) : null;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'rf-modal-req';
+    btn.textContent = '❗ 依頼作成';
+    btn.title = 'この人・この日のシフト変更依頼を起票（共有台帳へ。らくしふには何も書き込みません）';
+    btn.style.cssText = 'margin-left:8px;padding:6px 14px;border:1px solid #e0b4b4;background:#fff5f5;' +
+      'color:#b03030;border-radius:4px;cursor:pointer;font-size:13px';
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      // 対象日 = 表示中の月（URLのfrom）＋モーダルの日
+      const base = parseYmd(urlParams().from || '') || targetDate || new Date();
+      const dateStr = day ? `${base.getMonth() + 1}/${day}` : `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
+      // 勤務時間 = モーダル先頭の4つのselect（開始 時:分 〜 終了 時:分）。「休み」タブ等で無ければ空
+      const sels = [...root.querySelectorAll('select')];
+      const hv = (s) => (s && /^\d{1,2}$/.test(s.value) ? s.value : '');
+      const t = sels.length >= 4 && hv(sels[0]) && hv(sels[2])
+        ? `${sels[0].value}:${sels[1].value || '00'}-${sels[2].value}:${sels[3].value || '00'}` : '';
+      scOpenNewFor(name, { dateStr, reqTime: t, change: t ? `現在${t}のところ、` : '' });
+    });
+    cancel.insertAdjacentElement('afterend', btn);
+  }
+  {
+    let rfModalScanT = null;
+    new MutationObserver(() => {
+      clearTimeout(rfModalScanT);
+      rfModalScanT = setTimeout(() => {
+        // 「キャンセル」ボタンから遡って、勤務店舗＋勤務メモを含む箱＝勤務予定モーダルを特定
+        for (const b of document.querySelectorAll('button')) {
+          if ((b.textContent || '').trim() !== 'キャンセル') continue;
+          let p = b.parentElement;
+          for (let i = 0; i < 8 && p; i++, p = p.parentElement) {
+            const t = p.innerText || '';
+            if (t.includes('勤務店舗') && t.includes('勤務メモ')) { injectModalReqBtn(p); break; }
+          }
+        }
+      }, 250);
+    }).observe(document.body, { childList: true, subtree: true });
   }
 
   function updateReqButtons() {
