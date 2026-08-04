@@ -1919,22 +1919,64 @@
   // フロア・キッチンのどちらでも同じ内容を出す（下の STRIP_ROWS 参照）。
   // 不足=赤、SURPLUS_WARN以上のプラス=緑(浪費警告)。
   // 表示中の日とパネルの対象日が一致するOneDayのときだけ出す。
-  let lastStrip = null; // {catDiffs, tip, catActs} Vue再描画後の張り直し用
-  // 帯の段構成（上から順に描画）。フロア/キッチンのどちらのセクションでも**同じ内容**を出す。
-  // 経緯: 以前は差分だけそのセクションのカテゴリ（フロア=差F / キッチン=差K）だったが、
-  // 「実Fの隣に差F、実Kの隣に差K」で見たいという本人指定（2026-07-21）で全段共通に統一。
-  // どちらのセクションを見ていても F/K 両方の過不足がその場で判断できる。
-  // [種別, データのキー, 見出し]。act=いま何人 / diff=あと何人(実−REQ)。
-  // TRは研修中の人数（TRer+TRee）で、見出しは本人指定の「TR」。
-  // 実数の数字に色は付けない（本人指定）。色は差分の不足/過剰の意味だけに残す。
-  const STRIP_ROWS = [
-    ['act', 'F', '実F'], ['diff', 'F', '差F'],
-    ['act', 'K', '実K'], ['diff', 'K', '差K'],
-    ['act', 'FK', '実FK'], ['diff', 'FK', '差FK'],
-    ['act', 'TR', 'TR'],
-  ];
-  const ACT_STRIP_COLOR = '#374151'; // 実数の数字・見出しとも中立色
+  let lastStrip = null; // rows配列（Vue再描画後の張り直し用）
+  // 帯の段構成: スケジューラーのマクド式時間帯サマリと同じ並びに変更（本人指定2026-08-03）。
+  //   Sales(千円=LE×客単価)・TC(LE客数) → 生産F/K/FK それぞれ PLAN(モデルWS)・SCH(実シフト)・差(SCH−PLAN)
+  //   → 非生産 PLAN(モデルWSの固定作業)・SCH(TR=研修枠で代用。らくしふに固定作業の概念が無いため)
+  // 旧: 実F/差F(LE)/実K/差K(LE)/実FK/差FK(LE)/TR。PLAN=琥珀 / SCH=紫 / Sales・TC=青。
+  const ACT_STRIP_COLOR = '#374151';
   const DIFF_LABEL_COLOR = '#6b7280';
+  const MCD_COLORS = { plain: '#1d4ed8', plan: '#b45309', sch: '#6b21a8' };
+  // STX客単価（スケジューラーと同じ /api/stx-kyaku・直近30日平均。セッション1回だけ取得）
+  let stxKyakuExt = null;
+  function loadStxKyaku() {
+    if (stxKyakuExt != null) return Promise.resolve(stxKyakuExt);
+    return draftApi('/api/stx-kyaku').then((r) => {
+      if (r && r.ok && r.data && r.data.avg) stxKyakuExt = r.data.avg;
+      return stxKyakuExt;
+    }).catch(() => null);
+  }
+  // マクド式の帯データを組む。PLAN=その日に適用されるモデルWS型（レーン=生産・固定作業=非生産）
+  function buildMcdRows(actual, le) {
+    const params = leMakerCache && leMakerCache.params;
+    if (!params || !params.ws) return null;
+    const iso = ymd(targetDate);
+    const numv = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+    const leH = HOURS.map((h, i) => numv(le && le.hours && le.hours[i]));
+    const tpl = wsTplFor(params, iso, le ? numv(le.total) : 0);
+    const zero = () => HOURS.map(() => 0);
+    const planG = { F: zero(), K: zero(), FK: zero() };
+    const fixP = zero();
+    if (tpl) {
+      for (const rw of (tpl.rows || [])) if (planG[rw.sec])
+        HOURS.forEach((h, i) => { planG[rw.sec][i] += Number((rw.hours || [])[i]) || 0; });
+      for (const id in (tpl.fixedHours || {}))
+        HOURS.forEach((h, i) => { fixP[i] += Number((tpl.fixedHours[id] || [])[i]) || 0; });
+      // ラインの無い手入力counts型は counts を全部生産扱い
+      if (!['F', 'K', 'FK'].some((g) => planG[g].some((v) => v)) && !fixP.some((v) => v)) {
+        const c = tpl.counts || {};
+        for (const g of ['F', 'K', 'FK'])
+          HOURS.forEach((h, i) => { planG[g][i] = Number((c[g] || [])[i]) || 0; });
+      }
+    }
+    const kyaku = stxKyakuExt || 1000;
+    const sch = actual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null;
+    const rows = [
+      { label: 'Sales', kind: 'plain', vals: leH.map((v) => (v ? v * kyaku / 1000 : null)) },
+      { label: 'TC', kind: 'plain', vals: leH.map((v) => (v || null)) },
+    ];
+    for (const g of ['F', 'K', 'FK']) {
+      const p = planG[g], s = (sch && sch[g]) || zero();
+      if (g === 'FK' && !p.some((v) => v) && !s.some((v) => v)) continue;
+      rows.push({ label: `生産${g} PLAN`, kind: 'plan', vals: p });
+      rows.push({ label: `生産${g} SCH`, kind: 'sch', vals: s });
+      rows.push({ label: `生産${g} 差`, kind: 'diff',
+                  vals: HOURS.map((h, i) => (!p[i] && !s[i]) ? null : Math.round((s[i] - p[i]) * 10) / 10) });
+    }
+    rows.push({ label: '非生産 PLAN', kind: 'plan', vals: fixP });
+    rows.push({ label: '非生産 SCH(TR)', kind: 'sch', vals: sch ? sch.TR : zero() });
+    return rows;
+  }
   let lastLE = null;
   const onOneDayTarget = () => {
     const p = new URLSearchParams(location.search);
@@ -1961,10 +2003,10 @@
     return sec.startsWith('フロア') ? 'F' : sec.startsWith('キッチン') ? 'K' : null;
   }
 
-  function updateStrips(catDiffs, tipFor, catActs, basisName) {
+  function updateStrips(rows) {
     document.querySelectorAll('.rf-heat-strip, .rf-strip-label').forEach((e) => e.remove());
-    lastStrip = catDiffs ? { catDiffs, tip: tipFor, catActs, basisName } : null;
-    if (!catDiffs || !onOneDayTarget()) return;
+    lastStrip = rows || null;
+    if (!rows || !rows.length || !onOneDayTarget()) return;
     // 各 time-header が属するセクションを「直前の .table-title」で決める。
     // 旧実装は全要素からテキストが「フロア/キッチン」の葉要素を拾っていたが、
     // 同じ文字列が help-info（ツールチップ）にも出るため誤検出し、見出しと帯の対応が
@@ -2001,41 +2043,40 @@
           lb.style.top = `${Math.round(top)}px`;
         });
       };
-      // 1段ぶんの帯を作る。act=いま何人（中立色）/ diff=あと何人（不足赤・過剰緑）。
-      const makeStrip = (kind, values, label) => {
+      // 1段ぶんの帯を作る。plain=Sales/TC(青) / plan=モデルWS(琥珀) / sch=実シフト(紫・太字) /
+      // diff=SCH−PLAN（不足赤・−1以上は塗り、過剰は緑。0は空欄=騒がない）
+      const makeStrip = (row) => {
         const s = document.createElement('div');
-        s.className = kind === 'act' ? 'rf-heat-strip rf-act-strip' : 'rf-heat-strip';
-        s.style.cssText = stripCss + (kind === 'act' ? `color:${ACT_STRIP_COLOR};` : '');
+        s.className = 'rf-heat-strip' + (row.kind !== 'diff' ? ' rf-act-strip' : '');
+        s.style.cssText = stripCss +
+          (row.kind !== 'diff' ? `color:${MCD_COLORS[row.kind] || ACT_STRIP_COLOR};` : '');
         for (const c of header.children) {
           const txt = (c.textContent || '').trim();
           const h = /^\d{1,2}$/.test(txt) ? +txt : null;
           const i = h !== null ? HOURS.indexOf(h) : -1;
           const cell = document.createElement('div');
           cell.style.cssText = `width:${c.getBoundingClientRect().width}px;flex:none;`;
-          const v = i >= 0 ? values[i] : undefined;
-          if (v !== undefined && v !== null && (kind === 'diff' || v)) {
-            if (kind === 'act') {
-              cell.textContent = String(v);
-              cell.title = `${label} ${v}` + (tipFor ? `\n${tipFor(i)}` : '');
-            } else {
-              // |差分|<1 は軽微 → 塗りつぶさず白地に色文字。±1以上のみ塗りつぶしで強調
-              if (v < 0) {
-                cell.textContent = v;
-                cell.style.cssText += v > -1
+          const v = (i >= 0 && row.vals) ? row.vals[i] : undefined;
+          if (v !== undefined && v !== null) {
+            const r = Math.round(v * 10) / 10;
+            if (row.kind === 'diff') {
+              if (r < 0) {
+                cell.textContent = r;
+                cell.style.cssText += r > -1
                   ? 'color:#d64545;'
                   : 'background:#d64545;color:#fff;border-radius:3px;';
-              } else if (v >= SURPLUS_WARN) {
-                cell.textContent = `+${v}`;
+              } else if (r >= SURPLUS_WARN) {
+                cell.textContent = `+${r}`;
                 cell.style.cssText += 'background:#2e9e5b;color:#fff;border-radius:3px;';
-              } else if (v > 0 && v < 1) {
-                cell.textContent = `+${v}`;
+              } else if (r > 0) {
+                cell.textContent = `+${r}`;
                 cell.style.cssText += 'color:#2e9e5b;';
-              } else {
-                cell.textContent = v > 0 ? `+${v}` : '0';
-                cell.style.cssText += 'color:#9aa8b5;';
               }
-              if (tipFor) cell.title = tipFor(i);
+            } else if (r) {
+              cell.textContent = String(r);
+              if (row.kind === 'sch') cell.style.fontWeight = '700';
             }
+            cell.title = `${row.label} ${r}`;
           }
           s.appendChild(cell);
         }
@@ -2043,14 +2084,11 @@
       };
 
       let prev = header;
-      for (const [kind, key, label] of STRIP_ROWS) {
-        const values = kind === 'act' ? (catActs && catActs[key]) : catDiffs[key];
-        if (!values) continue;
-        // 差の帯は「どの基準に対する差か」が分かるよう見出しに基準名を付ける（差F(LE) 等）
-        const lb = kind === 'diff' && basisName ? `${label}(${basisName})` : label;
-        const s = makeStrip(kind, values, lb);
+      for (const row of rows) {
+        const s = makeStrip(row);
         prev.after(s);
-        addLabel(s, lb, kind === 'act' ? ACT_STRIP_COLOR : DIFF_LABEL_COLOR);
+        addLabel(s, row.label,
+          row.kind === 'diff' ? DIFF_LABEL_COLOR : (MCD_COLORS[row.kind] || ACT_STRIP_COLOR));
         prev = s;
       }
     }
@@ -2068,7 +2106,8 @@
     const params = leMakerCache && leMakerCache.params;
     if (!params || !params.ws || !Array.isArray(params.ws.templates)) return;
     const iso = ymd(targetDate);
-    const leSum = le ? num(le.total) : 0;
+    // num()はこのスコープに無い（renderSheet内ローカル）ので自前で数値化する
+    const leSum = le && le.total != null ? (parseFloat(String(le.total).replace(/,/g, '')) || 0) : 0;
     const tpl = wsTplFor(params, iso, leSum);
     const ovr = ((params.byDate || {})[iso] || {}).wsTpl || '';
     const autoT = wsAutoTpl(params, iso, leSum);
@@ -2456,8 +2495,11 @@
       ` ・ K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'}` +
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'}`;
-    updateStrips(catDiffs, tip,
-      hasActual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null, basisName);
+    // 帯はマクド式（客単価を取ってから組む。取得失敗しても既定¥1000で出す）
+    loadStxKyaku().then(() => {
+      try { updateStrips(buildMcdRows(hasActual ? actual : null, hourly['LE'])); }
+      catch (e) { console.warn('[rf] mcdStrips', e); }
+    });
     try { updateWsSummary(hasActual ? actual : null, hourly['LE']); }
     catch (e) { console.warn('[rf] wsSummary', e); }
     updateLERows(hourly['LE'],
@@ -3843,7 +3885,7 @@
     guarded('reqButtons', updateReqButtons);
     // Vueの再描画でバッジ/バー/LE行/依頼マークが消えた場合の張り直し（軽量）
     guarded('weekBadges', () => { if (lastWeekStats) updateWeekBadges(lastWeekStats); });
-    guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip.catDiffs, lastStrip.tip, lastStrip.catActs, lastStrip.basisName); });
+    guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip); });
     guarded('leRows', () => { if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); });
     guarded('wsSum', () => { if (lastWsSum && !document.querySelector('.rf-ws-sum')) updateWsSummary(lastWsSum.actual, lastWsSum.le); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
