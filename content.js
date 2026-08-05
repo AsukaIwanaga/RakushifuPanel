@@ -2434,20 +2434,24 @@
         if (rowCells) {
           [...rowCells.children].forEach((cell, idx) => {
             const top = idx < HOURS.length ? (vals[idx] || '') : '';
-            // 30分表示: opts.halves=36要素の表示文字列。1時間セルを左右2分割して出す。
+            // 30分表示: opts.halves=36要素の表示文字列。セルそのものを30分単位に見せる
+            // （本人指定2026-08-05）。実測: セル=60px幅・padding0・display:flexなので、
+            // 半セルspanを直接flex子にすると各30pxの「本物のセル」になる。
+            // 時間境界=らくしふの2px線 / 30分境界=1px線(#e3e3e3) で階層を付ける。
             // opts.halfStyle(span, k) で半セル単位の装飾（不足の赤など）。
             if (opts && opts.halves && idx < HOURS.length) {
               const a = opts.halves[idx * 2] ?? '', b = opts.halves[idx * 2 + 1] ?? '';
-              cell.innerHTML =
-                `<div style="display:flex;align-items:baseline;font-size:10.5px;line-height:1.25">` +
-                `<span style="flex:1 1 50%;min-width:0">${a}</span>` +
-                `<span style="flex:1 1 50%;min-width:0;border-left:1px solid #c9c8c2">${b}</span></div>`;
+              const half = (v) =>
+                `<span style="flex:1 1 50%;min-width:0;display:flex;align-items:center;` +
+                `justify-content:center;font-size:11.5px;line-height:1;">${v}</span>`;
+              cell.style.padding = '0';
+              cell.innerHTML = half(a) +
+                half(b).replace('">', ';border-left:1px solid #e3e3e3">');
               cell.style.color = color;
               cell.style.fontWeight = '700';
               if (opts.halfStyle) {
-                const sp = cell.firstElementChild.children;
-                opts.halfStyle(sp[0], idx * 2);
-                opts.halfStyle(sp[1], idx * 2 + 1);
+                opts.halfStyle(cell.children[0], idx * 2);
+                opts.halfStyle(cell.children[1], idx * 2 + 1);
               }
               if (tipFn) cell.title = tipFn(idx);
               return;
@@ -2625,11 +2629,14 @@
           if (v == null || !v) return;
           const d = document.createElement('div');
           d.className = 'rf-fill';
-          d.style.cssText = `font-weight:700;color:${color};line-height:1.2;font-size:10.5px;`;
-          // 30分表示: 時間値の半分を両半に（本人指定2026-08-05「売り上げや客数は半分に」）
+          // 30分セル表示: 時間値の半分を左右の半セルに（本人指定2026-08-05）
+          d.style.cssText = `font-weight:700;color:${color};display:flex;flex:1 1 100%;align-self:stretch;`;
           const hv = String(Math.round(v / 2 * 10) / 10);
-          d.innerHTML = `<div style="display:flex"><span style="flex:1 1 50%">${hv}</span>` +
-            `<span style="flex:1 1 50%;border-left:1px solid #c9c8c2">${hv}</span></div>`;
+          const half2 = (extra) =>
+            `<span style="flex:1 1 50%;min-width:0;display:flex;align-items:center;` +
+            `justify-content:center;font-size:11.5px;line-height:1;${extra}">${hv}</span>`;
+          d.innerHTML = half2('') + half2('border-left:1px solid #e3e3e3;');
+          cell.style.padding = '0';
           cell.appendChild(d);
         });
         const h2 = tr2.querySelector('th.metrics-row-header');
