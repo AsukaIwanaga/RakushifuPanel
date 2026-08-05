@@ -2351,26 +2351,13 @@
       // どちらのセクションを見ていても店全体の必要と実が一度に読めるようにするため。
       // 時刻直下のヒートバー(updateStrips)も同じ理由で両セクション共通にしてある。
       let anchor = leRow;
-      const tipSum = reqPack?.sum ? (i) => `REQ計 ${reqPack.sum.hours[i] || '0'}` : null;
-      // 必要行(LE由来)の各セル下に、モデルWS(曜日テンプレ)の同区分を小さく併記する。
-      // 上=LE必要 / 下=WS。ラベルにも「合計: 必要 / WS」を出す。WSは緑系の色で区別。
-      const WS_SUB_COLOR = '#b45309'; // 琥珀。必要(緑/ティール)と区別
-      const addReq = (label, row, color, wsRow) => {
+      // 必要行はモデルWSのみ・単段（本人指定2026-08-05「必要LEは不要」。
+      // LE由来の必要人数はこの表には出さない。LE⇔WSの基準切替はパネル側だけに残る）
+      const addReq = (label, row, color) => {
         if (!row) return;
-        const bn = reqPack?.basisName || 'LE', sn = reqPack?.subName || 'モデルWS';
-        const tipFn = wsRow
-          ? (i) => `${label.slice(2)} 上=${bn} ${row.hours[i] || '0'} / 下=${sn} ${wsRow.hours[i] || 0}`
-          : tipSum;
-        // ラベルの色をセルの上下段と一致させる: 上段(=基準)=color / 下段(=もう一方)=琥珀。
-        // どちらが基準か分かるよう見出しに基準名(LE/モデルWS)を出す。
-        const labelHtml = wsRow
-          ? `<span style="font-weight:700;color:${color};">${label}(${bn}) ${row.total || '-'}</span>`
-            + `<span style="font-weight:700;color:${WS_SUB_COLOR};">／${sn} ${wsRow.total}</span>`
-            + `<span style="font-weight:400;font-size:9px;color:#9aa8b5;"> 上${bn}/下${sn}</span>`
-          : `<span style="font-weight:700;color:${color};">${label}(${bn}) (合計: ${row.total || '-'})</span>`;
-        const r = mkRow('rf-req-row', labelHtml,
-          row.hours, color, tipFn, null,
-          wsRow ? { sub: { vals: wsRow.hours, color: WS_SUB_COLOR } } : null);
+        const r = mkRow('rf-req-row',
+          `<span style="font-weight:700;color:${color};">${label}(モデルWS) (合計: ${row.total ?? '-'})</span>`,
+          row.hours, color, (i) => `${label.slice(2)} モデルWS ${row.hours[i] || '0'}`);
         anchor.after(r);
         anchor = r;
       };
@@ -2389,12 +2376,16 @@
         anchor.after(r);
         anchor = r;
       };
-      const ws = reqPack?.sub;   // 併記するもう一方の基準（LE⇔WS）
-      addReq('必要F', reqPack?.f, '#2c6e49', ws?.f);
-      addAct('実F', act?.F, reqPack?.f, act?.sum?.F);
-      addReq('必要K', reqPack?.k, '#2c6e49', ws?.k);
-      addAct('実K', act?.K, reqPack?.k, act?.sum?.K);
-      addReq('必要FK', reqPack?.fk, '#0e7490', ws?.fk);
+      // パネルの基準切替(LE⇔WS)に関わらず、この表は常にモデルWS側を使う。
+      // reqPack.f/k/fk は基準側・sub はもう一方なので、基準名で WS 側を選ぶ。
+      const wsB = reqPack?.basisName === 'モデルWS'
+        ? { f: reqPack?.f, k: reqPack?.k, fk: reqPack?.fk }
+        : (reqPack?.sub || {});
+      addReq('必要F', wsB.f, '#2c6e49');
+      addAct('実F', act?.F, wsB.f, act?.sum?.F);
+      addReq('必要K', wsB.k, '#2c6e49');
+      addAct('実K', act?.K, wsB.k, act?.sum?.K);
+      addReq('必要FK', wsB.fk, '#0e7490');
       // 実FK: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
       addAct('実FK', act?.FK, null, act?.sum?.FK);
 
