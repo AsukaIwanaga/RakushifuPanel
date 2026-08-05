@@ -459,11 +459,16 @@
 
   // 未確定日: シフト確定ダイアログ用の候補APIをそのまま利用。
   // レスポンス形式は環境依存の可能性があるため防御的にパースし、生JSONはconsoleに出す。
+  // 直近の取得結果（要確定バッジ用）。renderUnconfirmed が更新する。
+  let unconfirmedSet = new Set();
   async function fetchUnconfirmed(storeId) {
     const today = new Date();
     const eom = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    // すかいらーくルール（1週間先まで要確定）のバッジ判定用に、月末が7日以内でも最低+7日先まで見る
+    const p7 = new Date(today); p7.setDate(p7.getDate() + 7);
+    const end = p7 > eom ? p7 : eom;
     const url = `/ajax/admin/v2/schedules/shift_confirm_target_candidates?store_id=${storeId}` +
-      `&start_date=${ymd(today)}&end_date=${ymd(eom)}`;
+      `&start_date=${ymd(today)}&end_date=${ymd(end)}`;
     const r = await fetch(url, {
       credentials: 'include',
       headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -2260,6 +2265,22 @@
       'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;';
     if (hol) chip.textContent += '祝';
     el.parentElement.insertBefore(chip, el);
+    // すかいらーくルール: 1週間先までの日は確定済みであるべき（本人指定2026-08-05）。
+    // 対象日が今日〜+7日 かつ 未確定（shift_confirm_target_candidates の need_to_confirm）なら
+    // 左上（日付チップの左）に「要確定」を赤地白文字で出す。
+    const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+    const d0 = new Date(d); d0.setHours(0, 0, 0, 0);
+    const diffDays = Math.round((d0 - today0) / 86400000);
+    if (diffDays >= 0 && diffDays <= 7 && unconfirmedSet.has(ymd(d))) {
+      const warn = document.createElement('span');
+      warn.className = 'rf-date-chip';   // 日付チップと同時に張り替える
+      warn.textContent = '要確定';
+      warn.title = '1週間先までのシフトは確定が必要（すかいらーくルール）。この日は未確定です';
+      warn.style.cssText = 'display:inline-block;background:#d3402a;color:#fff;font-weight:700;' +
+        'font-size:12px;padding:2px 9px;margin-right:10px;letter-spacing:1px;' +
+        'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;';
+      el.parentElement.insertBefore(warn, chip);
+    }
   }
 
   // ===== 前年客数・修正客数の下に LE客数 行と 必要人数(REQ計) 行を注入 =====
@@ -2811,6 +2832,8 @@
     if (!storeId) { el.innerHTML = '<span class="muted">store_id 不明</span>'; return; }
     try {
       const days = await fetchUnconfirmed(storeId);
+      unconfirmedSet = new Set(days);
+      try { updateDateChip(); } catch { /* チップ未描画時は次のtickで */ }
       if (days.length === 0) {
         el.innerHTML = '<span class="allok">✓ すべて確定済み</span>';
         badge.style.display = 'none';
