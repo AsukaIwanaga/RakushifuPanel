@@ -327,6 +327,22 @@
     // 抜くと人時の数字が変わってしまうため）。実計・不足には一切影響しない。
     const act = { F: zero(), K: zero(), FK: zero(), MGT: zero(), cMGT: zero(),
                   TR: zero(), total: zero() };
+    // 30分粒度の並走集計（2026-08-05 本人指定「思いっきり30分ごとに」。表示・帯用）。
+    // スロットk = [360+30k, 390+30k) 分。値はそのスロットの平均頭数（分/30）。
+    const N30 = 36;
+    const zero30 = () => Array.from({ length: N30 }, () => 0);
+    const act30 = { F: zero30(), K: zero30(), FK: zero30(), MGT: zero30(), cMGT: zero30(),
+                    TR: zero30(), total: zero30() };
+    const net30 = (sh, a1, a2, k) => {
+      const s = Math.max(a1, 360 + k * 30), e = Math.min(a2, 390 + k * 30);
+      let m = Math.max(0, e - s);
+      if (m === 0) return 0;
+      for (const rt of sh.rest_times || []) {
+        m -= overlap(rt.start_hour * 60 + rt.start_minute, rt.end_hour * 60 + rt.end_minute, s, e);
+      }
+      return Math.max(0, m) / 30;
+    };
+    const userHour30 = {};
     // 正社員判定（MGT/TRer/TRee の計上先の振り分けに使用）
     const regularIds = new Set((j.users || [])
       .filter((u) => REGULAR_STAFF.includes((u.name || '').replace(/\s+/g, '')))
@@ -366,34 +382,40 @@
       const shiftMin = Math.max(1, sh.end_as_min - sh.start_as_min);
       const mgtWhole = (mgtMin / shiftMin) >= MGT_WHOLE_RATIO ? (isReg ? 'MGT' : 'cMGT') : null;
 
-      const uh = (userHour[sh.user_id] ||= HOURS.map(() => 0));
-      HOURS.forEach((h, i) => {
-        let total = net(sh, sh.start_as_min, sh.end_as_min, h);
-        total = Math.min(total, Math.max(0, 1 - uh[i])); // 重複登録時: 1人1時間まで
-        if (total === 0) return;
-        uh[i] += total;
-        if (mgtWhole) {
-          act[mgtWhole][i] += total;                 // シフト全体をMGT/cMGTへ
-          for (const mv of moves) {                  // TR参考枠はタスク区間ぶんだけ
-            if (!mv.tr) continue;
-            const m = Math.min(net(sh, mv.s, mv.e, h), total);
-            if (m > 0) act.TR[i] += m;
+      // 時間帯集計（粒度パラメータ化・時間別と30分別で同一ロジックを2回走らせる）
+      const accum = (actT, uhStore, nSlots, netFn) => {
+        const uh = (uhStore[sh.user_id] ||= Array.from({ length: nSlots }, () => 0));
+        for (let i = 0; i < nSlots; i++) {
+          let total = netFn(sh, sh.start_as_min, sh.end_as_min, i);
+          total = Math.min(total, Math.max(0, 1 - uh[i])); // 重複登録時: 1人1スロットまで
+          if (total === 0) continue;
+          uh[i] += total;
+          if (mgtWhole) {
+            actT[mgtWhole][i] += total;                 // シフト全体をMGT/cMGTへ
+            for (const mv of moves) {                   // TR参考枠はタスク区間ぶんだけ
+              if (!mv.tr) continue;
+              const m = Math.min(netFn(sh, mv.s, mv.e, i), total);
+              if (m > 0) actT.TR[i] += m;
+            }
+            continue;                                   // F/K・実計には入れない
           }
-          return;                                    // F/K・実計には入れない
+          let alloc = 0, mgt = 0;
+          for (const mv of moves) {
+            const m = Math.min(netFn(sh, mv.s, mv.e, i), total - alloc); // タスク重複: 先勝ち
+            if (m <= 0) continue;
+            actT[mv.grp][i] += m;
+            alloc += m;
+            if (mv.tr) actT.TR[i] += m; // 参考枠（MGT/cMGTと二重計上・実計には不算入）
+            if (mv.grp === 'MGT' || mv.grp === 'cMGT') mgt += m;
+          }
+          actT[grp][i] += Math.max(0, total - alloc); // 振替以外は所属グループ
+          actT.total[i] += total - mgt;               // 実計(OP H)はMGT系を除く
         }
-        let alloc = 0, mgt = 0;
-        for (const mv of moves) {
-          const m = Math.min(net(sh, mv.s, mv.e, h), total - alloc); // タスク重複: 先勝ち
-          if (m <= 0) continue;
-          act[mv.grp][i] += m;
-          alloc += m;
-          if (mv.tr) act.TR[i] += m; // 参考枠（MGT/cMGTと二重計上・実計には不算入）
-          if (mv.grp === 'MGT' || mv.grp === 'cMGT') mgt += m;
-        }
-        act[grp][i] += Math.max(0, total - alloc); // 振替以外は所属グループ
-        act.total[i] += total - mgt;               // 実計(OP H)はMGT系を除く
-      });
+      };
+      accum(act, userHour, HOURS.length, (sh2, a1, a2, i) => net(sh2, a1, a2, HOURS[i]));
+      accum(act30, userHour30, N30, net30);
     }
+    act.h30 = act30;   // 30分粒度（表示・帯用の追加データ。sumは時間別のまま）
     const r1 = (v) => Math.round(v * 10) / 10;
     act.sum = {};
     for (const k of ['F', 'K', 'FK', 'MGT', 'cMGT', 'TR', 'total']) {
@@ -1278,17 +1300,17 @@
       if (!diff) continue;
       const track = tr.querySelector('.schedule-row');
       if (!track) continue;
-      HOURS.forEach((h, i) => {
-        const v = diff[i];
-        if (!v) return;
+      for (let k = 0; k < 36; k++) {   // 30分粒度（本人指定2026-08-05）
+        const v = diff[k];
+        if (!v) continue;
         const band = document.createElement('div');
         band.className = 'rf-gap-band';
         // 濃さ2段階: 1人差=薄く / 2人以上=やや濃く（バーの可読性を守る範囲）
         const a = Math.abs(v) >= 2 ? 0.16 : 0.09;
-        band.style.cssText = `position:absolute;left:${h * 60 - 360}px;width:60px;top:0;bottom:0;` +
+        band.style.cssText = `position:absolute;left:${k * 30}px;width:30px;top:0;bottom:0;` +
           `z-index:1;pointer-events:none;background:${v < 0 ? `rgba(211,64,42,${a})` : `rgba(46,158,91,${a})`};`;
         track.appendChild(band);
-      });
+      }
     }
   }
 
@@ -2070,16 +2092,44 @@
       }
     }
     const sch = actual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null;
+    // ===== 30分粒度（2026-08-05 本人指定）: PLAN=rows.h30/fixedH30（無い型は時間値を流用）・
+    // SCH=act.h30（実シフトの30分並走集計）。表示のセル2分割と帯はこちらを使う =====
+    const N30 = 36;
+    const zero30 = () => Array.from({ length: N30 }, () => 0);
+    const planG30 = { F: zero30(), K: zero30(), FK: zero30() };
+    const fixP30 = zero30();
+    if (tpl) {
+      for (const rw of (tpl.rows || [])) if (planG30[rw.sec])
+        for (let k = 0; k < N30; k++)
+          planG30[rw.sec][k] += Number((rw.h30 || [])[k] ?? (rw.hours || [])[k >> 1]) || 0;
+      for (const id in (tpl.fixedH30 || {}))
+        for (let k = 0; k < N30; k++) fixP30[k] += Number((tpl.fixedH30[id] || [])[k]) || 0;
+      if (!Object.keys(tpl.fixedH30 || {}).length)
+        for (const id in (tpl.fixedHours || {}))
+          for (let k = 0; k < N30; k++) fixP30[k] += Number((tpl.fixedHours[id] || [])[k >> 1]) || 0;
+      // counts型（ライン無し）は時間値をそのまま両半に
+      if (!['F', 'K', 'FK'].some((g) => planG30[g].some((v) => v)) && !fixP30.some((v) => v)) {
+        const c = tpl.counts || {};
+        for (const g of ['F', 'K', 'FK'])
+          for (let k = 0; k < N30; k++) planG30[g][k] = Number((c[g] || [])[k >> 1]) || 0;
+      }
+    }
+    const sch30 = actual && actual.h30 ? actual.h30 : null;
     const groups = [];
     for (const g of ['F', 'K', 'FK']) {
       const p = planG[g], s = (sch && sch[g]) || zero();
       if (g === 'FK' && !p.some((v) => v) && !s.some((v) => v)) continue;
+      const p30 = planG30[g], s30 = (sch30 && sch30[g]) || zero30();
       groups.push({ g, plan: p, sch: s,
-                    diff: HOURS.map((h, i) => (!p[i] && !s[i]) ? null : Math.round((s[i] - p[i]) * 10) / 10) });
+                    diff: HOURS.map((h, i) => (!p[i] && !s[i]) ? null : Math.round((s[i] - p[i]) * 10) / 10),
+                    plan30: p30, sch30: s30,
+                    diff30: Array.from({ length: N30 }, (_, k) =>
+                      (!p30[k] && !s30[k]) ? null : Math.round((s30[k] - p30[k]) * 10) / 10) });
     }
     const planTotH = HOURS.map((h, i) =>
       planG.F[i] + planG.K[i] + planG.FK[i] + fixP[i]);   // 総労働時間予算=モデルWS全人時（非生産込み）
-    return { leH, groups, fixP, schTR: sch ? sch.TR : zero(), planTotH };
+    return { leH, groups, fixP, schTR: sch ? sch.TR : zero(), planTotH,
+             fixP30, schTR30: sch30 ? sch30.TR : zero30() };
   }
   let lastLE = null;
   const onOneDayTarget = () => {
@@ -2384,6 +2434,24 @@
         if (rowCells) {
           [...rowCells.children].forEach((cell, idx) => {
             const top = idx < HOURS.length ? (vals[idx] || '') : '';
+            // 30分表示: opts.halves=36要素の表示文字列。1時間セルを左右2分割して出す。
+            // opts.halfStyle(span, k) で半セル単位の装飾（不足の赤など）。
+            if (opts && opts.halves && idx < HOURS.length) {
+              const a = opts.halves[idx * 2] ?? '', b = opts.halves[idx * 2 + 1] ?? '';
+              cell.innerHTML =
+                `<div style="display:flex;align-items:baseline;font-size:10.5px;line-height:1.25">` +
+                `<span style="flex:1 1 50%;min-width:0">${a}</span>` +
+                `<span style="flex:1 1 50%;min-width:0;border-left:1px solid #c9c8c2">${b}</span></div>`;
+              cell.style.color = color;
+              cell.style.fontWeight = '700';
+              if (opts.halfStyle) {
+                const sp = cell.firstElementChild.children;
+                opts.halfStyle(sp[0], idx * 2);
+                opts.halfStyle(sp[1], idx * 2 + 1);
+              }
+              if (tipFn) cell.title = tipFn(idx);
+              return;
+            }
             if (sub && idx < HOURS.length) {
               const sv = sub.vals[idx] ? String(sub.vals[idx]) : '';
               cell.innerHTML =
@@ -2400,9 +2468,14 @@
         }
         return clone;
       };
+      // 30分表示の共通フォーマッタ（0=空欄・小数1桁）
+      const f30 = (v) => (!v ? '' : String(Math.round(v * 10) / 10));
+      const numh = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+      // LE客数は時間値の半分を両半に（本人指定2026-08-05「売り上げや客数は半分に」）
       const leRow = mkRow('rf-le-row',
         `<span style="font-weight:700;color:#1a5fb4;">LE客数 (合計: ${le.total || '-'})</span>`,
-        le.hours, '#1a5fb4');
+        le.hours, '#1a5fb4', null, null,
+        { halves: Array.from({ length: 36 }, (_, k) => f30(numh(le.hours[k >> 1]) / 2)) });
       tr.after(leRow);
 
       // 必要人数は F/K/FK を全部、フロア・キッチンの両方に出す（本人指定）。
@@ -2444,11 +2517,14 @@
       const VAL_COLOR = '#374151';
       // スクロール固定の対象選別用に、注入行を区分付きで控えておく
       const rowsCat = [];
-      const addReq = (grp, sub, row, color, cont) => {
-        if (!row) return;
+      const addReq = (grp, sub, row, color, cont, grpD) => {
+        if (!row && !grpD) return;
+        const halves = grpD ? grpD.plan30.map((v) => (!v ? '' : String(Math.round(v * 10) / 10))) : null;
         const r = mkRow('rf-req-row',
-          partLabel(grp, sub, 'PLAN', color, row.total ?? '-'),
-          row.hours, VAL_COLOR, (i) => `モデルWSの計画人数 ${row.hours[i] || '0'}`);
+          partLabel(grp, sub, 'PLAN', color, row?.total ?? '-'),
+          row ? row.hours : HOURS.map(() => ''), VAL_COLOR,
+          halves ? (i) => `モデルWS ${halves[i * 2] || 0}/${halves[i * 2 + 1] || 0}` : null,
+          null, halves ? { halves } : null);
         anchor.after(r);
         anchor = r;
         mergeTh(r, cont);
@@ -2457,16 +2533,24 @@
       };
       // 実人数（いまらくしふ上で組まれている人数）を対応するPLAN行の直下に出す。
       // 色・不足判定はパネルの実F/実K行と同じ規則（紫、不足1人以上=赤塗り・1人未満=赤字）。
-      const addAct = (leaf, cat, arr, reqRow, sumV) => {
-        if (!arr) return;
+      const addAct = (leaf, cat, arr, reqRow, sumV, grpD) => {
+        if (!arr && !(grpD && grpD.sch30)) return;
+        const halves = grpD ? grpD.sch30.map((v) => (!v ? '' : String(Math.round(v * 10) / 10))) : null;
+        // 不足判定は半セル単位（PLAN30比・判定基準は従来と同じ 1人以上=赤塗り/未満=赤字）
+        const halfStyle = (grpD && reqRow !== undefined) ? (sp, k) => {
+          const deficit = (grpD.plan30[k] || 0) - (grpD.sch30[k] || 0);
+          if (!grpD.noDeficit && deficit >= 1) { sp.style.background = '#fdecec'; sp.style.color = '#b02a2a'; }
+          else if (!grpD.noDeficit && deficit > 1e-9) sp.style.color = '#b02a2a';
+        } : null;
         const r = mkRow('rf-act-row',
           partLabel('', '', leaf, '#6b21a8', sumV ?? '-'),
-          HOURS.map((h, i) => (arr[i] ? String(arr[i]) : '')), VAL_COLOR, null,
-          reqRow ? (cell, i) => {
+          arr ? HOURS.map((h, i) => (arr[i] ? String(arr[i]) : '')) : HOURS.map(() => ''), VAL_COLOR, null,
+          (!halves && reqRow) ? (cell, i) => {
             const deficit = num(reqRow.hours[i]) - arr[i];
             if (deficit >= 1) { cell.style.background = '#fdecec'; cell.style.color = '#b02a2a'; }
             else if (deficit > 1e-9) cell.style.color = '#b02a2a';
-          } : null);
+          } : null,
+          halves ? { halves, halfStyle: reqRow ? halfStyle : null } : null);
         anchor.after(r);
         anchor = r;
         mergeTh(r, true);
@@ -2475,20 +2559,22 @@
       };
       // DIFF行（実-PLAN）を各SCHの直下に出す（本人指定2026-08-05: 「差」→「DIFF」表記・SCH直下配置）
       const mcd = buildMcdData(act, le);
-      if (mcd) lastGap = Object.fromEntries(mcd.groups.map((g2) => [g2.g, g2.diff]));
+      if (mcd) lastGap = Object.fromEntries(mcd.groups.map((g2) => [g2.g, g2.diff30]));
       const fmtD = (v) => (v == null || v === 0 ? '' : (v > 0 ? `+${Math.round(v * 10) / 10}` : String(Math.round(v * 10) / 10)));
       const addDiff = (g) => {
         const grpD = mcd && mcd.groups.find((x) => x.g === g);
         if (!grpD) return;
         const r = mkRow('rf-mcd-row',
           partLabel('', '', 'DIFF', '#374151', null),
-          grpD.diff.map(fmtD), VAL_COLOR, null, (cell, i) => {
-            const v = grpD.diff[i];
-            if (v == null) return;
-            if (v <= -1) { cell.style.background = '#fdecec'; cell.style.color = '#b02a2a'; }
-            else if (v < 0) cell.style.color = '#b02a2a';
-            else if (v > 0) cell.style.color = '#2e9e5b';
-          });
+          grpD.diff.map(fmtD), VAL_COLOR, null, null,
+          { halves: grpD.diff30.map(fmtD),
+            halfStyle: (sp, k) => {
+              const v = grpD.diff30[k];
+              if (v == null) return;
+              if (v <= -1) { sp.style.background = '#fdecec'; sp.style.color = '#b02a2a'; }
+              else if (v < 0) sp.style.color = '#b02a2a';
+              else if (v > 0) sp.style.color = '#2e9e5b';
+            } });
         anchor.after(r);
         anchor = r;
         mergeTh(r, true);
@@ -2500,15 +2586,16 @@
       const wsB = reqPack?.basisName === 'モデルWS'
         ? { f: reqPack?.f, k: reqPack?.k, fk: reqPack?.fk }
         : (reqPack?.sub || {});
-      addReq('生産性', 'F', wsB.f, MCD_COLORS.plan, false);
-      addAct('SCH', 'F', act?.F, wsB.f, act?.sum?.F);
+      const g30 = (g) => mcd && mcd.groups.find((x) => x.g === g);
+      addReq('生産性', 'F', wsB.f, MCD_COLORS.plan, false, g30('F'));
+      addAct('SCH', 'F', act?.F, wsB.f, act?.sum?.F, g30('F'));
       addDiff('F');
-      addReq('', 'K', wsB.k, MCD_COLORS.plan, true);
-      addAct('SCH', 'K', act?.K, wsB.k, act?.sum?.K);
+      addReq('', 'K', wsB.k, MCD_COLORS.plan, true, g30('K'));
+      addAct('SCH', 'K', act?.K, wsB.k, act?.sum?.K, g30('K'));
       addDiff('K');
-      addReq('', 'FK', wsB.fk, MCD_COLORS.plan, true);
+      addReq('', 'FK', wsB.fk, MCD_COLORS.plan, true, g30('FK'));
       // FK SCH: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
-      addAct('SCH', 'FK', act?.FK, null, act?.sum?.FK);
+      addAct('SCH', 'FK', act?.FK, null, act?.sum?.FK, g30('FK'));
       addDiff('FK');
 
       // ===== 予算・計画行を埋める＋その下にマクド式の生産行（本人指定2026-08-04） =====
@@ -2538,8 +2625,11 @@
           if (v == null || !v) return;
           const d = document.createElement('div');
           d.className = 'rf-fill';
-          d.style.cssText = `font-weight:700;color:${color};line-height:1.1;`;
-          d.textContent = String(Math.round(v * 10) / 10);
+          d.style.cssText = `font-weight:700;color:${color};line-height:1.2;font-size:10.5px;`;
+          // 30分表示: 時間値の半分を両半に（本人指定2026-08-05「売り上げや客数は半分に」）
+          const hv = String(Math.round(v / 2 * 10) / 10);
+          d.innerHTML = `<div style="display:flex"><span style="flex:1 1 50%">${hv}</span>` +
+            `<span style="flex:1 1 50%;border-left:1px solid #c9c8c2">${hv}</span></div>`;
           cell.appendChild(d);
         });
         const h2 = tr2.querySelector('th.metrics-row-header');
@@ -2577,18 +2667,19 @@
           // 結合線の扱いを分ける。別の場所ならグループ結合はそこで仕切り直し。
           const cont2 = anchorRow === anchor;
           if (!cont2) prevTh = null;
-          const add2 = (grp2, sub2, leaf2, valsTxt, color, styleFn) => {
+          const add2 = (grp2, sub2, leaf2, valsTxt, color, styleFn, arr30) => {
             const r3 = mkRow('rf-mcd-row',
               partLabel(grp2, sub2, leaf2, color, null),
-              valsTxt, VAL_COLOR, null, styleFn);
+              valsTxt, VAL_COLOR, null, styleFn,
+              arr30 ? { halves: arr30.map((v) => (!v ? '' : String(Math.round(v * 10) / 10))) } : null);
             a2.after(r3);
             a2 = r3;
             mergeTh(r3, grp2 === '' && cont2);
             tintRow(r3, sub2 || 'NP');
             rowsCat.push({ row: r3, cat: sub2 || 'NP' });
           };
-          add2('非生産', '', 'PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan);
-          add2('', '', 'SCH(TR)', mcd.schTR.map(fmt), MCD_COLORS.sch);
+          add2('非生産', '', 'PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan, null, mcd.fixP30);
+          add2('', '', 'SCH(TR)', mcd.schTR.map(fmt), MCD_COLORS.sch, null, mcd.schTR30);
         }
       }
 
