@@ -1,1 +1,4 @@
 scripts/auto-pull.log
+
+# ローカル専用コンテキスト(公開リポに載せない)
+CLAUDE.md
