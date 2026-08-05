@@ -771,12 +771,14 @@
         <b id="dateLabel">-</b>
         <button id="reqBasis" title="必要人数(REQ)の基準を切り替え。LE=客数から算出 / モデルWS=モデルWSの計画人数">基準: LE</button>
         <select id="wsTplSel" title="この日に適用するモデルWS型。自動=曜日割当に従う（変更はLE Makerのparams.jsonに保存＝海賊版と共通）"></select>
+        <a id="wsOpen" href="http://mac-mini.tail1f88ff.ts.net:8790/#ws" target="_blank" rel="noopener" title="スケジューラーのモデルWS設定を開く（固定作業の編集もこちら）">⚙WS設定↗</a>
         <button id="reload" class="accent">更新</button>
         <span id="ver" class="muted"></span>
       </div>
       <div id="stats" class="stats"></div>
       <div id="tableWrap"></div>
-      <div class="section-title fold" id="tasksTitle"><span id="taskFold">▾</span> タスク 月次/週次/要請（<span id="taskDate">-</span>）</div>
+      <div class="section-title fold" id="tasksTitle"><span id="taskFold">▾</span> タスク 月次/週次/要請（<span id="taskDate">-</span>）
+        <a id="mgtOpen" href="http://mac-mini.tail1f88ff.ts.net:8790/#mgt" target="_blank" rel="noopener" title="スケジューラーのMGR予定（月次タスクの計画）を開く" onclick="event.stopPropagation()">MGR予定↗</a></div>
       <div id="tasks" class="tasks muted">読込中…</div>
       <div class="section-title">シフト確定 未処理日（今日〜月末）</div>
       <div id="unconfirmed" class="unconfirmed muted">確認中…</div>
@@ -2220,6 +2222,9 @@
         `<b style="color:#161616;font-size:13.5px;font-weight:700;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px;white-space:nowrap">モデルWS</b>` +
         `<select class="rf-ws-sel" title="この日に適用するモデルWS型。自動=条件/曜日割当に従う（変更はparams.jsonに保存＝スケジューラーと共通）" ` +
         `style="font-size:13.5px;padding:1px 4px;max-width:190px;border:1px solid #d9d8d2;border-radius:0;background:#fff;color:#161616">${opts}</select>` +
+        `<a href="http://mac-mini.tail1f88ff.ts.net:8790/#ws" target="_blank" rel="noopener" ` +
+        `title="スケジューラーのモデルWS設定を開く（固定作業の編集もこちら）" ` +
+        `style="font-size:12px;color:#1a5fb4;text-decoration:none;white-space:nowrap">⚙編集↗</a>` +
         `<span style="color:#8c8c88">h:</span>` +
         seg('F', planH.F, sch && sch.F) + seg('K', planH.K, sch && sch.K) +
         seg('FK', planH.FK, sch && sch.FK) +
