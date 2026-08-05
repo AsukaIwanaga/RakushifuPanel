@@ -1262,6 +1262,36 @@
   };
 
   // ===== シフト表の名前横に変更依頼マーク（状態語=赤 / 変更済=緑）。印刷画面には出さない =====
+  // ===== 時間帯の不足/過剰を、スタッフ行のライン最背面に塗る（本人指定2026-08-05） =====
+  // 実測(2026-08-05): シフトバーは .bars-container(z:200)内・行トラック(.schedule-row)は
+  // position:relative/背景透明・tdは白。z=1 の帯はバー/ゴースト(z3)/依頼(z2,5)より背面、
+  // td白背景より前面＝「最背面の塗りつぶし」になる。1px=1分・left=分-360。
+  // データは updateLERows が組む マクド式DIFF(実-PLAN)。セクションの区分(F/K)の帯だけ塗る。
+  let lastGap = null;   // {F:diff[], K:diff[], FK:diff[]}
+  function updateGapBands() {
+    document.querySelectorAll('.rf-gap-band').forEach((e) => e.remove());
+    if (isPrintPage || !lastGap || !onOneDayTarget()) return;
+    for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
+      const cat = sectionCatOf(tr);
+      if (!cat) continue;
+      const diff = lastGap[cat];
+      if (!diff) continue;
+      const track = tr.querySelector('.schedule-row');
+      if (!track) continue;
+      HOURS.forEach((h, i) => {
+        const v = diff[i];
+        if (!v) return;
+        const band = document.createElement('div');
+        band.className = 'rf-gap-band';
+        // 濃さ2段階: 1人差=薄く / 2人以上=やや濃く（バーの可読性を守る範囲）
+        const a = Math.abs(v) >= 2 ? 0.16 : 0.09;
+        band.style.cssText = `position:absolute;left:${h * 60 - 360}px;width:60px;top:0;bottom:0;` +
+          `z-index:1;pointer-events:none;background:${v < 0 ? `rgba(211,64,42,${a})` : `rgba(46,158,91,${a})`};`;
+        track.appendChild(band);
+      });
+    }
+  }
+
   function updateShiftMarks() {
     if (isPrintPage || !scState) return;
     document.querySelectorAll('.rf-sc-mark').forEach((e) => e.remove());
@@ -1358,16 +1388,16 @@
           : zenin
             ? `🙋 休み募集(${scStatusLabel(c)}): ${c.requester || ''}さんの代わり ${c.change || ''}`.trim()
             : `🔄 ${scStatusLabel(c)}: ${c.title}`;
-        // 海賊版と同じ「黄枠」で出す：薄い塗り＋実線枠＋角丸で対象時間帯を囲う。
-        // 枠はクリック透過(pointer-events:none)でシフト編集を妨げず、ホバー用の小チップを左端に別置きする。
-        // 拒否は赤枠＋赤チップ。
+        // 最背面の塗りに変更（本人指定2026-08-05「依頼中や拒否のラインも同様に最背面の塗りつぶしで」）。
+        // 全高フィル＋左右の細エッジで区間を示す。z=2＝不足/過剰帯(z1)の上・バー(z200)の下。
+        // クリック透過でシフト編集を妨げず、ホバー用の小チップ(前面)は従来どおり。
         const bg = rejected ? '#dc2626' : '#f5b301';
-        const fill = rejected ? 'rgba(220,38,38,.14)' : 'rgba(245,179,1,.18)';
+        const fill = rejected ? 'rgba(220,38,38,.16)' : 'rgba(245,179,1,.22)';
         const band = document.createElement('div');
         band.className = 'rf-req-line';
-        band.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:${2 + top}px;bottom:2px;` +
-          `z-index:4;pointer-events:none;box-sizing:border-box;border:1.5px solid ${bg};` +
-          `border-radius:4px;background:${fill};`;
+        band.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:0;bottom:0;` +
+          `z-index:2;pointer-events:none;box-sizing:border-box;background:${fill};` +
+          `border-left:2px solid ${bg};border-right:2px solid ${bg};`;
         track.appendChild(band);
         const chip = document.createElement('div');
         chip.className = 'rf-req-line';
@@ -2327,8 +2357,9 @@
 
   function updateLERows(le, reqPack, act) {
     lastLE = le ? { le, reqPack, act } : null;
+    if (!le) lastGap = null;
     if (isPrintPage) { updatePrintRows(le, reqPack); return; }
-    document.querySelectorAll('.rf-le-row, .rf-req-row, .rf-act-row, .rf-mcd-row, .rf-fill')
+    document.querySelectorAll('.rf-le-row, .rf-req-row, .rf-act-row, .rf-mcd-row, .rf-fill, .rf-gap-band')
       .forEach((e) => e.remove());
     document.querySelectorAll('[data-rf-fill]').forEach((e) => delete e.dataset.rfFill);
     if (!le || !onOneDayTarget()) return;
@@ -2444,6 +2475,7 @@
       };
       // DIFF行（実-PLAN）を各SCHの直下に出す（本人指定2026-08-05: 「差」→「DIFF」表記・SCH直下配置）
       const mcd = buildMcdData(act, le);
+      if (mcd) lastGap = Object.fromEntries(mcd.groups.map((g2) => [g2.g, g2.diff]));
       const fmtD = (v) => (v == null || v === 0 ? '' : (v > 0 ? `+${Math.round(v * 10) / 10}` : String(Math.round(v * 10) / 10)));
       const addDiff = (g) => {
         const grpD = mcd && mcd.groups.find((x) => x.g === g);
@@ -2583,6 +2615,7 @@
         });
       }
     }
+    updateGapBands();
   }
 
   // ページ本体のシフト保存(page_hook.jsが検知)→少し待って再計算
@@ -4181,6 +4214,7 @@
     guarded('dateChip', () => { if (!document.querySelector('.rf-date-chip')) updateDateChip(); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
+    guarded('gapBands', () => { if (lastGap && !document.querySelector('.rf-gap-band')) updateGapBands(); });
     // 原案ゴースト: 対象日に原案があるのに消えていたら張り直す
     if (lastDraftDay && lastDraftDay.byUser && lastDraftDay.byUser.size &&
         onOneDayTarget() && !document.querySelector('.rf-draft-ghost')) {
