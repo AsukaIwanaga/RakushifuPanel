@@ -1984,6 +1984,9 @@
   const ACT_STRIP_COLOR = '#374151';
   const DIFF_LABEL_COLOR = '#6b7280';
   const MCD_COLORS = { plain: '#1d4ed8', plan: '#b45309', sch: '#6b21a8' };
+  // 数値化ヘルパー（updateLERows等の共通スコープ用。renderSheet内のローカルnumと同じ挙動）
+  // ※これが無く「実F行・行埋め」がReferenceErrorで死んでいた(2026-08-05発覚・v1.108修正)
+  const num = (s) => { const v = parseFloat(s); return Number.isFinite(v) ? v : 0; };
   // STX客単価（スケジューラーと同じ /api/stx-kyaku・直近30日平均。セッション1回だけ取得）
   let stxKyakuExt = null;
   function loadStxKyaku() {
@@ -1993,6 +1996,18 @@
       return stxKyakuExt;
     }).catch(() => null);
   }
+  // 時間別実績（過去日の売上実績・客数実績の行埋め用。ShiftDraft /api/jikanbetsu ＝
+  // database/時間別（ストコンOCR）から。未取込の日・未来日は 'none'）
+  const jkCache = {};
+  function loadJikanbetsu(iso) {
+    if (jkCache[iso]) return Promise.resolve(jkCache[iso]);
+    return draftApi('/api/jikanbetsu?date=' + iso).then((r) => {
+      const d = (r && r.ok && r.data && r.data.ok) ? r.data : null;
+      jkCache[iso] = (d && (d.tc || d.sales)) ? d : 'none';
+      return jkCache[iso];
+    }).catch(() => (jkCache[iso] = 'none'));
+  }
+
   // マクド式のデータを組む。PLAN=その日に適用されるモデルWS型（レーン=生産・固定作業=非生産）
   // 戻り: { leH, groups:[{g,plan,sch,diff}], fixP, schTR, planTotH } — 予算行の下の行群と行埋めで使う
   function buildMcdData(actual, le) {
@@ -2179,10 +2194,11 @@
       String(a.name || '').localeCompare(String(b.name || ''), 'ja', { numeric: true }));
     const opts = `<option value="">自動${autoT ? `（${autoT.name}）` : ''}</option>` +
       tpls.map((t) => `<option value="${t.id}"${ovr === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
+    // 拡張パネルと同じデザイントーン（白地・角なし・warm gray・赤下線ワンポイント・本人指定2026-08-05）
     const seg = (lbl, p, s2) =>
-      `<span style="white-space:nowrap"><b style="color:#374151">${lbl}</b>` +
-      ` <span style="color:#b45309" title="PLAN=モデルWS">${p}</span>` +
-      `<span style="color:#9aa8b5">/</span>` +
+      `<span style="white-space:nowrap"><b style="color:#474743;font-weight:600">${lbl}</b>` +
+      ` <span style="color:#a97016" title="PLAN=モデルWS">${p}</span>` +
+      `<span style="color:#c9c8c2">/</span>` +
       `<span style="color:#6b21a8" title="SCH=らくしふの実シフト">${s2 == null ? '-' : s2}</span></span>`;
     for (const t of document.querySelectorAll('.table-title')) {
       const secTxt = (t.textContent || '').trim();
@@ -2191,17 +2207,18 @@
       const bar = document.createElement('span');
       bar.className = 'rf-ws-sum';
       bar.style.cssText = 'display:inline-flex;align-items:center;gap:9px;margin-left:14px;' +
-        'font:400 11px/1.4 -apple-system,"Hiragino Sans",sans-serif;padding:2px 8px;' +
-        'background:#eef2ff;border:1px solid #dfe5ff;border-radius:6px;vertical-align:middle;';
+        'font:400 11px/1.4 "Hiragino Sans","Helvetica Neue","Yu Gothic",-apple-system,sans-serif;' +
+        'padding:3px 10px;background:#ffffff;border:1px solid #d9d8d2;border-radius:0;' +
+        'vertical-align:middle;color:#161616;';
       bar.innerHTML =
-        `<b style="color:#3730a3;font-size:11px">📐 モデルWS</b>` +
+        `<b style="color:#161616;font-size:11px;font-weight:700;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">モデルWS</b>` +
         `<select class="rf-ws-sel" title="この日に適用するモデルWS型。自動=条件/曜日割当に従う（変更はparams.jsonに保存＝スケジューラーと共通）" ` +
-        `style="font-size:11px;padding:0 2px;max-width:150px">${opts}</select>` +
-        `<span style="color:#9aa8b5">h:</span>` +
+        `style="font-size:11px;padding:0 3px;max-width:150px;border:1px solid #d9d8d2;border-radius:0;background:#fff;color:#161616">${opts}</select>` +
+        `<span style="color:#8c8c88">h:</span>` +
         seg('F', planH.F, sch && sch.F) + seg('K', planH.K, sch && sch.K) +
         seg('FK', planH.FK, sch && sch.FK) +
         seg('非生産', planFix, sch && sch.TR) +
-        `<span style="color:#9aa8b5;font-size:9px" title="PLAN非生産=モデルWSの固定作業／SCH非生産=らくしふのTR(研修)枠で代用">琥珀=PLAN/紫=SCH</span>`;
+        `<span style="color:#8c8c88;font-size:9px" title="PLAN非生産=モデルWSの固定作業／SCH非生産=らくしふのTR(研修)枠で代用">琥珀=PLAN/紫=SCH</span>`;
       bar.querySelector('.rf-ws-sel').addEventListener('change', async (ev) => {
         const sel = ev.target;
         const p2 = (leMakerCache && leMakerCache.params) || {};
@@ -2220,6 +2237,28 @@
       });
       t.appendChild(bar);
     }
+  }
+
+  // ===== 月次労務サマリ行（月次合計H…）の先頭に対象日を出す（本人指定2026-08-05） =====
+  // どの日を見ているかがこの行だけで分かるように。日曜・祝日=赤 / 土曜=青。
+  function updateDateChip() {
+    document.querySelectorAll('.rf-date-chip').forEach((e) => e.remove());
+    if (!onOneDayTarget()) return;
+    const el = [...document.querySelectorAll('div,span,p,b')].find((e) =>
+      e.childElementCount === 0 && (e.textContent || '').trim().startsWith('月次合計H'));
+    if (!el || !el.parentElement) return;
+    const d = targetDate;
+    const wd = '日月火水木金土'[d.getDay()];
+    const chip = document.createElement('span');
+    chip.className = 'rf-date-chip';
+    chip.textContent = `${d.getMonth() + 1}/${d.getDate()}（${wd}）`;
+    const hol = isHolidayExt(ymd(d));
+    const color = (d.getDay() === 0 || hol) ? '#bd3a2c' : d.getDay() === 6 ? '#1a5fb4' : '#161616';
+    chip.style.cssText = 'display:inline-block;font-weight:700;font-size:12.5px;margin-right:14px;' +
+      `color:${color};border-bottom:2px solid #d3402a;padding-bottom:1px;` +
+      'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;';
+    if (hol) chip.textContent += '祝';
+    el.parentElement.insertBefore(chip, el);
   }
 
   // ===== 前年客数・修正客数の下に LE客数 行と 必要人数(REQ計) 行を注入 =====
@@ -2406,7 +2445,17 @@
         fillRow('総労働時間予算', mcd.planTotH, '#b45309', '=モデルWS人時');
         fillRow('人件費予算', mcd.planTotH.map((v) => (v ? v * wage2 / 1000 : null)), '#b45309',
                 '=モデルWS×平均時給(千円)');
-        // 総労働時間予算行の直下に 生産F/K/FK PLAN・SCH・差 と 非生産 PLAN・SCH
+        // 実績（過去日のみ・時間別実績DB。ストコンPDF未取込の日は空のまま）
+        const jk = jkCache[ymd(targetDate)];
+        if (jk && jk !== 'none') {
+          const uDiv = jk.sales_unit === '百円' ? 10 : jk.sales_unit === '円' ? 1000 : 1;
+          if (jk.sales) fillRow('売上実績', jk.sales.map((v) => (v ? v / uDiv : null)), '#0e7490', '=時間別実績(千円)');
+          if (jk.tc) fillRow('客数実績', jk.tc, '#0e7490', '=時間別実績');
+        }
+        // 総労働時間予算行の直下に 生産 PLAN・SCH・差 と 非生産 PLAN・SCH。
+        // 段はセクション別（本人指定2026-08-05: フロア=F＋FK / キッチン=K＋FK。FKは両方に重複表示）
+        const secCat = sectionCatOf(tr) || 'F';
+        const showG = secCat === 'K' ? ['K', 'FK'] : ['F', 'FK'];
         const anchorRow = rowOf('総労働時間予算');
         if (anchorRow && !tbl.querySelector('.rf-mcd-row')) {
           const fmt = (v) => (v == null || !v ? '' : String(Math.round(v * 10) / 10));
@@ -2420,6 +2469,7 @@
             a2 = r3;
           };
           for (const grp of mcd.groups) {
+            if (!showG.includes(grp.g)) continue;
             add2(`生産${grp.g} PLAN`, grp.plan.map(fmt), MCD_COLORS.plan);
             add2(`生産${grp.g} SCH`, grp.sch.map(fmt), MCD_COLORS.sch);
             add2(`生産${grp.g} 差`, grp.diff.map(fmtD), '#374151', (cell, i) => {
@@ -2634,9 +2684,17 @@
     });
     try { updateWsSummary(hasActual ? actual : null, hourly['LE']); }
     catch (e) { console.warn('[rf] wsSummary', e); }
+    try { updateDateChip(); } catch (e) { console.warn('[rf] dateChip', e); }
     updateLERows(hourly['LE'],
       { sum: req, f: reqF, k: reqK, fk: reqFK, sub: secondary, basisName, subName },
       hasActual ? actual : null);
+    // 過去日は時間別実績を取りに行き、取れたら実績行を埋め直す
+    { const isoJ = ymd(targetDate);
+      if (isoJ < ymd(new Date()) && !jkCache[isoJ]) {
+        loadJikanbetsu(isoJ).then((d) => {
+          if (d && d !== 'none' && lastLE) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act);
+        });
+      } }
     // 週間アサインバッジ（非同期・失敗しても本体表示に影響させない）
     fetchWeekStats(targetDate)
       .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
@@ -4020,6 +4078,7 @@
     guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip); });
     guarded('leRows', () => { if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); });
     guarded('wsSum', () => { if (lastWsSum && !document.querySelector('.rf-ws-sum')) updateWsSummary(lastWsSum.actual, lastWsSum.le); });
+    guarded('dateChip', () => { if (!document.querySelector('.rf-date-chip')) updateDateChip(); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
     // 原案ゴースト: 対象日に原案があるのに消えていたら張り直す
