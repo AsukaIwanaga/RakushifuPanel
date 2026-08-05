@@ -1305,10 +1305,9 @@
         if (!v) continue;
         const band = document.createElement('div');
         band.className = 'rf-gap-band';
-        // 濃さ2段階: 1人差=薄く / 2人以上=やや濃く（バーの可読性を守る範囲）
-        const a = Math.abs(v) >= 2 ? 0.16 : 0.09;
+        // 濃さは一律（本人指定2026-08-05「絶対値で濃くする必要はない」）
         band.style.cssText = `position:absolute;left:${k * 30}px;width:30px;top:0;bottom:0;` +
-          `z-index:1;pointer-events:none;background:${v < 0 ? `rgba(211,64,42,${a})` : `rgba(46,158,91,${a})`};`;
+          `z-index:1;pointer-events:none;background:${v < 0 ? 'rgba(211,64,42,.10)' : 'rgba(46,158,91,.10)'};`;
         track.appendChild(band);
       }
     }
