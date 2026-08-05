@@ -2456,7 +2456,11 @@
         // 段はセクション別（本人指定2026-08-05: フロア=F＋FK / キッチン=K＋FK。FKは両方に重複表示）
         const secCat = sectionCatOf(tr) || 'F';
         const showG = secCat === 'K' ? ['K', 'FK'] : ['F', 'FK'];
-        const anchorRow = rowOf('総労働時間予算');
+        // アンカーはらくしふの総労働時間予算行。ただし2026-08-05にらくしふ側の指標行構成が
+        // 変わり予算系の行が消えた（headless実測: 売上計画/売上実績/客数計画/客数実績/
+        // 前年客数/修正客数 のみ）。行が無いとマクド行ごと消えるので、無ければ
+        // 注入済みの最終行（実FK等＝anchor）の下に出す。
+        const anchorRow = rowOf('総労働時間予算') || anchor;
         if (anchorRow && !tbl.querySelector('.rf-mcd-row')) {
           const fmt = (v) => (v == null || !v ? '' : String(Math.round(v * 10) / 10));
           const fmtD = (v) => (v == null || v === 0 ? '' : (v > 0 ? `+${Math.round(v * 10) / 10}` : String(Math.round(v * 10) / 10)));
