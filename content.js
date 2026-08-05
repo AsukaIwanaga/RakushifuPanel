@@ -2206,19 +2206,20 @@
       if (t.querySelector('.rf-ws-sum')) continue;
       const bar = document.createElement('span');
       bar.className = 'rf-ws-sum';
-      bar.style.cssText = 'display:inline-flex;align-items:center;gap:9px;margin-left:14px;' +
-        'font:400 11px/1.4 "Hiragino Sans","Helvetica Neue","Yu Gothic",-apple-system,sans-serif;' +
-        'padding:3px 10px;background:#ffffff;border:1px solid #d9d8d2;border-radius:0;' +
-        'vertical-align:middle;color:#161616;';
+      // 一回り大きく（本人指定2026-08-05「もう少し大きくして」: 11px→13.5px・余白も拡大）
+      bar.style.cssText = 'display:inline-flex;align-items:center;gap:12px;margin-left:14px;' +
+        'font:400 13.5px/1.4 "Hiragino Sans","Helvetica Neue","Yu Gothic",-apple-system,sans-serif;' +
+        'padding:5px 14px;background:#ffffff;border:1px solid #d9d8d2;border-radius:0;' +
+        'vertical-align:middle;color:#161616;white-space:nowrap;';
       bar.innerHTML =
-        `<b style="color:#161616;font-size:11px;font-weight:700;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">モデルWS</b>` +
+        `<b style="color:#161616;font-size:13.5px;font-weight:700;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px;white-space:nowrap">モデルWS</b>` +
         `<select class="rf-ws-sel" title="この日に適用するモデルWS型。自動=条件/曜日割当に従う（変更はparams.jsonに保存＝スケジューラーと共通）" ` +
-        `style="font-size:11px;padding:0 3px;max-width:150px;border:1px solid #d9d8d2;border-radius:0;background:#fff;color:#161616">${opts}</select>` +
+        `style="font-size:13.5px;padding:1px 4px;max-width:190px;border:1px solid #d9d8d2;border-radius:0;background:#fff;color:#161616">${opts}</select>` +
         `<span style="color:#8c8c88">h:</span>` +
         seg('F', planH.F, sch && sch.F) + seg('K', planH.K, sch && sch.K) +
         seg('FK', planH.FK, sch && sch.FK) +
         seg('非生産', planFix, sch && sch.TR) +
-        `<span style="color:#8c8c88;font-size:9px" title="PLAN非生産=モデルWSの固定作業／SCH非生産=らくしふのTR(研修)枠で代用">琥珀=PLAN/紫=SCH</span>`;
+        `<span style="color:#8c8c88;font-size:11px;white-space:nowrap" title="PLAN非生産=モデルWSの固定作業／SCH非生産=らくしふのTR(研修)枠で代用">琥珀=PLAN/紫=SCH</span>`;
       bar.querySelector('.rf-ws-sel').addEventListener('change', async (ev) => {
         const sel = ev.target;
         const p2 = (leMakerCache && leMakerCache.params) || {};
