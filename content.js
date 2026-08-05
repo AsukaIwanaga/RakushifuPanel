@@ -2353,21 +2353,40 @@
       let anchor = leRow;
       // 必要行はモデルWSのみ・単段（本人指定2026-08-05「必要LEは不要」。
       // LE由来の必要人数はこの表には出さない。LE⇔WSの基準切替はパネル側だけに残る）
-      // ラベルはマクド式「生産性X PLAN」・色もPLAN=琥珀（本人指定2026-08-05）
-      const addReq = (label, row, color) => {
+      // ラベルはマクド式・セル結合風の3列（本人指定2026-08-05）:
+      //   左=グループ(生産性/非生産)・中=区分(F/K/FK)・右=PLAN/SCH/差。
+      //   グループの続き行は th の上罫線を消して縦に結合しているように見せる。
+      const partLabel = (grp, sub, leaf, color, total) =>
+        `<span style="display:flex;align-items:baseline;text-align:left;">` +
+        `<b style="flex:0 0 42px;color:#474743;">${grp}</b>` +
+        `<b style="flex:0 0 24px;color:#161616;">${sub}</b>` +
+        `<span style="font-weight:700;color:${color};white-space:nowrap;">${leaf}` +
+        (total != null ? ` (合計: ${total})` : '') +
+        `</span></span>`;
+      let prevTh = leRow.querySelector('th.metrics-row-header');
+      const mergeTh = (row, cont) => {
+        const th2 = row.querySelector('th.metrics-row-header');
+        if (cont && th2) {
+          th2.style.cssText += ';border-top:0 !important;';
+          if (prevTh) prevTh.style.cssText += ';border-bottom:0 !important;';
+        }
+        prevTh = th2;
+      };
+      const addReq = (grp, sub, row, color, cont) => {
         if (!row) return;
         const r = mkRow('rf-req-row',
-          `<span style="font-weight:700;color:${color};">${label} (合計: ${row.total ?? '-'})</span>`,
+          partLabel(grp, sub, 'PLAN', color, row.total ?? '-'),
           row.hours, color, (i) => `モデルWSの計画人数 ${row.hours[i] || '0'}`);
         anchor.after(r);
         anchor = r;
+        mergeTh(r, cont);
       };
-      // 実人数（いまらくしふ上で組まれている人数）を対応する必要行の直下に出す。
+      // 実人数（いまらくしふ上で組まれている人数）を対応するPLAN行の直下に出す。
       // 色・不足判定はパネルの実F/実K行と同じ規則（紫、不足1人以上=赤塗り・1人未満=赤字）。
-      const addAct = (label, arr, reqRow, sumV) => {
+      const addAct = (leaf, arr, reqRow, sumV) => {
         if (!arr) return;
         const r = mkRow('rf-act-row',
-          `<span style="font-weight:700;color:#6b21a8;">${label} (合計: ${sumV ?? '-'})</span>`,
+          partLabel('', '', leaf, '#6b21a8', sumV ?? '-'),
           HOURS.map((h, i) => (arr[i] ? String(arr[i]) : '')), '#6b21a8', null,
           reqRow ? (cell, i) => {
             const deficit = num(reqRow.hours[i]) - arr[i];
@@ -2376,19 +2395,20 @@
           } : null);
         anchor.after(r);
         anchor = r;
+        mergeTh(r, true);
       };
       // パネルの基準切替(LE⇔WS)に関わらず、この表は常にモデルWS側を使う。
       // reqPack.f/k/fk は基準側・sub はもう一方なので、基準名で WS 側を選ぶ。
       const wsB = reqPack?.basisName === 'モデルWS'
         ? { f: reqPack?.f, k: reqPack?.k, fk: reqPack?.fk }
         : (reqPack?.sub || {});
-      addReq('生産性F PLAN', wsB.f, MCD_COLORS.plan);
-      addAct('生産性F SCH', act?.F, wsB.f, act?.sum?.F);
-      addReq('生産性K PLAN', wsB.k, MCD_COLORS.plan);
-      addAct('生産性K SCH', act?.K, wsB.k, act?.sum?.K);
-      addReq('生産性FK PLAN', wsB.fk, MCD_COLORS.plan);
+      addReq('生産性', 'F', wsB.f, MCD_COLORS.plan, false);
+      addAct('SCH', act?.F, wsB.f, act?.sum?.F);
+      addReq('', 'K', wsB.k, MCD_COLORS.plan, true);
+      addAct('SCH', act?.K, wsB.k, act?.sum?.K);
+      addReq('', 'FK', wsB.fk, MCD_COLORS.plan, true);
       // FK SCH: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
-      addAct('生産性FK SCH', act?.FK, null, act?.sum?.FK);
+      addAct('SCH', act?.FK, null, act?.sum?.FK);
 
       // ===== 予算・計画行を埋める＋その下にマクド式の生産行（本人指定2026-08-04） =====
       // 計画=LE由来（売上計画=LE×客単価・客数計画=LE客数）
@@ -2457,27 +2477,33 @@
           const fmt = (v) => (v == null || !v ? '' : String(Math.round(v * 10) / 10));
           const fmtD = (v) => (v == null || v === 0 ? '' : (v > 0 ? `+${Math.round(v * 10) / 10}` : String(Math.round(v * 10) / 10)));
           let a2 = anchorRow;
-          const add2 = (label, valsTxt, color, styleFn) => {
+          // アンカーが直前の注入行(=結合の続き)か、らくしふの予算行(=別の場所)かで
+          // 結合線の扱いを分ける。別の場所ならグループ結合はそこで仕切り直し。
+          let cont2 = anchorRow === anchor;
+          if (!cont2) prevTh = null;
+          const add2 = (grp2, sub2, leaf2, valsTxt, color, styleFn) => {
             const r3 = mkRow('rf-mcd-row',
-              `<span style="font-weight:700;color:${color};">${label}</span>`,
+              partLabel(grp2, sub2, leaf2, color, null),
               valsTxt, color, null, styleFn);
             a2.after(r3);
             a2 = r3;
+            mergeTh(r3, grp2 === '' && cont2);
           };
           // PLAN行=必要(モデルWS)行・SCH行=実行と同値の重複だったため出さない
           // （本人指摘2026-08-05）。重複しない「差」と非生産だけ残す。
           for (const grp of mcd.groups) {
             if (!showG.includes(grp.g)) continue;
-            add2(`生産性${grp.g} 差(実-PLAN)`, grp.diff.map(fmtD), '#374151', (cell, i) => {
+            add2('', grp.g, '差(実-PLAN)', grp.diff.map(fmtD), '#374151', (cell, i) => {
               const v = grp.diff[i];
               if (v == null) return;
               if (v <= -1) { cell.style.background = '#fdecec'; cell.style.color = '#b02a2a'; }
               else if (v < 0) cell.style.color = '#b02a2a';
               else if (v > 0) cell.style.color = '#2e9e5b';
             });
+            cont2 = true;   // 以降の行は直前がマクド行なので常に続き
           }
-          add2('非生産 PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan);
-          add2('非生産 SCH(TR)', mcd.schTR.map(fmt), MCD_COLORS.sch);
+          add2('非生産', '', 'PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan);
+          add2('', '', 'SCH(TR)', mcd.schTR.map(fmt), MCD_COLORS.sch);
         }
       }
     }
