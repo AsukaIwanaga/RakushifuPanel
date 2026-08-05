@@ -2363,6 +2363,16 @@
         `<span style="font-weight:700;color:${color};white-space:nowrap;">${leaf}` +
         (total != null ? ` (合計: ${total})` : '') +
         `</span></span>`;
+      // 区分ごとの薄い塗りつぶし（本人指定2026-08-05: F=青/K=緑/FK=紫/非生産=黄）。
+      // 行(tr)とラベルth(sticky背景持ち)の両方に敷く。不足の赤塗りはセル側なので残る。
+      const CAT_BG = { F: '#e8f1fb', K: '#e9f5ec', FK: '#f1ebfa', NP: '#fcf6dd' };
+      const tintRow = (row, cat) => {
+        const bg = CAT_BG[cat];
+        if (!bg) return;
+        row.style.background = bg;
+        const th2 = row.querySelector('th.metrics-row-header');
+        if (th2) th2.style.cssText += `;background:${bg} !important;`;
+      };
       let prevTh = leRow.querySelector('th.metrics-row-header');
       const mergeTh = (row, cont) => {
         const th2 = row.querySelector('th.metrics-row-header');
@@ -2372,22 +2382,25 @@
         }
         prevTh = th2;
       };
+      // 塗り分けが主役になったので数値は濃グレーに統一（不足の赤・差の赤緑だけ色を残す）
+      const VAL_COLOR = '#374151';
       const addReq = (grp, sub, row, color, cont) => {
         if (!row) return;
         const r = mkRow('rf-req-row',
           partLabel(grp, sub, 'PLAN', color, row.total ?? '-'),
-          row.hours, color, (i) => `モデルWSの計画人数 ${row.hours[i] || '0'}`);
+          row.hours, VAL_COLOR, (i) => `モデルWSの計画人数 ${row.hours[i] || '0'}`);
         anchor.after(r);
         anchor = r;
         mergeTh(r, cont);
+        tintRow(r, sub || 'F');
       };
       // 実人数（いまらくしふ上で組まれている人数）を対応するPLAN行の直下に出す。
       // 色・不足判定はパネルの実F/実K行と同じ規則（紫、不足1人以上=赤塗り・1人未満=赤字）。
-      const addAct = (leaf, arr, reqRow, sumV) => {
+      const addAct = (leaf, cat, arr, reqRow, sumV) => {
         if (!arr) return;
         const r = mkRow('rf-act-row',
           partLabel('', '', leaf, '#6b21a8', sumV ?? '-'),
-          HOURS.map((h, i) => (arr[i] ? String(arr[i]) : '')), '#6b21a8', null,
+          HOURS.map((h, i) => (arr[i] ? String(arr[i]) : '')), VAL_COLOR, null,
           reqRow ? (cell, i) => {
             const deficit = num(reqRow.hours[i]) - arr[i];
             if (deficit >= 1) { cell.style.background = '#fdecec'; cell.style.color = '#b02a2a'; }
@@ -2396,6 +2409,7 @@
         anchor.after(r);
         anchor = r;
         mergeTh(r, true);
+        tintRow(r, cat);
       };
       // パネルの基準切替(LE⇔WS)に関わらず、この表は常にモデルWS側を使う。
       // reqPack.f/k/fk は基準側・sub はもう一方なので、基準名で WS 側を選ぶ。
@@ -2403,12 +2417,12 @@
         ? { f: reqPack?.f, k: reqPack?.k, fk: reqPack?.fk }
         : (reqPack?.sub || {});
       addReq('生産性', 'F', wsB.f, MCD_COLORS.plan, false);
-      addAct('SCH', act?.F, wsB.f, act?.sum?.F);
+      addAct('SCH', 'F', act?.F, wsB.f, act?.sum?.F);
       addReq('', 'K', wsB.k, MCD_COLORS.plan, true);
-      addAct('SCH', act?.K, wsB.k, act?.sum?.K);
+      addAct('SCH', 'K', act?.K, wsB.k, act?.sum?.K);
       addReq('', 'FK', wsB.fk, MCD_COLORS.plan, true);
       // FK SCH: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
-      addAct('SCH', act?.FK, null, act?.sum?.FK);
+      addAct('SCH', 'FK', act?.FK, null, act?.sum?.FK);
 
       // ===== 予算・計画行を埋める＋その下にマクド式の生産行（本人指定2026-08-04） =====
       // 計画=LE由来（売上計画=LE×客単価・客数計画=LE客数）
@@ -2484,10 +2498,11 @@
           const add2 = (grp2, sub2, leaf2, valsTxt, color, styleFn) => {
             const r3 = mkRow('rf-mcd-row',
               partLabel(grp2, sub2, leaf2, color, null),
-              valsTxt, color, null, styleFn);
+              valsTxt, VAL_COLOR, null, styleFn);
             a2.after(r3);
             a2 = r3;
             mergeTh(r3, grp2 === '' && cont2);
+            tintRow(r3, sub2 || 'NP');   // 差行=区分色 / 非生産PLAN・SCH(TR)=黄
           };
           // PLAN行=必要(モデルWS)行・SCH行=実行と同値の重複だったため出さない
           // （本人指摘2026-08-05）。重複しない「差」と非生産だけ残す。
