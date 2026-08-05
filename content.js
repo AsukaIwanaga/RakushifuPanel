@@ -142,11 +142,68 @@
     for (const c of cuts) if ((leSum || 0) >= Number(c.ge)) pick = c.tpl;
     return pick || (cuts[0] && cuts[0].tpl) || null;
   }
+  // 日本の祝日（スケジューラー full.html の jpHolidays を移植・2026-08-05）。
+  // 型の適用条件では祝日を日曜(0)扱いにする＝スケジューラーと同じ判定。
+  const _holCache = {};
+  const wdIdx2 = (iso) => new Date(iso + 'T00:00:00').getDay();
+  function jpHolidaysExt(year) {
+    if (_holCache[year]) return _holCache[year];
+    const p2 = (n) => String(n).padStart(2, '0');
+    const dstr = (m, d) => `${year}-${p2(m)}-${p2(d)}`;
+    const shift = (iso, n) => {
+      const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n);
+      return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+    };
+    const nthMon = (m, n) => {
+      const first = new Date(year, m - 1, 1).getDay();
+      return dstr(m, 1 + ((8 - first) % 7) + (n - 1) * 7);
+    };
+    const equinox = (m) => {
+      const c = m === 3 ? 20.8431 : 23.2488;
+      return dstr(m, Math.floor(c + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4)));
+    };
+    const H = {};
+    H[dstr(1, 1)] = 1; H[nthMon(1, 2)] = 1; H[dstr(2, 11)] = 1; H[dstr(2, 23)] = 1;
+    H[equinox(3)] = 1; H[dstr(4, 29)] = 1; H[dstr(5, 3)] = 1; H[dstr(5, 4)] = 1;
+    H[dstr(5, 5)] = 1; H[nthMon(7, 3)] = 1; H[dstr(8, 11)] = 1; H[nthMon(9, 3)] = 1;
+    H[equinox(9)] = 1; H[nthMon(10, 2)] = 1; H[dstr(11, 3)] = 1; H[dstr(11, 23)] = 1;
+    for (const k of Object.keys(H)) {
+      const nx = shift(k, 2);
+      if (H[nx]) { const mid = shift(k, 1); if (!H[mid] && wdIdx2(mid) !== 0) H[mid] = 1; }
+    }
+    for (const k of Object.keys(H).sort()) {
+      if (wdIdx2(k) !== 0) continue;
+      let d = shift(k, 1);
+      while (H[d]) d = shift(d, 1);
+      H[d] = 1;
+    }
+    _holCache[year] = H;
+    return H;
+  }
+  const isHolidayExt = (iso) => !!jpHolidaysExt(Number(iso.slice(0, 4)))[iso];
+
   // 曜日割当だけで決まる型（日別上書きを見ない）。パネルの「自動」表示用にも使う。
   function wsAutoTpl(params, iso, leSum) {
     const w = params && params.ws;
     if (!w || !Array.isArray(w.templates)) return null;
-    // 月別割当(assignM[YYYY-MM]) > 既定(assign)。月別に無い曜日は既定へフォールバック
+    // ① 型そのものの適用条件（曜日=複数選択・日客レンジ）で選ぶ。
+    //    スケジューラー(wsAutoPick)と同一仕様（2026-08-05移植・これが無く8/9等でPLAN=0になっていた）。
+    //    複数一致は条件が細かい型を優先（曜日を絞っている＞いない・客数レンジが狭い＞広い）。
+    {
+      const wdN = isHolidayExt(iso) ? 0 : wdIdx2(iso);
+      const le = leSum || 0;
+      const hasCond = (t) => (t.wd && t.wd.length) || t.leMin != null || t.leMax != null;
+      const hit = w.templates.filter((t) => hasCond(t) &&
+        (!t.wd || !t.wd.length || t.wd.includes(wdN)) &&
+        (t.leMin == null || le >= t.leMin) && (t.leMax == null || le <= t.leMax));
+      if (hit.length) {
+        const span = (t) => (t.leMax == null ? 1e9 : t.leMax) - (t.leMin == null ? 0 : t.leMin);
+        hit.sort((a, b) => ((b.wd || []).length ? 1 : 0) - ((a.wd || []).length ? 1 : 0) ||
+                           (a.wd || []).length - (b.wd || []).length || span(a) - span(b));
+        return hit[0];
+      }
+    }
+    // ② 月別割当(assignM[YYYY-MM]) > 既定(assign)。月別に無い曜日は既定へフォールバック
     // （海賊版らくしふの月別モデルWSと同一仕様・2026-07-22）
     const wd = String(new Date(`${iso}T00:00:00`).getDay());
     const mAv = ((w.assignM || {})[iso.slice(0, 7)] || {})[wd];
@@ -1936,8 +1993,9 @@
       return stxKyakuExt;
     }).catch(() => null);
   }
-  // マクド式の帯データを組む。PLAN=その日に適用されるモデルWS型（レーン=生産・固定作業=非生産）
-  function buildMcdRows(actual, le) {
+  // マクド式のデータを組む。PLAN=その日に適用されるモデルWS型（レーン=生産・固定作業=非生産）
+  // 戻り: { leH, groups:[{g,plan,sch,diff}], fixP, schTR, planTotH } — 予算行の下の行群と行埋めで使う
+  function buildMcdData(actual, le) {
     const params = leMakerCache && leMakerCache.params;
     if (!params || !params.ws) return null;
     const iso = ymd(targetDate);
@@ -1959,23 +2017,17 @@
           HOURS.forEach((h, i) => { planG[g][i] = Number((c[g] || [])[i]) || 0; });
       }
     }
-    const kyaku = stxKyakuExt || 1000;
     const sch = actual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null;
-    const rows = [
-      { label: 'Sales', kind: 'plain', vals: leH.map((v) => (v ? v * kyaku / 1000 : null)) },
-      { label: 'TC', kind: 'plain', vals: leH.map((v) => (v || null)) },
-    ];
+    const groups = [];
     for (const g of ['F', 'K', 'FK']) {
       const p = planG[g], s = (sch && sch[g]) || zero();
       if (g === 'FK' && !p.some((v) => v) && !s.some((v) => v)) continue;
-      rows.push({ label: `生産${g} PLAN`, kind: 'plan', vals: p });
-      rows.push({ label: `生産${g} SCH`, kind: 'sch', vals: s });
-      rows.push({ label: `生産${g} 差`, kind: 'diff',
-                  vals: HOURS.map((h, i) => (!p[i] && !s[i]) ? null : Math.round((s[i] - p[i]) * 10) / 10) });
+      groups.push({ g, plan: p, sch: s,
+                    diff: HOURS.map((h, i) => (!p[i] && !s[i]) ? null : Math.round((s[i] - p[i]) * 10) / 10) });
     }
-    rows.push({ label: '非生産 PLAN', kind: 'plan', vals: fixP });
-    rows.push({ label: '非生産 SCH(TR)', kind: 'sch', vals: sch ? sch.TR : zero() });
-    return rows;
+    const planTotH = HOURS.map((h, i) =>
+      planG.F[i] + planG.K[i] + planG.FK[i] + fixP[i]);   // 総労働時間予算=モデルWS全人時（非生産込み）
+    return { leH, groups, fixP, schTR: sch ? sch.TR : zero(), planTotH };
   }
   let lastLE = null;
   const onOneDayTarget = () => {
@@ -2210,7 +2262,9 @@
   function updateLERows(le, reqPack, act) {
     lastLE = le ? { le, reqPack, act } : null;
     if (isPrintPage) { updatePrintRows(le, reqPack); return; }
-    document.querySelectorAll('.rf-le-row, .rf-req-row, .rf-act-row').forEach((e) => e.remove());
+    document.querySelectorAll('.rf-le-row, .rf-req-row, .rf-act-row, .rf-mcd-row, .rf-fill')
+      .forEach((e) => e.remove());
+    document.querySelectorAll('[data-rf-fill]').forEach((e) => delete e.dataset.rfFill);
     if (!le || !onOneDayTarget()) return;
     const labels = [...document.querySelectorAll('th.metrics-row-header')]
       .filter((th) => (th.textContent || '').includes('修正客数'));
@@ -2304,6 +2358,82 @@
       addReq('必要FK', reqPack?.fk, '#0e7490', ws?.fk);
       // 実FK: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
       addAct('実FK', act?.FK, null, act?.sum?.FK);
+
+      // ===== 予算・計画行を埋める＋その下にマクド式の生産行（本人指定2026-08-04） =====
+      // 計画=LE由来（売上計画=LE×客単価・客数計画=LE客数）
+      // 予算=モデルWS由来（総労働時間予算=全人時・人件費予算=全人時×平均時給）
+      // 売上予算・客数予算=時間帯データ源なし／実績=データ経路なし → 空のまま（保留）
+      const mcd = buildMcdData(act, le);
+      const tbl = tr.closest('table') || document;
+      const kyaku = stxKyakuExt || 1000;
+      const params2 = leMakerCache && leMakerCache.params;
+      const wage2 = Number(params2?.global?.plModel?.crewRate) || 1400;
+      const numv2 = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+      const leH2 = HOURS.map((h, i) => numv2(le.hours && le.hours[i]));
+      const rowOf = (labelTxt) => {
+        for (const th2 of tbl.querySelectorAll('th.metrics-row-header'))
+          if ((th2.textContent || '').includes(labelTxt)) return th2.closest('tr');
+        return null;
+      };
+      const fillRow = (labelTxt, vals, color, note) => {
+        const tr2 = rowOf(labelTxt);
+        if (!tr2 || tr2.dataset.rfFill) return;
+        tr2.dataset.rfFill = '1';
+        const cells = [...tr2.querySelectorAll('*')].find((e) => e.children.length === 19);
+        if (!cells) return;
+        [...cells.children].forEach((cell, idx) => {
+          if (idx >= HOURS.length) return;
+          const v = vals[idx];
+          if (v == null || !v) return;
+          const d = document.createElement('div');
+          d.className = 'rf-fill';
+          d.style.cssText = `font-weight:700;color:${color};line-height:1.1;`;
+          d.textContent = String(Math.round(v * 10) / 10);
+          cell.appendChild(d);
+        });
+        const h2 = tr2.querySelector('th.metrics-row-header');
+        if (note && h2) {
+          const n2 = document.createElement('span');
+          n2.className = 'rf-fill';
+          n2.style.cssText = 'font-size:9px;color:#9aa8b5;margin-left:4px;font-weight:400;';
+          n2.textContent = note;
+          h2.appendChild(n2);
+        }
+      };
+      if (mcd) {
+        fillRow('売上計画', leH2.map((v) => (v ? v * kyaku / 1000 : null)), '#1d4ed8', '=LE×客単価(千円)');
+        fillRow('客数計画', leH2, '#1d4ed8', '=LE客数');
+        fillRow('総労働時間予算', mcd.planTotH, '#b45309', '=モデルWS人時');
+        fillRow('人件費予算', mcd.planTotH.map((v) => (v ? v * wage2 / 1000 : null)), '#b45309',
+                '=モデルWS×平均時給(千円)');
+        // 総労働時間予算行の直下に 生産F/K/FK PLAN・SCH・差 と 非生産 PLAN・SCH
+        const anchorRow = rowOf('総労働時間予算');
+        if (anchorRow && !tbl.querySelector('.rf-mcd-row')) {
+          const fmt = (v) => (v == null || !v ? '' : String(Math.round(v * 10) / 10));
+          const fmtD = (v) => (v == null || v === 0 ? '' : (v > 0 ? `+${Math.round(v * 10) / 10}` : String(Math.round(v * 10) / 10)));
+          let a2 = anchorRow;
+          const add2 = (label, valsTxt, color, styleFn) => {
+            const r3 = mkRow('rf-mcd-row',
+              `<span style="font-weight:700;color:${color};">${label}</span>`,
+              valsTxt, color, null, styleFn);
+            a2.after(r3);
+            a2 = r3;
+          };
+          for (const grp of mcd.groups) {
+            add2(`生産${grp.g} PLAN`, grp.plan.map(fmt), MCD_COLORS.plan);
+            add2(`生産${grp.g} SCH`, grp.sch.map(fmt), MCD_COLORS.sch);
+            add2(`生産${grp.g} 差`, grp.diff.map(fmtD), '#374151', (cell, i) => {
+              const v = grp.diff[i];
+              if (v == null) return;
+              if (v <= -1) { cell.style.background = '#fdecec'; cell.style.color = '#b02a2a'; }
+              else if (v < 0) cell.style.color = '#b02a2a';
+              else if (v > 0) cell.style.color = '#2e9e5b';
+            });
+          }
+          add2('非生産 PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan);
+          add2('非生産 SCH(TR)', mcd.schTR.map(fmt), MCD_COLORS.sch);
+        }
+      }
     }
   }
 
@@ -2495,10 +2625,12 @@
       ` ・ K ${actual?.K?.[i] ?? '-'}/${reqK?.hours?.[i] || '0'}` +
       ` ・ FK ${actual?.FK?.[i] ?? '-'}/${reqFK?.hours?.[i] || '0'}` +
       ` ・ 計 ${actual?.total?.[i] ?? '-'}/${req?.hours?.[i] || '0'}`;
-    // 帯はマクド式（客単価を取ってから組む。取得失敗しても既定¥1000で出す）
-    loadStxKyaku().then(() => {
-      try { updateStrips(buildMcdRows(hasActual ? actual : null, hourly['LE'])); }
-      catch (e) { console.warn('[rf] mcdStrips', e); }
+    // 時間軸ヘッダー下の帯は廃止（マクド行は予算行の下へ移動・本人指定2026-08-04）
+    updateStrips(null);
+    // 客単価が後から取れたら行を出し直す（初回はSalesが既定¥1000で出ている可能性）
+    loadStxKyaku().then((k) => {
+      try { if (k && lastLE) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); }
+      catch (e) { console.warn('[rf] kyakuRefresh', e); }
     });
     try { updateWsSummary(hasActual ? actual : null, hourly['LE']); }
     catch (e) { console.warn('[rf] wsSummary', e); }
