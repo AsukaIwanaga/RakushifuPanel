@@ -2383,12 +2383,12 @@
         ? { f: reqPack?.f, k: reqPack?.k, fk: reqPack?.fk }
         : (reqPack?.sub || {});
       addReq('生産性F PLAN', wsB.f, MCD_COLORS.plan);
-      addAct('実F', act?.F, wsB.f, act?.sum?.F);
+      addAct('生産性F SCH', act?.F, wsB.f, act?.sum?.F);
       addReq('生産性K PLAN', wsB.k, MCD_COLORS.plan);
-      addAct('実K', act?.K, wsB.k, act?.sum?.K);
+      addAct('生産性K SCH', act?.K, wsB.k, act?.sum?.K);
       addReq('生産性FK PLAN', wsB.fk, MCD_COLORS.plan);
-      // 実FK: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
-      addAct('実FK', act?.FK, null, act?.sum?.FK);
+      // FK SCH: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
+      addAct('生産性FK SCH', act?.FK, null, act?.sum?.FK);
 
       // ===== 予算・計画行を埋める＋その下にマクド式の生産行（本人指定2026-08-04） =====
       // 計画=LE由来（売上計画=LE×客単価・客数計画=LE客数）
