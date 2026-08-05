@@ -2463,11 +2463,11 @@
             a2.after(r3);
             a2 = r3;
           };
+          // PLAN行=必要(モデルWS)行・SCH行=実行と同値の重複だったため出さない
+          // （本人指摘2026-08-05）。重複しない「差」と非生産だけ残す。
           for (const grp of mcd.groups) {
             if (!showG.includes(grp.g)) continue;
-            add2(`生産${grp.g} PLAN`, grp.plan.map(fmt), MCD_COLORS.plan);
-            add2(`生産${grp.g} SCH`, grp.sch.map(fmt), MCD_COLORS.sch);
-            add2(`生産${grp.g} 差`, grp.diff.map(fmtD), '#374151', (cell, i) => {
+            add2(`生産${grp.g} 差(実-WS)`, grp.diff.map(fmtD), '#374151', (cell, i) => {
               const v = grp.diff[i];
               if (v == null) return;
               if (v <= -1) { cell.style.background = '#fdecec'; cell.style.color = '#b02a2a'; }
