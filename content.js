@@ -2384,6 +2384,8 @@
       };
       // 塗り分けが主役になったので数値は濃グレーに統一（不足の赤・差の赤緑だけ色を残す）
       const VAL_COLOR = '#374151';
+      // スクロール固定の対象選別用に、注入行を区分付きで控えておく
+      const rowsCat = [];
       const addReq = (grp, sub, row, color, cont) => {
         if (!row) return;
         const r = mkRow('rf-req-row',
@@ -2393,6 +2395,7 @@
         anchor = r;
         mergeTh(r, cont);
         tintRow(r, sub || 'F');
+        rowsCat.push({ row: r, cat: sub || 'F' });
       };
       // 実人数（いまらくしふ上で組まれている人数）を対応するPLAN行の直下に出す。
       // 色・不足判定はパネルの実F/実K行と同じ規則（紫、不足1人以上=赤塗り・1人未満=赤字）。
@@ -2410,6 +2413,28 @@
         anchor = r;
         mergeTh(r, true);
         tintRow(r, cat);
+        rowsCat.push({ row: r, cat });
+      };
+      // DIFF行（実-PLAN）を各SCHの直下に出す（本人指定2026-08-05: 「差」→「DIFF」表記・SCH直下配置）
+      const mcd = buildMcdData(act, le);
+      const fmtD = (v) => (v == null || v === 0 ? '' : (v > 0 ? `+${Math.round(v * 10) / 10}` : String(Math.round(v * 10) / 10)));
+      const addDiff = (g) => {
+        const grpD = mcd && mcd.groups.find((x) => x.g === g);
+        if (!grpD) return;
+        const r = mkRow('rf-mcd-row',
+          partLabel('', '', 'DIFF', '#374151', null),
+          grpD.diff.map(fmtD), VAL_COLOR, null, (cell, i) => {
+            const v = grpD.diff[i];
+            if (v == null) return;
+            if (v <= -1) { cell.style.background = '#fdecec'; cell.style.color = '#b02a2a'; }
+            else if (v < 0) cell.style.color = '#b02a2a';
+            else if (v > 0) cell.style.color = '#2e9e5b';
+          });
+        anchor.after(r);
+        anchor = r;
+        mergeTh(r, true);
+        tintRow(r, g);
+        rowsCat.push({ row: r, cat: g });
       };
       // パネルの基準切替(LE⇔WS)に関わらず、この表は常にモデルWS側を使う。
       // reqPack.f/k/fk は基準側・sub はもう一方なので、基準名で WS 側を選ぶ。
@@ -2418,17 +2443,19 @@
         : (reqPack?.sub || {});
       addReq('生産性', 'F', wsB.f, MCD_COLORS.plan, false);
       addAct('SCH', 'F', act?.F, wsB.f, act?.sum?.F);
+      addDiff('F');
       addReq('', 'K', wsB.k, MCD_COLORS.plan, true);
       addAct('SCH', 'K', act?.K, wsB.k, act?.sum?.K);
+      addDiff('K');
       addReq('', 'FK', wsB.fk, MCD_COLORS.plan, true);
       // FK SCH: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
       addAct('SCH', 'FK', act?.FK, null, act?.sum?.FK);
+      addDiff('FK');
 
       // ===== 予算・計画行を埋める＋その下にマクド式の生産行（本人指定2026-08-04） =====
       // 計画=LE由来（売上計画=LE×客単価・客数計画=LE客数）
       // 予算=モデルWS由来（総労働時間予算=全人時・人件費予算=全人時×平均時給）
       // 売上予算・客数予算=時間帯データ源なし／実績=データ経路なし → 空のまま（保留）
-      const mcd = buildMcdData(act, le);
       const tbl = tr.closest('table') || document;
       const kyaku = stxKyakuExt || 1000;
       const params2 = leMakerCache && leMakerCache.params;
@@ -2478,22 +2505,18 @@
           if (jk.sales) fillRow('売上実績', jk.sales.map((v) => (v ? v / uDiv : null)), '#0e7490', '=時間別実績(千円)');
           if (jk.tc) fillRow('客数実績', jk.tc, '#0e7490', '=時間別実績');
         }
-        // 総労働時間予算行の直下に 生産 PLAN・SCH・差 と 非生産 PLAN・SCH。
-        // 段はセクション別（本人指定2026-08-05: フロア=F＋FK / キッチン=K＋FK。FKは両方に重複表示）
-        const secCat = sectionCatOf(tr) || 'F';
-        const showG = secCat === 'K' ? ['K', 'FK'] : ['F', 'FK'];
+        // 非生産 PLAN/SCH(TR) はブロックの最後（DIFF行はSCH直下へ移動済み・v1.118）。
         // アンカーはらくしふの総労働時間予算行。ただし2026-08-05にらくしふ側の指標行構成が
         // 変わり予算系の行が消えた（headless実測: 売上計画/売上実績/客数計画/客数実績/
         // 前年客数/修正客数 のみ）。行が無いとマクド行ごと消えるので、無ければ
-        // 注入済みの最終行（実FK等＝anchor）の下に出す。
+        // 注入済みの最終行（FK DIFF等＝anchor）の下に出す。
         const anchorRow = rowOf('総労働時間予算') || anchor;
-        if (anchorRow && !tbl.querySelector('.rf-mcd-row')) {
+        if (anchorRow) {
           const fmt = (v) => (v == null || !v ? '' : String(Math.round(v * 10) / 10));
-          const fmtD = (v) => (v == null || v === 0 ? '' : (v > 0 ? `+${Math.round(v * 10) / 10}` : String(Math.round(v * 10) / 10)));
           let a2 = anchorRow;
           // アンカーが直前の注入行(=結合の続き)か、らくしふの予算行(=別の場所)かで
           // 結合線の扱いを分ける。別の場所ならグループ結合はそこで仕切り直し。
-          let cont2 = anchorRow === anchor;
+          const cont2 = anchorRow === anchor;
           if (!cont2) prevTh = null;
           const add2 = (grp2, sub2, leaf2, valsTxt, color, styleFn) => {
             const r3 = mkRow('rf-mcd-row',
@@ -2502,24 +2525,35 @@
             a2.after(r3);
             a2 = r3;
             mergeTh(r3, grp2 === '' && cont2);
-            tintRow(r3, sub2 || 'NP');   // 差行=区分色 / 非生産PLAN・SCH(TR)=黄
+            tintRow(r3, sub2 || 'NP');
+            rowsCat.push({ row: r3, cat: sub2 || 'NP' });
           };
-          // PLAN行=必要(モデルWS)行・SCH行=実行と同値の重複だったため出さない
-          // （本人指摘2026-08-05）。重複しない「差」と非生産だけ残す。
-          for (const grp of mcd.groups) {
-            if (!showG.includes(grp.g)) continue;
-            add2('', grp.g, '差(実-PLAN)', grp.diff.map(fmtD), '#374151', (cell, i) => {
-              const v = grp.diff[i];
-              if (v == null) return;
-              if (v <= -1) { cell.style.background = '#fdecec'; cell.style.color = '#b02a2a'; }
-              else if (v < 0) cell.style.color = '#b02a2a';
-              else if (v > 0) cell.style.color = '#2e9e5b';
-            });
-            cont2 = true;   // 以降の行は直前がマクド行なので常に続き
-          }
           add2('非生産', '', 'PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan);
           add2('', '', 'SCH(TR)', mcd.schTR.map(fmt), MCD_COLORS.sch);
         }
+      }
+
+      // ===== スクロール固定（本人指定2026-08-05: 下にスクロールしても
+      // フロア=生産性F/FK/非生産・キッチン=K/FK/非生産 が見え続ける） =====
+      // 実測(2026-08-05): timeline行th=sticky top:140px 高さ32 z=1000／左列角th z=1100／
+      // データtdは背景透明。対象行のth/tdをstickyにしてtimeline行の直下へ積む。
+      // th=z1099(角セル1100未満)・td=z990(timeline1000未満)。tdは透けるので行の塗り色を敷く。
+      {
+        const pinCats = (sectionCatOf(tr) === 'K') ? ['K', 'FK', 'NP'] : ['F', 'FK', 'NP'];
+        const pins = rowsCat.filter((x) => pinCats.includes(x.cat)).map((x) => x.row);
+        const tlTh = tbl.querySelector('th.timeline-sticky');
+        if (tlTh && pins.length) requestAnimationFrame(() => {
+          let top0 = (parseFloat(getComputedStyle(tlTh).top) || 0) + tlTh.getBoundingClientRect().height;
+          for (const row of pins) {
+            const h = row.getBoundingClientRect().height;
+            for (const cell of row.children) {
+              const isTh = cell.tagName === 'TH';
+              cell.style.cssText += `;position:sticky;top:${top0}px;z-index:${isTh ? 1099 : 990};` +
+                `background:${row.style.background || '#fff'}${isTh ? ' !important' : ''};`;
+            }
+            top0 += h;
+          }
+        });
       }
     }
   }
