@@ -2353,11 +2353,12 @@
       let anchor = leRow;
       // 必要行はモデルWSのみ・単段（本人指定2026-08-05「必要LEは不要」。
       // LE由来の必要人数はこの表には出さない。LE⇔WSの基準切替はパネル側だけに残る）
+      // ラベルはマクド式「生産性X PLAN」・色もPLAN=琥珀（本人指定2026-08-05）
       const addReq = (label, row, color) => {
         if (!row) return;
         const r = mkRow('rf-req-row',
-          `<span style="font-weight:700;color:${color};">${label}(モデルWS) (合計: ${row.total ?? '-'})</span>`,
-          row.hours, color, (i) => `${label.slice(2)} モデルWS ${row.hours[i] || '0'}`);
+          `<span style="font-weight:700;color:${color};">${label} (合計: ${row.total ?? '-'})</span>`,
+          row.hours, color, (i) => `モデルWSの計画人数 ${row.hours[i] || '0'}`);
         anchor.after(r);
         anchor = r;
       };
@@ -2381,11 +2382,11 @@
       const wsB = reqPack?.basisName === 'モデルWS'
         ? { f: reqPack?.f, k: reqPack?.k, fk: reqPack?.fk }
         : (reqPack?.sub || {});
-      addReq('必要F', wsB.f, '#2c6e49');
+      addReq('生産性F PLAN', wsB.f, MCD_COLORS.plan);
       addAct('実F', act?.F, wsB.f, act?.sum?.F);
-      addReq('必要K', wsB.k, '#2c6e49');
+      addReq('生産性K PLAN', wsB.k, MCD_COLORS.plan);
       addAct('実K', act?.K, wsB.k, act?.sum?.K);
-      addReq('必要FK', wsB.fk, '#0e7490');
+      addReq('生産性FK PLAN', wsB.fk, MCD_COLORS.plan);
       // 実FK: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
       addAct('実FK', act?.FK, null, act?.sum?.FK);
 
@@ -2467,7 +2468,7 @@
           // （本人指摘2026-08-05）。重複しない「差」と非生産だけ残す。
           for (const grp of mcd.groups) {
             if (!showG.includes(grp.g)) continue;
-            add2(`生産${grp.g} 差(実-WS)`, grp.diff.map(fmtD), '#374151', (cell, i) => {
+            add2(`生産性${grp.g} 差(実-PLAN)`, grp.diff.map(fmtD), '#374151', (cell, i) => {
               const v = grp.diff[i];
               if (v == null) return;
               if (v <= -1) { cell.style.background = '#fdecec'; cell.style.color = '#b02a2a'; }
