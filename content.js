@@ -1420,19 +1420,28 @@
           `z-index:2;pointer-events:none;box-sizing:border-box;background:${fill};` +
           `border-left:2px solid ${bg};border-right:2px solid ${bg};`;
         track.appendChild(band);
+        // バー(.bars-container=z200・不透明)と重なる区間では最背面フィルが完全に隠れるため、
+        // バーの上にも見える細い帯を前面(z300)に出す（本人指摘2026-08-06「ラインの上に表示がない」）。
+        // クリック透過なのでシフト編集は妨げない。複数依頼はtopで縦にずらす。
+        const stripe = document.createElement('div');
+        stripe.className = 'rf-req-line';
+        stripe.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:${1 + top}px;` +
+          `height:5px;z-index:300;pointer-events:none;background:${bg};border-radius:3px;` +
+          'box-shadow:0 1px 2px rgba(0,0,0,.25);';
+        track.appendChild(stripe);
         const chip = document.createElement('div');
         chip.className = 'rf-req-line';
         chip.dataset.tip = title;
         chip.style.cssText = `position:absolute;left:${s - 360}px;top:${top}px;width:15px;height:15px;` +
-          `z-index:5;cursor:default;box-sizing:border-box;border-radius:4px;background:${bg};` +
+          `z-index:301;cursor:default;box-sizing:border-box;border-radius:4px;background:${bg};` +
           `border:1px solid ${rejected ? '#b91c1c' : '#d99500'};box-shadow:0 1px 2px rgba(0,0,0,.2);`;
         track.appendChild(chip);
         if (rejected) {
           const x = document.createElement('div');
           x.className = 'rf-req-x';
           x.textContent = '✕';
-          x.style.cssText = `position:absolute;left:${(s - 360) + (e - s) / 2 - 6}px;top:${top - 6}px;` +
-            'font:900 13px/1 sans-serif;color:#dc2626;z-index:5;pointer-events:none;' +
+          x.style.cssText = `position:absolute;left:${(s - 360) + (e - s) / 2 - 6}px;top:${top}px;` +
+            'font:900 13px/1 sans-serif;color:#dc2626;z-index:301;pointer-events:none;' +
             'text-shadow:0 0 2px #fff,0 0 2px #fff;';
           track.appendChild(x);
         }
