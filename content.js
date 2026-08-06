@@ -2165,7 +2165,14 @@
   const onOneDayTarget = () => {
     const p = new URLSearchParams(location.search);
     const fromD = parseYmd(p.get('from') || '');
-    return p.get('u') === 'OneDay' && fromD && ymd(fromD) === ymd(targetDate);
+    if (!fromD || ymd(fromD) !== ymd(targetDate)) return false;
+    const u = p.get('u');
+    if (u) return u === 'OneDay';
+    // らくしふはSPA内遷移でURLからuを落とすことがある（2026-08-06実測:
+    // 日ビューなのに ?s=..&from=X&to=X のみ→旧判定で全注入が不発）。
+    // uが無い場合は from===to を日ビューとみなす。
+    const toD = parseYmd(p.get('to') || '');
+    return !!toD && ymd(toD) === ymd(fromD);
   };
 
   // 要素が属するセクションを「直前の .table-title」で判定し F/K を返す（対象外はnull）。
@@ -2453,13 +2460,6 @@
   }
 
   function updateLERows(le, reqPack, act) {
-    // 診断ログ（2026-08-06 8/22で注入ゼロ問題の追跡用。入口条件の実値を出す）
-    try {
-      console.info('[rf-dbg] LERows', JSON.stringify({
-        le: !!le, oneDay: onOneDayTarget(), from: urlParams().from,
-        target: ymd(targetDate), anchors: metricAnchorThs().length, print: isPrintPage,
-      }));
-    } catch (e) { console.info('[rf-dbg] LERows log fail', String(e)); }
     lastLE = le ? { le, reqPack, act } : null;
     if (!le) lastGap = null;
     if (isPrintPage) { updatePrintRows(le, reqPack); return; }
@@ -2470,8 +2470,6 @@
     const labels = metricAnchorThs();
     for (const th of labels) {
       const tr = th.closest('tr');
-      console.info('[rf-dbg] anchor', (th.textContent || '').trim().slice(0, 6),
-        'tr:', !!tr, 'sec:', tr ? sectionCatOf(tr) : null);
       if (!tr) continue;
       // 清掃・正社員セクションにも修正客数行があれば拾ってしまうため、
       // 帯と同じ判定でフロア/キッチンだけに絞る
