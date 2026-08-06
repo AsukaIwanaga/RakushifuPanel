@@ -1364,6 +1364,16 @@
       mark.title = rel.map((c) =>
         `${c.is_rejected ? '🚫拒否' : c.is_done ? '✅' : `【${scStatusLabel(c)}】`} ${c.title}`).join('\n');
       box.appendChild(mark);
+      // 締切後の途中提出希望は専用の青チップも出す（本人指定2026-08-06）
+      if (pending.some((c) => /途中希望|追加希望|再提出/.test(`${c.change || ''} ${c.title || ''}`))) {
+        const late = document.createElement('span');
+        late.className = 'rf-sc-mark';
+        late.textContent = '📝途中希望';
+        late.title = '締切後（途中提出）の希望が届いています';
+        late.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+          'color:#1d4ed8;background:#e8effd;border:1px solid #b6c8f5;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
+        box.appendChild(late);
+      }
     }
   }
 
@@ -1425,10 +1435,13 @@
         // 最背面の塗りに変更（本人指定2026-08-05「依頼中や拒否のラインも同様に最背面の塗りつぶしで」）。
         // 全高フィル＋左右の細エッジで区間を示す。z=2＝不足/過剰帯(z1)の上・バー(z200)の下。
         // クリック透過でシフト編集を妨げず、ホバー用の小チップ(前面)は従来どおり。
-        // 休み系の依頼は黄でなく赤（本人指定2026-08-06）。拒否も従来どおり赤（✕付き）
-        const isOff = /休み|休暇/.test(`${c.change || ''} ${c.title || ''}`);
-        const bg = (rejected || isOff) ? '#dc2626' : '#f5b301';
-        const fill = (rejected || isOff) ? 'rgba(220,38,38,.16)' : 'rgba(245,179,1,.22)';
+        // 休み系=赤（本人指定2026-08-06）・途中提出の希望=青（本人指定2026-08-06「途中提出の
+        // 希望はわかりやすい表示が欲しい」・起票時に【途中希望】を付ける運用）・通常=黄。拒否=赤✕
+        const blob = `${c.change || ''} ${c.title || ''}`;
+        const isOff = /休み|休暇/.test(blob);
+        const isLate = /途中希望|追加希望|再提出/.test(blob);
+        const bg = (rejected || isOff) ? '#dc2626' : isLate ? '#2563eb' : '#f5b301';
+        const fill = (rejected || isOff) ? 'rgba(220,38,38,.16)' : isLate ? 'rgba(37,99,235,.16)' : 'rgba(245,179,1,.22)';
         const band = document.createElement('div');
         band.className = 'rf-req-line';
         band.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:0;bottom:0;` +
@@ -1449,7 +1462,7 @@
         chip.dataset.tip = title;
         chip.style.cssText = `position:absolute;left:${s - 360}px;top:${top}px;width:15px;height:15px;` +
           `z-index:301;cursor:default;box-sizing:border-box;border-radius:4px;background:${bg};` +
-          `border:1px solid ${(rejected || isOff) ? '#b91c1c' : '#d99500'};box-shadow:0 1px 2px rgba(0,0,0,.2);`;
+          `border:1px solid ${(rejected || isOff) ? '#b91c1c' : isLate ? '#1e40af' : '#d99500'};box-shadow:0 1px 2px rgba(0,0,0,.2);`;
         track.appendChild(chip);
         if (rejected) {
           const x = document.createElement('div');
