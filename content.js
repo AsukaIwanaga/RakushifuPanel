@@ -4279,6 +4279,11 @@
 
   async function updateDraftGhosts() {
     document.querySelectorAll('.rf-draft-ghost').forEach((e) => e.remove());
+    // 原案ゴースト（バー下の灰色下線）は2026-08-06廃止（本人「もうスケジューラーで
+    // 引いていないので下線は不要」。原案→反映ワークフロー廃止(8/5)後は古い原案の
+    // 残骸が出続けるだけだった）。既存要素の掃除だけ残して描画はしない。
+    return;
+    // eslint-disable-next-line no-unreachable
     if (isPrintPage || !onOneDayTarget()) return;
     const byUser = await loadDraftDay(ymd(targetDate));
     if (!byUser || !byUser.size) return;
