@@ -2757,18 +2757,29 @@
         const pinCats = (sectionCatOf(tr) === 'K') ? ['K', 'FK', 'NP'] : ['F', 'FK', 'NP'];
         const pins = rowsCat.filter((x) => pinCats.includes(x.cat)).map((x) => x.row);
         const tlTh = tbl.querySelector('th.timeline-sticky');
-        if (tlTh && pins.length) requestAnimationFrame(() => {
-          let top0 = (parseFloat(getComputedStyle(tlTh).top) || 0) + tlTh.getBoundingClientRect().height;
-          for (const row of pins) {
-            const h = row.getBoundingClientRect().height;
-            for (const cell of row.children) {
-              const isTh = cell.tagName === 'TH';
-              cell.style.cssText += `;position:sticky;top:${top0}px;z-index:${isTh ? 1099 : 990};` +
-                `background:${row.style.background || '#fff'}${isTh ? ' !important' : ''};`;
+        if (tlTh && pins.length) {
+          // ずれ対策(2026-08-06 本人報告): レイアウト前(高さ0)や旧世代(再注入で除去済み)の行を
+          // 測ると全行のオフセットが潰れて同位置に重なる。接続確認＋高さが出るまでリトライ。
+          let tries = 0;
+          const assign = () => {
+            if (!pins.every((r) => r.isConnected)) return;   // 旧世代＝新しい注入に任せる
+            if (pins.some((r) => r.getBoundingClientRect().height < 5)) {
+              if (++tries < 30) requestAnimationFrame(assign);
+              return;
             }
-            top0 += h;
-          }
-        });
+            let top0 = (parseFloat(getComputedStyle(tlTh).top) || 0) + tlTh.getBoundingClientRect().height;
+            for (const row of pins) {
+              const h = row.getBoundingClientRect().height;
+              for (const cell of row.children) {
+                const isTh = cell.tagName === 'TH';
+                cell.style.cssText += `;position:sticky;top:${top0}px;z-index:${isTh ? 1099 : 990};` +
+                  `background:${row.style.background || '#fff'}${isTh ? ' !important' : ''};`;
+              }
+              top0 += h;
+            }
+          };
+          requestAnimationFrame(assign);
+        }
       }
     }
     updateGapBands();
