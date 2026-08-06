@@ -2768,15 +2768,18 @@
               return;
             }
             let top0 = (parseFloat(getComputedStyle(tlTh).top) || 0) + tlTh.getBoundingClientRect().height;
-            for (const row of pins) {
+            pins.forEach((row, pi) => {
               const h = row.getBoundingClientRect().height;
+              row.classList.add('rf-pinned');
+              // 最下段には影を付けて「ここから下はスクロールで潜る」境界を見せる
+              const shadow = pi === pins.length - 1 ? 'box-shadow:0 3px 5px -2px rgba(0,0,0,.25);' : '';
               for (const cell of row.children) {
                 const isTh = cell.tagName === 'TH';
                 cell.style.cssText += `;position:sticky;top:${top0}px;z-index:${isTh ? 1099 : 990};` +
-                  `background:${row.style.background || '#fff'}${isTh ? ' !important' : ''};`;
+                  `background:${row.style.background || '#fff'}${isTh ? ' !important' : ''};${shadow}`;
               }
               top0 += h;
-            }
+            });
           };
           requestAnimationFrame(assign);
         }
@@ -4386,6 +4389,24 @@
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
     guarded('gapBands', () => { if (lastGap && !document.querySelector('.rf-gap-band')) updateGapBands(); });
+    // 固定行の潰れ検知（同一表内でtopが単調増加していなければ積み直し＝再注入）
+    guarded('pinFix', () => {
+      if (!lastLE) return;
+      const byT = new Map();
+      for (const r of document.querySelectorAll('.rf-pinned')) {
+        const t = r.closest('table');
+        if (!t) continue;
+        if (!byT.has(t)) byT.set(t, []);
+        byT.get(t).push(r);
+      }
+      for (const rows of byT.values()) {
+        const tops = rows.map((r) => parseFloat((r.firstElementChild || {}).style?.top) || 0);
+        if (tops.some((v, i) => i && v <= tops[i - 1])) {
+          updateLERows(lastLE.le, lastLE.reqPack, lastLE.act);
+          return;
+        }
+      }
+    });
     // 原案ゴースト: 対象日に原案があるのに消えていたら張り直す
     if (lastDraftDay && lastDraftDay.byUser && lastDraftDay.byUser.size &&
         onOneDayTarget() && !document.querySelector('.rf-draft-ghost')) {
