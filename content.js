@@ -2435,6 +2435,23 @@
     });
   }
 
+  // 注入アンカー: セクション表ごとに 修正客数 → 客数実績 → 客数計画 の優先順でthを1つ選ぶ。
+  // 経緯(2026-08-06): 回収期間終了後の日（8/22実測）は前年客数・修正客数行が出ず、
+  // 「修正客数」固定アンカーだとLE行・生産性行・塗りが丸ごと不発になっていた。
+  function metricAnchorThs() {
+    const byTbl = new Map();
+    for (const th2 of document.querySelectorAll('th.metrics-row-header')) {
+      const txt = th2.textContent || '';
+      const tb = th2.closest('table');
+      if (!tb) continue;
+      const rank = txt.includes('修正客数') ? 3 : txt.includes('客数実績') ? 2 : txt.includes('客数計画') ? 1 : 0;
+      if (!rank) continue;
+      const cur = byTbl.get(tb);
+      if (!cur || rank > cur.rank) byTbl.set(tb, { th: th2, rank });
+    }
+    return [...byTbl.values()].map((x) => x.th);
+  }
+
   function updateLERows(le, reqPack, act) {
     lastLE = le ? { le, reqPack, act } : null;
     if (!le) lastGap = null;
@@ -2443,8 +2460,7 @@
       .forEach((e) => e.remove());
     document.querySelectorAll('[data-rf-fill]').forEach((e) => delete e.dataset.rfFill);
     if (!le || !onOneDayTarget()) return;
-    const labels = [...document.querySelectorAll('th.metrics-row-header')]
-      .filter((th) => (th.textContent || '').includes('修正客数'));
+    const labels = metricAnchorThs();
     for (const th of labels) {
       const tr = th.closest('tr');
       if (!tr) continue;
@@ -4318,8 +4334,7 @@
     [...document.querySelectorAll(sel)].filter((e) => sectionCatOf(pick ? pick(e) : e));
   const leRowsIntact = () => {
     if (isPrintPage) return !!document.querySelector('.rf-le-row-p');
-    const secs = targetSections('th.metrics-row-header', (th) => th.closest('tr') || th)
-      .filter((th) => (th.textContent || '').includes('修正客数'));
+    const secs = metricAnchorThs().filter((th) => sectionCatOf(th.closest('tr') || th));
     if (!secs.length) return true;   // まだ描画されていない＝張り直しても入れる先がない
     return document.querySelectorAll('.rf-le-row').length >= secs.length;
   };
