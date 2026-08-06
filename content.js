@@ -38,6 +38,7 @@
     if (name === 'F' || name === 'K' || name === 'FK') return name;
     if (/^BU/.test(name || '')) return 'K';
     if (['MGT', 'TRer', 'TRee'].includes(name)) return isRegular ? 'MGT' : 'cMGT';
+    if (/スタンバイ/.test(name || '')) return 'NP';   // 非生産（本人指定2026-08-06）
     return null;
   };
   // パネル上部の統計チップ
@@ -326,13 +327,13 @@
     // 二重に数える（MGT/cMGTはOP H外という計上ルールに直結しており、そこから
     // 抜くと人時の数字が変わってしまうため）。実計・不足には一切影響しない。
     const act = { F: zero(), K: zero(), FK: zero(), MGT: zero(), cMGT: zero(),
-                  TR: zero(), total: zero() };
+                  TR: zero(), NP: zero(), total: zero() };
     // 30分粒度の並走集計（2026-08-05 本人指定「思いっきり30分ごとに」。表示・帯用）。
     // スロットk = [360+30k, 390+30k) 分。値はそのスロットの平均頭数（分/30）。
     const N30 = 36;
     const zero30 = () => Array.from({ length: N30 }, () => 0);
     const act30 = { F: zero30(), K: zero30(), FK: zero30(), MGT: zero30(), cMGT: zero30(),
-                    TR: zero30(), total: zero30() };
+                    TR: zero30(), NP: zero30(), total: zero30() };
     const net30 = (sh, a1, a2, k) => {
       const s = Math.max(a1, 360 + k * 30), e = Math.min(a2, 390 + k * 30);
       let m = Math.max(0, e - s);
@@ -406,10 +407,10 @@
             actT[mv.grp][i] += m;
             alloc += m;
             if (mv.tr) actT.TR[i] += m; // 参考枠（MGT/cMGTと二重計上・実計には不算入）
-            if (mv.grp === 'MGT' || mv.grp === 'cMGT') mgt += m;
+            if (mv.grp === 'MGT' || mv.grp === 'cMGT' || mv.grp === 'NP') mgt += m;
           }
           actT[grp][i] += Math.max(0, total - alloc); // 振替以外は所属グループ
-          actT.total[i] += total - mgt;               // 実計(OP H)はMGT系を除く
+          actT.total[i] += total - mgt;               // 実計(OP H)はMGT系・非生産(スタンバイ)を除く
         }
       };
       accum(act, userHour, HOURS.length, (sh2, a1, a2, i) => net(sh2, a1, a2, HOURS[i]));
@@ -418,7 +419,7 @@
     act.h30 = act30;   // 30分粒度（表示・帯用の追加データ。sumは時間別のまま）
     const r1 = (v) => Math.round(v * 10) / 10;
     act.sum = {};
-    for (const k of ['F', 'K', 'FK', 'MGT', 'cMGT', 'TR', 'total']) {
+    for (const k of ['F', 'K', 'FK', 'MGT', 'cMGT', 'TR', 'NP', 'total']) {
       act.sum[k] = r1(act[k].reduce((a, b) => a + b, 0));
       act[k] = act[k].map(r1);
     }
@@ -2134,7 +2135,9 @@
           HOURS.forEach((h, i) => { planG[g][i] = Number((c[g] || [])[i]) || 0; });
       }
     }
-    const sch = actual ? { F: actual.F, K: actual.K, FK: actual.FK, TR: actual.TR } : null;
+    // 非生産SCH = TR(研修枠) + NP(スタンバイ等の非生産タスク・2026-08-06追加)
+    const sch = actual ? { F: actual.F, K: actual.K, FK: actual.FK,
+                           TR: actual.TR.map((v, i) => v + ((actual.NP || [])[i] || 0)) } : null;
     // ===== 30分粒度（2026-08-05 本人指定）: PLAN=rows.h30/fixedH30（無い型は時間値を流用）・
     // SCH=act.h30（実シフトの30分並走集計）。表示のセル2分割と帯はこちらを使う =====
     const N30 = 36;
@@ -2157,7 +2160,9 @@
           for (let k = 0; k < N30; k++) planG30[g][k] = Number((c[g] || [])[k >> 1]) || 0;
       }
     }
-    const sch30 = actual && actual.h30 ? actual.h30 : null;
+    const sch30raw = actual && actual.h30 ? actual.h30 : null;
+    const sch30 = sch30raw ? { ...sch30raw,
+      TR: sch30raw.TR.map((v, k) => v + ((sch30raw.NP || [])[k] || 0)) } : null;
     const groups = [];
     for (const g of ['F', 'K', 'FK']) {
       const p = planG[g], s = (sch && sch[g]) || zero();
@@ -2358,7 +2363,7 @@
         `<span style="color:#8c8c88">h:</span>` +
         seg('F', planH.F, sch && sch.F) + seg('K', planH.K, sch && sch.K) +
         seg('FK', planH.FK, sch && sch.FK) +
-        seg('非生産', planFix, sch && sch.TR) +
+        seg('非生産', planFix, sch && Math.round(((sch.TR || 0) + (sch.NP || 0)) * 10) / 10) +
         `<span style="color:#8c8c88;font-size:11px;white-space:nowrap" title="PLAN非生産=モデルWSの固定作業／SCH非生産=らくしふのTR(研修)枠で代用">琥珀=PLAN/紫=SCH</span>`;
       bar.querySelector('.rf-ws-sel').addEventListener('change', async (ev) => {
         const sel = ev.target;
@@ -2757,7 +2762,7 @@
             rowsCat.push({ row: r3, cat: sub2 || 'NP' });
           };
           add2('非生産', '', 'PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan, null, mcd.fixP30);
-          add2('', '', 'SCH(TR)', mcd.schTR.map(fmt), MCD_COLORS.sch, null, mcd.schTR30);
+          add2('', '', 'SCH(TR/SB)', mcd.schTR.map(fmt), MCD_COLORS.sch, null, mcd.schTR30);
         }
       }
 
