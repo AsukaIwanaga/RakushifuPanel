@@ -1425,8 +1425,10 @@
         // 最背面の塗りに変更（本人指定2026-08-05「依頼中や拒否のラインも同様に最背面の塗りつぶしで」）。
         // 全高フィル＋左右の細エッジで区間を示す。z=2＝不足/過剰帯(z1)の上・バー(z200)の下。
         // クリック透過でシフト編集を妨げず、ホバー用の小チップ(前面)は従来どおり。
-        const bg = rejected ? '#dc2626' : '#f5b301';
-        const fill = rejected ? 'rgba(220,38,38,.16)' : 'rgba(245,179,1,.22)';
+        // 休み系の依頼は黄でなく赤（本人指定2026-08-06）。拒否も従来どおり赤（✕付き）
+        const isOff = /休み|休暇/.test(`${c.change || ''} ${c.title || ''}`);
+        const bg = (rejected || isOff) ? '#dc2626' : '#f5b301';
+        const fill = (rejected || isOff) ? 'rgba(220,38,38,.16)' : 'rgba(245,179,1,.22)';
         const band = document.createElement('div');
         band.className = 'rf-req-line';
         band.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:0;bottom:0;` +
@@ -1447,7 +1449,7 @@
         chip.dataset.tip = title;
         chip.style.cssText = `position:absolute;left:${s - 360}px;top:${top}px;width:15px;height:15px;` +
           `z-index:301;cursor:default;box-sizing:border-box;border-radius:4px;background:${bg};` +
-          `border:1px solid ${rejected ? '#b91c1c' : '#d99500'};box-shadow:0 1px 2px rgba(0,0,0,.2);`;
+          `border:1px solid ${(rejected || isOff) ? '#b91c1c' : '#d99500'};box-shadow:0 1px 2px rgba(0,0,0,.2);`;
         track.appendChild(chip);
         if (rejected) {
           const x = document.createElement('div');
