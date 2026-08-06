@@ -2641,9 +2641,8 @@
           d.className = 'rf-fill';
           // 30分セル表示: 時間値の半分を左右の半セルに（本人指定2026-08-05）
           d.style.cssText = `font-weight:700;color:${color};display:flex;flex:1 1 100%;align-self:stretch;`;
-          // 客数系は整数・売上系は小数1桁（本人指定2026-08-06「LE客数は四捨五入して整数」）
-          const hv = labelTxt.includes('客数')
-            ? String(Math.round(v / 2)) : String(Math.round(v / 2 * 10) / 10);
+          // 行埋めはすべて四捨五入の整数（本人指定2026-08-06。客数系→売上系の順で整数化）
+          const hv = String(Math.round(v / 2));
           const half2 = (extra) =>
             `<span style="flex:1 1 50%;min-width:0;display:flex;align-items:center;` +
             `justify-content:center;font-size:11.5px;line-height:1;${extra}">${hv}</span>`;
