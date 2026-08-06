@@ -2453,6 +2453,13 @@
   }
 
   function updateLERows(le, reqPack, act) {
+    // 診断ログ（2026-08-06 8/22で注入ゼロ問題の追跡用。入口条件の実値を出す）
+    try {
+      console.info('[rf-dbg] LERows', JSON.stringify({
+        le: !!le, oneDay: onOneDayTarget(), from: urlParams().from,
+        target: ymd(targetDate), anchors: metricAnchorThs().length, print: isPrintPage,
+      }));
+    } catch (e) { console.info('[rf-dbg] LERows log fail', String(e)); }
     lastLE = le ? { le, reqPack, act } : null;
     if (!le) lastGap = null;
     if (isPrintPage) { updatePrintRows(le, reqPack); return; }
@@ -2463,6 +2470,8 @@
     const labels = metricAnchorThs();
     for (const th of labels) {
       const tr = th.closest('tr');
+      console.info('[rf-dbg] anchor', (th.textContent || '').trim().slice(0, 6),
+        'tr:', !!tr, 'sec:', tr ? sectionCatOf(tr) : null);
       if (!tr) continue;
       // 清掃・正社員セクションにも修正客数行があれば拾ってしまうため、
       // 帯と同じ判定でフロア/キッチンだけに絞る
