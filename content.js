@@ -975,22 +975,35 @@
 
   // 対象日の文字列から {mo,da} を全部拾う（例 "7/23" / "07-23" / "7/26〜7/30"）
   const scDateTokens = (v) => {
+    const s = String(v || '');
     const out = [];
-    const re = /(\d{1,2})\s*[\/月\-]\s*(\d{1,2})/g;
     let m;
-    while ((m = re.exec(String(v || '')))) out.push({ mo: +m[1], da: +m[2] });
+    // ISO形式(YYYY-MM-DD)が含まれる場合はそちらを優先して読む。
+    // 旧実装はM/d用の正規表現が「2026-08-04」の年を誤食して26月8日等の不正トークンを
+    // 生んでいた（國分さんの12日カンマ列挙が1件もマッチしない原因・2026-08-06修正）
+    const reIso = /\d{4}-(\d{1,2})-(\d{1,2})/g;
+    while ((m = reIso.exec(s))) out.push({ mo: +m[1], da: +m[2] });
+    if (out.length) return out;
+    const re = /(\d{1,2})\s*[\/月\-]\s*(\d{1,2})/g;
+    while ((m = re.exec(s))) out.push({ mo: +m[1], da: +m[2] });
     return out;
   };
   // 対象日(単日 or 期間 "7/26〜7/30")が指定日を含むか。
   // 期間は年跨ぎ(12/28〜1/3)も通るよう、月日を通し番号(月*100+日)にして判定する。
   const scMatchesDay = (c, d) => {
-    const t = scDateTokens(c.target_date);
+    const raw = String(c.target_date || '');
+    const t = scDateTokens(raw);
     if (!t.length) return false;
     const key = (mo, da) => mo * 100 + da;
     const target = key(d.getMonth() + 1, d.getDate());
     if (t.length === 1) return target === key(t[0].mo, t[0].da);
-    const a = key(t[0].mo, t[0].da), b = key(t[1].mo, t[1].da);
-    return a <= b ? (target >= a && target <= b) : (target >= a || target <= b);
+    // 「〜」があれば期間（先頭2つの範囲）。無ければ列挙（カンマ区切り等）＝どれかに一致でOK
+    // （旧実装は列挙も先頭2つの範囲として扱い、12日列挙などが正しくマッチしなかった）
+    if (/[〜~～]/.test(raw)) {
+      const a = key(t[0].mo, t[0].da), b = key(t[1].mo, t[1].da);
+      return a <= b ? (target >= a && target <= b) : (target >= a || target <= b);
+    }
+    return t.some((x) => target === key(x.mo, x.da));
   };
   // target_date 文字列を入力欄2つ（開始/終了）へ分解する（"7/26〜7/30" → {from,to}）
   const scSplitDate = (v) => {
