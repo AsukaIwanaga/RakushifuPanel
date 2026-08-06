@@ -1598,8 +1598,11 @@
     } else {
       // freeformは末尾の「に変更/へ変更」を落として二重表現を防ぐ（例「14時入りに変更」→「14時入り」）
       const after = String(change || '').trim().replace(/[にへ]変更$/, '').trim() || String(change || '').trim();
-      // 変更内容が空なら「〜に変更」だけが残って文が壊れるので、汎用文にする
-      body = after ? `${after}に変更願えませんでしょうか。` : '変更をお願いできませんでしょうか。';
+      // 変更内容が空なら「〜に変更」だけが残って文が壊れるので、汎用文にする。
+      // 「〜延長/短縮」で終わる文は「延長に変更」と二重になるため「願えませんか？」で結ぶ（本人指定2026-08-06）
+      body = !after ? '変更をお願いできませんでしょうか。'
+        : /(延長|短縮)$/.test(after) ? `${after}願えませんか？`
+          : `${after}に変更願えませんでしょうか。`;
     }
     return `お疲れ様です。${urgent}${dateLabel}${span ? ` ${span}` : ''}のシフトについて、${body}`;
   }
@@ -1684,9 +1687,13 @@
       // 勤務時間 = モーダル先頭の4つのselect（開始 時:分 〜 終了 時:分）。「休み」タブ等で無ければ空
       const sels = [...root.querySelectorAll('select')];
       const hv = (s) => (s && /^\d{1,2}$/.test(s.value) ? s.value : '');
+      const p2m = (v) => String(v || '0').padStart(2, '0');
       const t = sels.length >= 4 && hv(sels[0]) && hv(sels[2])
-        ? `${sels[0].value}:${sels[1].value || '00'}-${sels[2].value}:${sels[3].value || '00'}` : '';
-      scOpenNewFor(name, { dateStr, reqTime: t, change: t ? `現在${t}のところ、` : '' });
+        ? `${sels[0].value}:${p2m(sels[1].value)}-${sels[2].value}:${p2m(sels[3].value)}` : '';
+      // 文言は「HH時あがりのところ、」形式（本人指定2026-08-06。旧「現在20:0-21:0のところ、」は
+      // 分のゼロ埋め漏れ＋不自然だった）。延長依頼が主用途なので終業時刻を主語にする。
+      const endTok = t ? `${+sels[2].value}時${p2m(sels[3].value) !== '00' ? `${p2m(sels[3].value)}分` : ''}` : '';
+      scOpenNewFor(name, { dateStr, reqTime: t, change: endTok ? `${endTok}あがりのところ、` : '' });
     });
     cancel.insertAdjacentElement('afterend', btn);
   }
