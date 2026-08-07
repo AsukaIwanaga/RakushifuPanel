@@ -2061,20 +2061,24 @@
     if (!per || isPrintPage) return; // 印刷画面にはバッジを出さない（紙に載せない）
     for (const nameEl of document.querySelectorAll('.user-cell .name')) {
       const nm = (nameEl.textContent || '').replace(/\s+/g, '');
-      const st = per[nm];
+      // 週データに居ない人＝この週の出勤ゼロ(全休)。以前はバッジを消していたが、
+      // 全休でも「週0日/0h」を出す（本人指定2026-08-08「全部休みでも出してほしい」）
+      const st = per[nm] || { days: new Set(), mins: 0 };
       const box = badgeBox(nameEl);
       if (!box) continue;
       let b = box.querySelector('.rf-week-badge');
-      if (!st) { b?.remove(); continue; }
       if (!b) {
         b = document.createElement('span');
         b.className = 'rf-week-badge';
         b.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
-          'color:#2c6e49;background:#eef4f0;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
+          'border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
         box.appendChild(b);
       }
       b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h`;
       b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）`;
+      // 週0(全休)はグレー、出勤ありは緑
+      b.style.color = st.days.size ? '#2c6e49' : '#8c8c88';
+      b.style.background = st.days.size ? '#eef4f0' : '#f3f3f1';
 
       // 出勤曜日の表示（月〜日、出勤日を濃く）
       let wd = box.querySelector('.rf-week-days');
