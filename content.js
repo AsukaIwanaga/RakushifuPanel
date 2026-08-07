@@ -2353,6 +2353,12 @@
       String(a.name || '').localeCompare(String(b.name || ''), 'ja', { numeric: true }));
     const opts = `<option value="">自動${autoT ? `（${autoT.name}）` : ''}</option>` +
       tpls.map((t) => `<option value="${t.id}"${ovr === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
+    // モデルWSの日客(型名の数値)がLE予測を下回る日は赤で警告（本人指定2026-08-08）
+    const wsNum = tpl ? parseFloat(String(tpl.name).replace(/[^\d.]/g, '')) : null;
+    const wsShort = wsNum != null && leSum > wsNum;
+    const shortTitle = wsShort
+      ? `モデルWSの日客(${wsNum})がLE予測(${Math.round(leSum)})を下回っています。型を上げるか個別調整を検討`
+      : '';
     // 拡張パネルと同じデザイントーン（白地・角なし・warm gray・赤下線ワンポイント・本人指定2026-08-05）
     const seg = (lbl, p, s2) =>
       `<span style="white-space:nowrap"><b style="color:#474743;font-weight:600">${lbl}</b>` +
@@ -2372,8 +2378,15 @@
         'vertical-align:middle;color:#161616;white-space:nowrap;';
       bar.innerHTML =
         `<b style="color:#161616;font-size:13.5px;font-weight:700;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px;white-space:nowrap">モデルWS</b>` +
-        `<select class="rf-ws-sel" title="この日に適用するモデルWS型。自動=条件/曜日割当に従う（変更はparams.jsonに保存＝スケジューラーと共通）" ` +
-        `style="font-size:13.5px;padding:1px 4px;max-width:190px;border:1px solid #d9d8d2;border-radius:0;background:#fff;color:#161616">${opts}</select>` +
+        `<select class="rf-ws-sel" title="${wsShort ? esc(shortTitle) : 'この日に適用するモデルWS型。自動=条件/曜日割当に従う（変更はparams.jsonに保存＝スケジューラーと共通）'}" ` +
+        `style="font-size:13.5px;padding:1px 4px;max-width:190px;border-radius:0;` +
+        `border:1px solid ${wsShort ? '#dc2626' : '#d9d8d2'};` +
+        `background:${wsShort ? '#fdeaea' : '#fff'};color:${wsShort ? '#dc2626' : '#161616'};` +
+        `font-weight:${wsShort ? 700 : 400}">${opts}</select>` +
+        (wsShort
+          ? `<span style="color:#dc2626;font-size:11.5px;font-weight:700;white-space:nowrap" ` +
+            `title="${esc(shortTitle)}">⚠LE ${Math.round(leSum)}</span>`
+          : '') +
         `<a href="http://mac-mini.tail1f88ff.ts.net:8790/#ws" target="_blank" rel="noopener" ` +
         `title="スケジューラーのモデルWS設定を開く（固定作業の編集もこちら）" ` +
         `style="font-size:12px;color:#1a5fb4;text-decoration:none;white-space:nowrap">⚙編集↗</a>` +
