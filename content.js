@@ -4407,7 +4407,8 @@
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
     guarded('gapBands', () => { if (lastGap && !document.querySelector('.rf-gap-band')) updateGapBands(); });
-    // 固定行の潰れ検知（同一表内でtopが単調増加していなければ積み直し＝再注入）
+    // 固定行のずれ検知（v1.140: 割当後に行の高さが変わると単調増加のままずれるので、
+    // 「期待top＝直上行の底」と実topの一致まで見る。ずれたらtopだけその場で積み直す）
     guarded('pinFix', () => {
       if (!lastLE) return;
       const byT = new Map();
@@ -4417,11 +4418,23 @@
         if (!byT.has(t)) byT.set(t, []);
         byT.get(t).push(r);
       }
-      for (const rows of byT.values()) {
-        const tops = rows.map((r) => parseFloat((r.firstElementChild || {}).style?.top) || 0);
-        if (tops.some((v, i) => i && v <= tops[i - 1])) {
-          updateLERows(lastLE.le, lastLE.reqPack, lastLE.act);
-          return;
+      for (const [tbl2, rows] of byT) {
+        const tlTh = tbl2.querySelector('th.timeline-sticky');
+        if (!tlTh) continue;
+        let exp = (parseFloat(getComputedStyle(tlTh).top) || 0) + tlTh.getBoundingClientRect().height;
+        let bad = false;
+        const plan = [];
+        for (const r of rows) {
+          const h = r.getBoundingClientRect().height;
+          if (h < 5) { bad = null; break; }   // レイアウト中→今回ティックは見送り
+          const cur = parseFloat((r.firstElementChild || {}).style?.top) || 0;
+          if (Math.abs(cur - exp) > 1) bad = true;
+          plan.push([r, exp]);
+          exp += h;
+        }
+        if (!bad) continue;
+        for (const [r, top] of plan) {
+          for (const cell of r.children) cell.style.top = `${top}px`;
         }
       }
     });
