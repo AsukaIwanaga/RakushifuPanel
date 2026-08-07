@@ -635,6 +635,8 @@
       .sc-title .rejected { color: var(--mut); }
       .sc-title .sc-nodate { font-size: 10px; font-weight: 700; color: var(--warn); background: transparent;
         border: 1px solid var(--warn); border-radius: 0; padding: 1px 4px; white-space: nowrap; }
+      .sc-title .sc-multi { font-size: 10px; font-weight: 700; color: var(--ink2); background: transparent;
+        border: 1px solid var(--line2); border-radius: 0; padding: 1px 4px; white-space: nowrap; cursor: help; }
       .sc-rej-form, .sc-del-form { display: flex; gap: 5px; margin-top: 5px; }
       .sc-rej-form input, .sc-del-form input { flex: 1; border: 1px solid var(--line2); border-radius: 0; padding: 4px 8px; font-size: 13px; background: var(--panel); color: var(--ink); }
       .sc-rej-form .sc-rej-do { border: 1px solid var(--mut); background: var(--mut); color: #fff; border-radius: 0; cursor: pointer; padding: 3px 11px; font-size: 12.5px; }
@@ -1191,7 +1193,22 @@
     return `${sh}:${v('sm') || '00'}-${eh}:${v('em') || '00'}`;
   }
 
-  function scCard(c) {
+  // タイトル内の「日付の連なり」（ISO/M月d日/M/d がカンマ・読点で2つ以上連続）。
+  // 期間(〜)や本文中の単発日付("8/4-8/7"等)は畳まない。
+  const scDateRunRe = /(?:\d{4}-)?\d{1,2}[\/月-]\d{1,2}日?(?:\s*[,、，]\s*(?:\d{4}-)?\d{1,2}[\/月-]\d{1,2}日?)+/;
+
+  function scCard(c, dayMode) {
+    // 複数日列挙の依頼は「この日」表示ではその日の分として見せる（本人指定2026-08-08:
+    // 國分さんのような列挙が紛らわしい）。台帳データは変えず表示だけ当日に畳む。
+    let title = String(c.title || '');
+    let multi = '';
+    const rawDates = String(c.target_date || '');
+    if (dayMode && !/[〜~～]/.test(rawDates) && scDateTokens(rawDates).length > 1) {
+      const n = scDateTokens(rawDates).length;
+      const cur = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
+      title = title.replace(scDateRunRe, cur);
+      multi = `<span class="sc-multi" title="全対象日: ${esc(rawDates)}">📅全${n}日</span>`;
+    }
     const checks = SC_CHECKS.map(([k, lbl]) =>
       `<label><input type="checkbox" data-p="${esc(c.path)}" data-k="${k}" ${c[k] ? 'checked' : ''}>${lbl}</label>`
     ).join('');
@@ -1209,7 +1226,7 @@
     const noDate = !scClosed(c) && !(c.target_date || '').trim()
       ? '<span class="sc-nodate" title="対象日が未記入です。毎日バッジ・ラインが出ます。✏️で対象日を入れてください">📅未記入</span>' : '';
     return `<div class="sc-card${scClosed(c) ? ' done' : ''}">
-      <div class="sc-title">${head} ${esc(c.title)} ${noDate}
+      <div class="sc-title">${head} ${esc(title)} ${multi} ${noDate}
         <span class="sc-meta">${c.checked_count}/6</span>
         ${rejBtn}
         <button class="sc-edit-btn" data-p="${esc(c.path)}" title="この依頼を編集（対象者/日/変更内容/対象時間）">✏️</button>
@@ -1262,7 +1279,7 @@
         ? cases.filter((c) => scMatchesDay(c, targetDate)
             || (!scClosed(c) && !(c.target_date || '').trim()))
       : open;
-    el.innerHTML = list.map(scCard).join('') ||
+    el.innerHTML = list.map((c) => scCard(c, scFilter === 'day')).join('') ||
       `<span class="muted">${scFilter === 'day' ? 'この日の依頼なし' : '未完了なし 🎉'}</span>`;
     // 🔁バッジの数はフィルタに追従する（「この日」なら当日分の未完了だけ・本人指定2026-07-23）
     const n = scFilter === 'day' ? list.filter((c) => !scClosed(c)).length : open.length;
