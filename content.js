@@ -2459,41 +2459,63 @@
     }
   }
 
-  // ===== 前年客数・修正客数の下に LE客数 行と 必要人数(REQ計) 行を注入 =====
-  // 印刷画面用: .custom-field-rows(前年/修正客数)へ行を追加。
-  // グループはDOM順=編集画面のセクション順(フロア→キッチン)前提で F/K を割当
+  // ===== 印刷画面(パターン1)へ LE客数 行と 必要人数(REQ計) 行を注入 =====
+  // 実測(2026-08-08 headless): パターン1の各ページ塊は .shift-table-column
+  //   > .hour-row = [.empty(ラベル128px) + .user-extra-column(64px) + .hour-col×19(6〜24時)]
+  //   > .custom-field-rows（前年/修正客数の器。今は常に空＝旧クローン方式が不発だった原因）。
+  // 時間軸行(hour-row)をクローンして列幅を完全に合わせ、custom-field-rows に行を積む。
+  // セクションは直前見出しのテキスト（(フロア)/(キッチン)等）で判定。パターン2には
+  // .shift-table-column が（表示状態で）無いので自然にパターン1限定になる。
   function updatePrintRows(le, reqPack) {
     document.querySelectorAll('.rf-le-row-p, .rf-req-row-p').forEach((e) => e.remove());
     if (!le || !onOneDayTarget()) return;
-    const groups = [...document.querySelectorAll('.custom-field-rows')].filter((g) => g.children.length > 0);
-    groups.forEach((g, gi) => {
-      const proto = [...g.children].find((r) =>
-        (r.querySelector('.header')?.textContent || '').includes('修正客数')) || g.lastElementChild;
-      if (!proto) return;
-      const mk = (cls, label, vals, color, total) => {
-        const clone = proto.cloneNode(true);
-        clone.classList.add(cls);
-        const head = clone.querySelector('.header');
-        if (head) {
-          head.innerHTML = `<span style="font-weight:700;color:${color};">${label}</span>` +
-            `<span style="color:${color};">合計: ${total || '-'}</span>`;
+    const secOf = (el) => {
+      let cur = el;
+      while (cur) {
+        let prev = cur.previousElementSibling;
+        while (prev) {
+          const t = (prev.textContent || '').trim().slice(0, 40);
+          const m = t.match(/[（(](フロア|キッチン|清掃|正社員)[)）]/);
+          if (m) return m[1];
+          prev = prev.previousElementSibling;
         }
-        const cells = [...clone.children].filter((c) => !c.classList.contains('header'));
-        cells.forEach((cell, idx) => {
-          cell.textContent = idx < HOURS.length ? (vals[idx] || '') : '';
-          cell.style.color = color;
-          cell.style.fontWeight = '700';
-        });
-        g.appendChild(clone);
+        cur = cur.parentElement;
+      }
+      return null;
+    };
+    for (const col of document.querySelectorAll('.shift-table-column')) {
+      const hr = col.querySelector('.hour-row');
+      const box = col.querySelector('.custom-field-rows');
+      if (!hr || !box) continue;
+      const sec = secOf(col);
+      const mk = (cls, label, vals, color, total) => {
+        const row = hr.cloneNode(true);
+        row.classList.add(cls);
+        row.style.cssText += ';background:#fff;border-top:1px solid #ddd;';
+        const lab = row.querySelector('.empty');
+        if (lab) {
+          lab.innerHTML = `<span style="font:700 10px/1.3 'Hiragino Sans',sans-serif;color:${color};` +
+            `display:block;text-align:left;padding:1px 3px;white-space:nowrap;">${label}` +
+            `${total != null ? ` <span style="font-weight:400">計${total}</span>` : ''}</span>`;
+        }
+        // 列は時刻ラベルで対応付け（印刷は6〜24時の19列・HOURSは6〜23の18本）
+        for (const cell of row.querySelectorAll('.hour-col')) {
+          const h = parseInt((cell.textContent || '').trim(), 10);
+          const idx = HOURS.indexOf(h);
+          const v = idx >= 0 ? (vals[idx] || '') : '';
+          cell.innerHTML = `<span style="font:700 10px/1.3 -apple-system,sans-serif;color:${color};">${v}</span>`;
+        }
+        box.appendChild(row);
       };
       mk('rf-le-row-p', 'LE客数', le.hours, '#1a5fb4', le.total);
-      if (gi === 0) {
+      if (sec === 'フロア') {
         if (reqPack?.f) mk('rf-req-row-p', '必要F', reqPack.f.hours, '#2c6e49', reqPack.f.total);
-      } else {
+        if (reqPack?.fk) mk('rf-req-row-p', '必要FK', reqPack.fk.hours, '#0e7490', reqPack.fk.total);
+      } else if (sec === 'キッチン') {
         if (reqPack?.k) mk('rf-req-row-p', '必要K', reqPack.k.hours, '#2c6e49', reqPack.k.total);
+        if (reqPack?.fk) mk('rf-req-row-p', '必要FK', reqPack.fk.hours, '#0e7490', reqPack.fk.total);
       }
-      if (reqPack?.fk) mk('rf-req-row-p', '必要FK', reqPack.fk.hours, '#0e7490', reqPack.fk.total);
-    });
+    }
   }
 
   // 注入アンカー: セクション表ごとに 修正客数 → 客数実績 → 客数計画 の優先順でthを1つ選ぶ。
