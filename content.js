@@ -1424,9 +1424,64 @@
     const mins = toks.map(hmToMin).filter((v) => v != null);
     return mins.length >= 2 ? [Math.min(...mins), Math.max(...mins)] : null;
   }
+  // 印刷パターン1にも依頼帯を出す（本人指定2026-08-08「依頼中などの枠が出ないのも困る」）。
+  // 編集画面と違い1px=1分ではないため、hour-rowの実測(列幅/60=px/分)で座標変換する。
+  // ホバー不可＝紙で読めるよう文字ラベルを帯の上に置く。
+  function updatePrintReqLines() {
+    const cases = (scState && scState.cases) || [];
+    if (!cases.length) return;
+    const FULL = [6 * 60, 24 * 60];
+    for (const col of document.querySelectorAll('.shift-table-column')) {
+      const c0 = col.querySelector('.hour-row .hour-col');
+      if (!c0) continue;
+      const r0 = c0.getBoundingClientRect();
+      if (!r0.width) continue;             // 非表示塊（別パターン用DOM）は座標が取れない
+      const pxMin = r0.width / 60;
+      const h0 = parseInt((c0.textContent || '').trim(), 10) || 6;
+      for (const row of col.querySelectorAll('.user-row')) {
+        const nameEl = row.querySelector('.user-cell .name');
+        const track = row.querySelector('.schedule-table-contents');
+        if (!nameEl || !track) continue;
+        const nm = normName(nameEl.textContent);
+        if (!nm) continue;
+        const rel = cases.filter((c) => (c.target === '全員' || normName(c.target) === nm) && !c.is_done &&
+          (scMatchesDay(c, targetDate) || (!scClosed(c) && !(c.target_date || '').trim())));
+        if (!rel.length) continue;
+        if (getComputedStyle(track).position === 'static') track.style.position = 'relative';
+        const base = track.getBoundingClientRect().left;
+        rel.forEach((c, idx) => {
+          const [s, e] = reqSpanOf(c) || FULL;
+          const x = (r0.left - base) + (s - h0 * 60) * pxMin;
+          const w = Math.max(2, (e - s) * pxMin);
+          const blob = `${c.change || ''} ${c.title || ''}`;
+          const rejected = c.is_rejected;
+          const isOff = /休み|休暇/.test(blob);
+          const isLate = /途中希望|追加希望|再提出/.test(blob);
+          const bg = (rejected || isOff) ? '#dc2626' : isLate ? '#2563eb' : '#f5b301';
+          const fill = (rejected || isOff) ? 'rgba(220,38,38,.13)' : isLate ? 'rgba(37,99,235,.13)' : 'rgba(245,179,1,.18)';
+          const band = document.createElement('div');
+          band.className = 'rf-req-line';
+          band.style.cssText = `position:absolute;left:${x}px;width:${w}px;top:0;bottom:0;z-index:5;` +
+            `pointer-events:none;box-sizing:border-box;background:${fill};` +
+            `border-left:2px solid ${bg};border-right:2px solid ${bg};`;
+          track.appendChild(band);
+          const lab = document.createElement('div');
+          lab.className = 'rf-req-line';
+          lab.textContent = rejected ? '🚫拒否' : c.target === '全員' ? `🙋募集(${c.requester || ''}の代わり)`
+            : isOff ? '休み希望' : isLate ? '途中希望' : `依頼中(${scStatusLabel(c)})`;
+          lab.style.cssText = `position:absolute;left:${x + 1}px;top:${1 + idx * 11}px;z-index:6;` +
+            `pointer-events:none;font:700 8.5px/1.2 'Hiragino Sans',sans-serif;color:${bg};` +
+            'background:rgba(255,255,255,.88);padding:0 3px;border-radius:2px;white-space:nowrap;';
+          track.appendChild(lab);
+        });
+      }
+    }
+  }
+
   function updateReqLines() {
     document.querySelectorAll('.rf-req-line, .rf-req-x').forEach((e) => e.remove());
-    if (isPrintPage || !scState) return;
+    if (!scState) return;
+    if (isPrintPage) return updatePrintReqLines();
     const cases = scState.cases || [];
     const FULL = [6 * 60, 24 * 60];  // 6:00〜24:00（1px=1分）
     for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
@@ -2466,23 +2521,28 @@
   // 時間軸行(hour-row)をクローンして列幅を完全に合わせ、custom-field-rows に行を積む。
   // セクションは直前見出しのテキスト（(フロア)/(キッチン)等）で判定。パターン2には
   // .shift-table-column が（表示状態で）無いので自然にパターン1限定になる。
+  // ページ塊のセクション名。見出しは「ＧＴ…(フロア)」形式(初期設定)と「フロア」単体の
+  // 箱(header__bottom .col・本人実機レイアウト)の両方があるため、どちらにも一致させる。
+  // 「フロアメモ：」の誤マッチだけ (?!メモ) で除外。
+  const printSecOf = (el) => {
+    let cur = el;
+    while (cur) {
+      let prev = cur.previousElementSibling;
+      while (prev) {
+        const t = (prev.textContent || '').trim().slice(0, 60);
+        const m = t.match(/(フロア|キッチン|清掃|正社員)(?!メモ)/);
+        if (m) return m[1];
+        prev = prev.previousElementSibling;
+      }
+      cur = cur.parentElement;
+    }
+    return null;
+  };
+
   function updatePrintRows(le, reqPack) {
     document.querySelectorAll('.rf-le-row-p, .rf-req-row-p').forEach((e) => e.remove());
     if (!le || !onOneDayTarget()) return;
-    const secOf = (el) => {
-      let cur = el;
-      while (cur) {
-        let prev = cur.previousElementSibling;
-        while (prev) {
-          const t = (prev.textContent || '').trim().slice(0, 40);
-          const m = t.match(/[（(](フロア|キッチン|清掃|正社員)[)）]/);
-          if (m) return m[1];
-          prev = prev.previousElementSibling;
-        }
-        cur = cur.parentElement;
-      }
-      return null;
-    };
+    const secOf = printSecOf;
     for (const col of document.querySelectorAll('.shift-table-column')) {
       const hr = col.querySelector('.hour-row');
       const box = col.querySelector('.custom-field-rows');
@@ -2516,6 +2576,8 @@
         if (reqPack?.fk) mk('rf-req-row-p', '必要FK', reqPack.fk.hours, '#0e7490', reqPack.fk.total);
       }
     }
+    // ページ塊の再描画で行と一緒に依頼帯も消えるため、行の張り直しに合わせて引き直す
+    if (scState) { try { updateReqLines(); } catch { /* noop */ } }
   }
 
   // 注入アンカー: セクション表ごとに 修正客数 → 客数実績 → 客数計画 の優先順でthを1つ選ぶ。
@@ -4435,7 +4497,14 @@
   const targetSections = (sel, pick) =>
     [...document.querySelectorAll(sel)].filter((e) => sectionCatOf(pick ? pick(e) : e));
   const leRowsIntact = () => {
-    if (isPrintPage) return !!document.querySelector('.rf-le-row-p');
+    if (isPrintPage) {
+      // 印刷は設定変更(欠員枠ON等)でページ塊ごとにVue再描画される。「1個でもあればOK」だと
+      // 一部ページだけ行が消えた状態で再注入が止まる(2026-08-08実測)ため、表示中の全塊を見る
+      const cols = [...document.querySelectorAll('.shift-table-column')].filter((c) => c.offsetWidth);
+      return cols.length
+        ? cols.every((c) => c.querySelector('.rf-le-row-p'))
+        : !!document.querySelector('.rf-le-row-p');
+    }
     const secs = metricAnchorThs().filter((th) => sectionCatOf(th.closest('tr') || th));
     if (!secs.length) return true;   // まだ描画されていない＝張り直しても入れる先がない
     return document.querySelectorAll('.rf-le-row').length >= secs.length;
