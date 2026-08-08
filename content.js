@@ -2745,6 +2745,11 @@
             continue;
           }
           const v = idx >= 0 ? (vals[idx] || '') : '';
+          // 時刻ヘッダー行のクローンはラベルの左寄せを継ぐため、中央寄せを強制する
+          // （ネイティブの前年客数等は中央寄せ＝そのままだと半セル分左にズレて見える。
+          //  本人指摘2026-08-08「微妙に位置がズレてたりする」・実測でセル枠は完全一致、
+          //  テキスト寄せだけの差だった）
+          cell.style.cssText += ';display:flex;align-items:center;justify-content:center;padding:0;';
           cell.innerHTML = `<span style="font:700 10px/1.3 -apple-system,sans-serif;color:${color};">${v}</span>`;
         }
         box.appendChild(row);
