@@ -1469,6 +1469,7 @@
           lab.className = 'rf-req-line';
           lab.textContent = rejected ? '🚫拒否' : c.target === '全員' ? `🙋募集(${c.requester || ''}の代わり)`
             : isOff ? '休み希望' : isLate ? '途中希望' : `依頼中(${scStatusLabel(c)})`;
+          if (!rejected && c.accepted_done) lab.textContent = `◯${lab.textContent}`;  // 快諾済み
           lab.style.cssText = `position:absolute;left:${x + 1}px;top:${1 + idx * 11}px;z-index:6;` +
             `pointer-events:none;font:700 8.5px/1.2 'Hiragino Sans',sans-serif;color:${bg};` +
             'background:rgba(255,255,255,.88);padding:0 3px;border-radius:2px;white-space:nowrap;';
@@ -1547,6 +1548,15 @@
             'font:900 13px/1 sans-serif;color:#dc2626;z-index:301;pointer-events:none;' +
             'text-shadow:0 0 2px #fff,0 0 2px #fff;';
           track.appendChild(x);
+        } else if (c.accepted_done) {
+          // 快諾（承諾チェック済み）は緑の◯（本人指定2026-08-08）
+          const ok = document.createElement('div');
+          ok.className = 'rf-req-x';
+          ok.textContent = '◯';
+          ok.style.cssText = `position:absolute;left:${(s - 360) + (e - s) / 2 - 6}px;top:${top}px;` +
+            'font:900 13px/1 sans-serif;color:#16a34a;z-index:301;pointer-events:none;' +
+            'text-shadow:0 0 2px #fff,0 0 2px #fff;';
+          track.appendChild(ok);
         }
       });
     }
@@ -4499,11 +4509,18 @@
   const leRowsIntact = () => {
     if (isPrintPage) {
       // 印刷は設定変更(欠員枠ON等)でページ塊ごとにVue再描画される。「1個でもあればOK」だと
-      // 一部ページだけ行が消えた状態で再注入が止まる(2026-08-08実測)ため、表示中の全塊を見る
+      // 一部ページだけ行が消えた状態で再注入が止まる(2026-08-08実測)ため、表示中の全塊を見る。
+      // さらに、見出しが未描画の一瞬に注入するとsec=nullでLE行だけになり、LE行があるせいで
+      // 監視が固まる（実機PDF 8/18でフロアだけ必要F/FK欠落）。見出しが今は解決できるのに
+      // 必要行が無い塊も「壊れている」とみなして張り直す。
       const cols = [...document.querySelectorAll('.shift-table-column')].filter((c) => c.offsetWidth);
-      return cols.length
-        ? cols.every((c) => c.querySelector('.rf-le-row-p'))
-        : !!document.querySelector('.rf-le-row-p');
+      if (!cols.length) return !!document.querySelector('.rf-le-row-p');
+      return cols.every((c) => {
+        if (!c.querySelector('.rf-le-row-p')) return false;
+        const s = printSecOf(c);
+        if ((s === 'フロア' || s === 'キッチン') && !c.querySelector('.rf-req-row-p')) return false;
+        return true;
+      });
     }
     const secs = metricAnchorThs().filter((th) => sectionCatOf(th.closest('tr') || th));
     if (!secs.length) return true;   // まだ描画されていない＝張り直しても入れる先がない
