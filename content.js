@@ -1437,6 +1437,14 @@
   // 時刻→列マップを汚染して帯の終端列を誤引きする＝実測で発覚 2026-08-08）
   const printHourRowOf = (col) =>
     col.querySelector('.hour-row:not(.rf-le-row-p):not(.rf-req-row-p)');
+  // 注入先=最初のページ塊（本人指定2026-08-08「フロアの上のみでok」）。
+  // 注入側(updatePrintRows)と監視側(leRowsIntact)で必ず同じ選び方を使う。
+  const printFirstCol = () =>
+    [...document.querySelectorAll('.shift-table-column')]
+      .find((c) => c.offsetWidth && printHourRowOf(c) && c.querySelector('.custom-field-rows'))
+    || [...document.querySelectorAll('.shift-table-column')]
+      .find((c) => printHourRowOf(c) && c.querySelector('.custom-field-rows'))
+    || null;
   const printGeoNow = () => {
     const col = [...document.querySelectorAll('.shift-table-column')].find((c2) => c2.offsetWidth);
     const hr = col && printHourRowOf(col);
@@ -2620,66 +2628,31 @@
   //   > .hour-row = [.empty(ラベル128px) + .user-extra-column(64px) + .hour-col×19(6〜24時)]
   //   > .custom-field-rows（前年/修正客数の器。今は常に空＝旧クローン方式が不発だった原因）。
   // 時間軸行(hour-row)をクローンして列幅を完全に合わせ、custom-field-rows に行を積む。
-  // セクションは直前見出しのテキスト（(フロア)/(キッチン)等）で判定。パターン2には
-  // .shift-table-column が（表示状態で）無いので自然にパターン1限定になる。
-  // ページ塊のセクション名（v1.148全面書き換え）。
-  // 旧: previousElementSibling連鎖を遡って正規表現マッチ。レイアウトが「指標を分ける」型
-  // （フロア+キッチンが同一シートに縦積み・箱型見出し）だと、直前の巨大コンテナ（前セクション
-  // 全体のテキスト）を誤マッチしてセクションが1つズレた（本人報告 2026-08-08 8/16:
-  // フロアはLEのみ・キッチンに必要Fが出る）。
-  // 新: 「セクション名ちょうどの短いラベル葉ノード」（箱見出し・sheet-header内の表記とも
-  // これで拾える）を候補に集め、文書順で列より前にある最後の候補を採る
-  // （編集画面の sectionCatOf と同じ決め方＝レイアウト非依存）。
-  // スタッフ行内の「正社員」バッジやタスク名「清掃」を拾わないよう user-row 等は除外。
-  const printSecCandidates = () => {
-    const out = [];
-    for (const el of document.querySelectorAll('*')) {
-      if (el.children.length) {
-        // 旧初期設定レイアウトの「ＧＴ…(フロア)」形式見出しも念のため拾う
-        if (/sheet-header/.test(String(el.className || ''))) {
-          const m = /[（(](フロア|キッチン|清掃|正社員)[)）]/.exec((el.textContent || '').slice(0, 80));
-          if (m) out.push({ el, sec: m[1] });
-        }
-        continue;
-      }
-      const t = (el.textContent || '').trim();
-      if (t.length > 8) continue;
-      const m = /^(フロア|キッチン|清掃|正社員)(?:メモ[:：]?)?$/.exec(t);
-      if (!m) continue;
-      if (el.closest('.user-row, .user-cell, .schedule-table-contents, ' +
-                     '.rf-le-row-p, .rf-req-row-p, .hide-if-print')) continue;
-      out.push({ el, sec: m[1] });
-    }
-    return out;
-  };
-  const printSecOf = (el, cands) => {
-    let sec = null;
-    for (const c of (cands || printSecCandidates())) {
-      if (c.el.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) sec = c.sec;
-    }
-    return sec;
-  };
-
+  // パターン2には .shift-table-column が（表示状態で）無いので自然にパターン1限定になる。
+  // セクション判定(printSecOf)はv1.149で撤去: ブロックを最初のページに1回だけ・F/K両方
+  // まとめて出す方式になり不要になった（見出し形式がレイアウトごとに変わり誤判定の温床
+  // だった。経緯は project-notes v1.145〜149 参照）。
   function updatePrintRows(le, reqPack, act) {
     document.querySelectorAll('.rf-le-row-p, .rf-req-row-p').forEach((e) => e.remove());
     if (!le || !onOneDayTarget()) return;
-    const secOf = printSecOf;
     // 編集画面と同じマクド式ブロック（PLAN=モデルWS/SCH=実シフト/DIFF・30分ハーフセル）を
     // 印刷にも出す（本人指定2026-08-08「ここが欲しい」＝編集画面の固定行スクショ）。
     // 旧・必要F/K/FK行はPLAN行と同値（モデルWS人時）なので置き換え。mcdが組めない時だけ
     // フォールバックで旧必要行を出す。
     const hasAct = !!(act && !act.error);
     const mcd = buildMcdData(hasAct ? act : null, le);
-    const secCands = printSecCandidates();   // セクションラベル候補（1回だけ走査）
     const CAT_BG = { F: '#e8f1fb', K: '#e9f5ec', FK: '#f1ebfa', NP: '#fcf6dd' };
     const r1s = (arr) => Math.round(arr.reduce((a, b) => a + b, 0) * 10) / 10;
     const fmtH = (v) => (!v ? '' : String(Math.round(v * 10) / 10));
     const fmtD = (v) => (v == null || v === 0 ? '' : (v > 0 ? `+${Math.round(v * 10) / 10}` : String(Math.round(v * 10) / 10)));
-    for (const col of document.querySelectorAll('.shift-table-column')) {
+    // ブロックは最初のページ（フロアの上）に1回だけ・F/K両方まとめて出す
+    // （本人指定2026-08-08「フロアの上のみでok。同じ内容なので」）。
+    // 以降のページには何も注入しない。
+    const first = printFirstCol();
+    for (const col of (first ? [first] : [])) {
       const hr = printHourRowOf(col);   // 注入行(同じhour-rowクラス)を素材にしない
       const box = col.querySelector('.custom-field-rows');
       if (!hr || !box) continue;
-      const sec = secOf(col, secCands);
       const mk = (cls, label, vals, color, total, opts) => {
         const row = hr.cloneNode(true);
         row.classList.add(cls);
@@ -2747,14 +2720,10 @@
         if (hasAct) mk('rf-req-row-p', '非生産 SCH(TR/SB)', mcd.schTR.map(fmtH), MCD_COLORS.sch, r1s(mcd.schTR),
           { halves: mcd.schTR30.map(fmtH), bg: CAT_BG.NP });
       };
-      if (mcd && sec === 'フロア') {
-        addMcd('F', '生産性F'); addMcd('FK', 'FK'); addNp();
-      } else if (mcd && sec === 'キッチン') {
-        addMcd('K', '生産性K'); addMcd('FK', 'FK'); addNp();
-      } else if (sec === 'フロア') {   // フォールバック（LE Maker params未読込など）
+      if (mcd) {
+        addMcd('F', '生産性F'); addMcd('K', '生産性K'); addMcd('FK', 'FK'); addNp();
+      } else {   // フォールバック（LE Maker params未読込など）
         if (reqPack?.f) mk('rf-req-row-p', '必要F', reqPack.f.hours, '#2c6e49', reqPack.f.total);
-        if (reqPack?.fk) mk('rf-req-row-p', '必要FK', reqPack.fk.hours, '#0e7490', reqPack.fk.total);
-      } else if (sec === 'キッチン') {
         if (reqPack?.k) mk('rf-req-row-p', '必要K', reqPack.k.hours, '#2c6e49', reqPack.k.total);
         if (reqPack?.fk) mk('rf-req-row-p', '必要FK', reqPack.fk.hours, '#0e7490', reqPack.fk.total);
       }
@@ -4686,17 +4655,14 @@
       // さらに、見出しが未描画の一瞬に注入するとsec=nullでLE行だけになり、LE行があるせいで
       // 監視が固まる（実機PDF 8/18でフロアだけ必要F/FK欠落）。見出しが今は解決できるのに
       // 必要行が無い塊も「壊れている」とみなして張り直す。
-      const cols = [...document.querySelectorAll('.shift-table-column')].filter((c) => c.offsetWidth);
-      if (!cols.length) return !!document.querySelector('.rf-le-row-p');
+      // v1.149: ブロックは最初のページ塊だけに出す。監視も同じ選び方(printFirstCol)で、
+      // 「最初の塊にLE行と必要行群がある」ことだけを見る（旧・全塊チェックのままだと
+      // 2ページ目以降に行が無いのを壊れ扱いして永久再注入になる）。
+      const first = printFirstCol();
+      if (!first) return !!document.querySelector('.rf-le-row-p');
       // ジオメトリが描画時から動いた（縮尺変更・設定パネル開閉等）→ 帯の座標が古いので引き直す
       if (printGeoSig && printGeoNow() !== printGeoSig) return false;
-      const cands = printSecCandidates();
-      return cols.every((c) => {
-        if (!c.querySelector('.rf-le-row-p')) return false;
-        const s = printSecOf(c, cands);
-        if ((s === 'フロア' || s === 'キッチン') && !c.querySelector('.rf-req-row-p')) return false;
-        return true;
-      });
+      return !!(first.querySelector('.rf-le-row-p') && first.querySelector('.rf-req-row-p'));
     }
     const secs = metricAnchorThs().filter((th) => sectionCatOf(th.closest('tr') || th));
     if (!secs.length) return true;   // まだ描画されていない＝張り直しても入れる先がない
