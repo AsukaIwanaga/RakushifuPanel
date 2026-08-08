@@ -1425,19 +1425,58 @@
     return mins.length >= 2 ? [Math.min(...mins), Math.max(...mins)] : null;
   }
   // 印刷パターン1にも依頼帯を出す（本人指定2026-08-08「依頼中などの枠が出ないのも困る」）。
-  // 編集画面と違い1px=1分ではないため、hour-rowの実測(列幅/60=px/分)で座標変換する。
+  // 編集画面と違い1px=1分ではないため、時間列の実測で座標変換する。
   // ホバー不可＝紙で読めるよう文字ラベルを帯の上に置く。
+  // 座標は「該当時刻の時間列そのもの」を測って出す（v1.148）。旧実装は先頭列幅×分で
+  // 積算しており、①列幅の端数が累積してずれる ②ページの縮尺(transform)下では rect が
+  // 縮小座標なのに style.left は等倍座標のため大きくずれる（本人報告 8/9 印刷で
+  // 20時の帯が12時前に出た）。rect→等倍座標へは 倍率=rect幅/offsetWidth で戻す。
+  let printGeoSig = null;   // 描画時のジオメトリ署名。変わったら監視が引き直す
+  // 元の時刻ヘッダー行（注入行も .hour-row クラスを持つため必ず :not で除外する。
+  // 除外しないと、注入行の数値セル（ハーフセル"2"+"1"→textContent"21"等）が
+  // 時刻→列マップを汚染して帯の終端列を誤引きする＝実測で発覚 2026-08-08）
+  const printHourRowOf = (col) =>
+    col.querySelector('.hour-row:not(.rf-le-row-p):not(.rf-req-row-p)');
+  const printGeoNow = () => {
+    const col = [...document.querySelectorAll('.shift-table-column')].find((c2) => c2.offsetWidth);
+    const hr = col && printHourRowOf(col);
+    const c0 = hr && hr.querySelector('.hour-col');
+    if (!c0) return '';
+    const r = c0.getBoundingClientRect();
+    return `${Math.round(r.left)}:${Math.round(r.width * 10)}`;
+  };
   function updatePrintReqLines() {
     const cases = (scState && scState.cases) || [];
     if (!cases.length) return;
     const FULL = [6 * 60, 24 * 60];
     for (const col of document.querySelectorAll('.shift-table-column')) {
-      const c0 = col.querySelector('.hour-row .hour-col');
+      const hr0 = printHourRowOf(col);
+      const cols = hr0 ? [...hr0.querySelectorAll('.hour-col')] : [];
+      const c0 = cols[0];
       if (!c0) continue;
       const r0 = c0.getBoundingClientRect();
       if (!r0.width) continue;             // 非表示塊（別パターン用DOM）は座標が取れない
-      const pxMin = r0.width / 60;
-      const h0 = parseInt((c0.textContent || '').trim(), 10) || 6;
+      // ページ縮尺(transform)補正。offsetWidthは整数丸めで~0.5%誤差が出るため、
+      // 行全体の幅比で取る（600px先で4px→0.3pxに縮む）
+      const hrRect = hr0.getBoundingClientRect();
+      const scale = hr0.offsetWidth ? hrRect.width / hr0.offsetWidth : 1;
+      const byHour = new Map();
+      for (const c2 of cols) {
+        const h = parseInt((c2.textContent || '').trim(), 10);
+        if (Number.isFinite(h)) byHour.set(h, c2);
+      }
+      // 分→track内ローカルx。該当時刻の列のrectから直接出す（累積誤差なし）
+      const minToX = (min, base) => {
+        let h = Math.floor(min / 60);
+        let cell = byHour.get(h);
+        if (!cell) {                       // 24:00等: 最終列内でクリップ
+          cell = cols[cols.length - 1];
+          h = parseInt((cell.textContent || '').trim(), 10) || 23;
+        }
+        const frac = Math.min(1, Math.max(0, (min - h * 60) / 60));
+        const cr = cell.getBoundingClientRect();
+        return (cr.left - base) / scale + frac * (cell.offsetWidth || cr.width);
+      };
       for (const row of col.querySelectorAll('.user-row')) {
         const nameEl = row.querySelector('.user-cell .name');
         const track = row.querySelector('.schedule-table-contents');
@@ -1451,8 +1490,8 @@
         const base = track.getBoundingClientRect().left;
         rel.forEach((c, idx) => {
           const [s, e] = reqSpanOf(c) || FULL;
-          const x = (r0.left - base) + (s - h0 * 60) * pxMin;
-          const w = Math.max(2, (e - s) * pxMin);
+          const x = minToX(s, base);
+          const w = Math.max(2, minToX(e, base) - x);
           const blob = `${c.change || ''} ${c.title || ''}`;
           const rejected = c.is_rejected;
           const isOff = /休み|休暇/.test(blob);
@@ -1477,6 +1516,7 @@
         });
       }
     }
+    printGeoSig = printGeoNow();
   }
 
   function updateReqLines() {
@@ -1620,6 +1660,10 @@
       `<input id="scNewDateEnd" placeholder="終了日 (期間なら/空欄可)">` +
       '</div>' +
       `<input id="scNewChange" placeholder="変更内容">` +
+      // よく使う内容のワンタップ（クルー発の休みは自動で依頼済み/承諾チェック→反映待ちになる）
+      '<div style="display:flex;gap:4px;margin:-2px 0 4px">' +
+      '<button type="button" class="scn-preset" data-v="休みへ変更">🛌 休みへ変更</button>' +
+      '</div>' +
       reqTimeWidget('scn', '') +
       `<input id="scNewRequester" placeholder="依頼者 (空欄可)">` +
       `<select id="scNewSource">${srcs.map((s) => `<option>${esc(s)}</option>`).join('')}</select>` +
@@ -1713,6 +1757,13 @@
         `${change ? `${String(change).trim()}の` : ''}お休み希望が出ています。`
         + 'どなたか代わっていただける方はいらっしゃいませんでしょうか。';
     }
+    // クルー発の休み希望（依頼者=本人）: 「変更願えませんか」ではなく受領返信にする
+    // （本人が休みたいと言ってきた件に、依頼文を送るのは変・2026-08-08）
+    if (/休み|休暇/.test(String(change || '')) && requester &&
+        normName(requester) === normName(target)) {
+      return `お疲れ様です。${dateLabel}${span ? ` ${span}` : ''}の休み希望の件、承知しました。` +
+        'シフトを調整しますので、反映されたらまたご連絡します。';
+    }
     const parts = String(change || '').split(/\s*(?:=>|→|->|⇒)\s*/);
     let body;
     if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
@@ -1743,6 +1794,8 @@
     const doneMsg = wowtalkDoneMessage(person, targetDateStr, reqTime);
     const label = target === '全員' ? `全員宛・休み募集（${esc(requester || '')}）`
       : (target ? esc(target) : '対象者なし');
+    const crewOff = target !== '全員' && /休み|休暇/.test(String(change || '')) &&
+      requester && normName(requester) === normName(target);
     const block = (head, msg) =>
       `<div style="font-weight:700;margin:6px 0 3px">${head}</div>` +
       `<textarea class="sc-wt-text" style="width:100%;height:76px;border:1px solid #ccc;border-radius:4px;` +
@@ -1751,7 +1804,7 @@
     const f = $('#scNewForm');
     f.innerHTML =
       `<div style="font-weight:700;margin-bottom:2px">📋 WowTalk用の文言（${label}）</div>` +
-      block(`① 全体/相手に送信（${target === '全員' ? '休み募集' : '依頼'}）`, sendMsg) +
+      block(`① ${crewOff ? '本人へ（受領返信）' : `全体/相手に送信（${target === '全員' ? '休み募集' : '依頼'}）`}`, sendMsg) +
       block('② 本人へ（反映できたら送る）', doneMsg) +
       '<div style="margin-top:6px"><button id="scWtClose">閉じる</button></div>';
     f.style.display = '';
@@ -1794,15 +1847,8 @@
     const m = /(\d{1,2})\s*\((日|月|火|水|木|金|土)\)\s*([^\n]+)/.exec(txt);
     const name = m ? m[3].trim() : '';
     const day = m ? Number(m[1]) : null;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'rf-modal-req';
-    btn.textContent = '❗ 依頼作成';
-    btn.title = 'この人・この日のシフト変更依頼を起票（共有台帳へ。らくしふには何も書き込みません）';
-    btn.style.cssText = 'margin-left:8px;padding:6px 14px;border:1px solid #e0b4b4;background:#fff5f5;' +
-      'color:#b03030;border-radius:4px;cursor:pointer;font-size:13px';
-    btn.addEventListener('click', (ev) => {
-      ev.preventDefault(); ev.stopPropagation();
+    // モーダルから対象日・現在の勤務時間を読み取る（両ボタン共通）
+    const readPreset = () => {
       // 対象日 = 表示中の月（URLのfrom）＋モーダルの日
       const base = parseYmd(urlParams().from || '') || targetDate || new Date();
       const dateStr = day ? `${base.getMonth() + 1}/${day}` : `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
@@ -1815,8 +1861,38 @@
       // 文言は「HH時あがりのところ、」形式（本人指定2026-08-06。旧「現在20:0-21:0のところ、」は
       // 分のゼロ埋め漏れ＋不自然だった）。延長依頼が主用途なので終業時刻を主語にする。
       const endTok = t ? `${+sels[2].value}時${p2m(sels[3].value) !== '00' ? `${p2m(sels[3].value)}分` : ''}` : '';
-      scOpenNewFor(name, { dateStr, reqTime: t, change: endTok ? `${endTok}あがりのところ、` : '' });
-    });
+      return { dateStr, t, endTok };
+    };
+    const mkBtn = (label, title, css, onClick) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'rf-modal-req';
+      b.textContent = label;
+      b.title = title;
+      b.style.cssText = `margin-left:8px;padding:6px 14px;border-radius:4px;cursor:pointer;font-size:13px;${css}`;
+      b.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); onClick(); });
+      return b;
+    };
+    const btn = mkBtn('❗ 依頼作成',
+      'この人・この日のシフト変更依頼を起票（共有台帳へ。らくしふには何も書き込みません）',
+      'border:1px solid #e0b4b4;background:#fff5f5;color:#b03030;',
+      () => {
+        const { dateStr, t, endTok } = readPreset();
+        scOpenNewFor(name, { dateStr, reqTime: t, change: endTok ? `${endTok}あがりのところ、` : '' });
+      });
+    // クルー発の「休みにしてほしい」を1タップで起票できる導線（本人報告2026-08-08
+    // 「休み希望への対応が拡張だけでできない」）。現シフト時間を対象区間にプリセットし、
+    // 変更内容=休みへ変更で新規フォームを開く。作成時に依頼済み/承諾は自動チェックされる
+    // （本人発の希望なので依頼・承諾工程は完了扱い→すぐ「反映待ち」になる）。
+    const btnOff = mkBtn('🛌 休み希望',
+      'この人・この日を「休みへ変更」で起票（クルー発。依頼済み/承諾は自動でチェックされ、' +
+      'らくしふのシフト取消と周知だけが残る）',
+      'border:1px solid #b9c8e8;background:#f2f6fd;color:#1d4ed8;',
+      () => {
+        const { dateStr, t } = readPreset();
+        scOpenNewFor(name, { dateStr, reqTime: t, change: '休みへ変更' });
+      });
+    cancel.insertAdjacentElement('afterend', btnOff);
     cancel.insertAdjacentElement('afterend', btn);
   }
   {
@@ -1912,6 +1988,11 @@
       t.textContent = '完了';
       return;
     }
+    if (t.matches('.scn-preset')) {   // 変更内容のワンタップ入力（休みへ変更 等）
+      const el = $('#scNewChange');
+      if (el) { el.value = t.dataset.v || ''; el.focus(); }
+      return;
+    }
     if (t.matches('.sc-note-input button')) {
       const input = t.parentElement.querySelector('input');
       const text = (input.value || '').trim();
@@ -1940,6 +2021,16 @@
       });
       t.disabled = false;
       if (!r.ok) { alert(`作成失敗: ${r.error || r.data?.error || ''}`); return; }
+      // クルー発の休み希望（依頼者=対象者本人）は、依頼・承諾の工程が本人発信で完了済み
+      // なので自動チェック → カードは最初から「反映待ち」になる（本人報告2026-08-08
+      // 「休み希望への対応が拡張だけでできない」＝工程が店舗発依頼向けのままだった）。
+      const notePath = String((r.data && r.data.message) || '').trim();
+      const crewOff = !zenin && /休み|休暇/.test(String(change || '')) &&
+        normName(requester) && normName(requester) === normName(target);
+      if (crewOff && notePath.startsWith('/')) {
+        await shiftApi('/api/shift/flag', { path: notePath, key: 'requested_done', value: true });
+        await shiftApi('/api/shift/flag', { path: notePath, key: 'accepted_done', value: true });
+      }
       scShowWowtalk(target, targetDate, change, requester, reqTime);   // 起票直後にWowTalk用文言を出す
       scRefresh();
     }
@@ -2531,37 +2622,68 @@
   // 時間軸行(hour-row)をクローンして列幅を完全に合わせ、custom-field-rows に行を積む。
   // セクションは直前見出しのテキスト（(フロア)/(キッチン)等）で判定。パターン2には
   // .shift-table-column が（表示状態で）無いので自然にパターン1限定になる。
-  // ページ塊のセクション名。見出しは「ＧＴ…(フロア)」形式(初期設定)と「フロア」単体の
-  // 箱(header__bottom .col・本人実機レイアウト)の両方があるため、どちらにも一致させる。
-  // 「フロアメモ：」の誤マッチだけ (?!メモ) で除外。
-  const printSecOf = (el) => {
-    let cur = el;
-    while (cur) {
-      let prev = cur.previousElementSibling;
-      while (prev) {
-        const t = (prev.textContent || '').trim().slice(0, 60);
-        const m = t.match(/(フロア|キッチン|清掃|正社員)(?!メモ)/);
-        if (m) return m[1];
-        prev = prev.previousElementSibling;
+  // ページ塊のセクション名（v1.148全面書き換え）。
+  // 旧: previousElementSibling連鎖を遡って正規表現マッチ。レイアウトが「指標を分ける」型
+  // （フロア+キッチンが同一シートに縦積み・箱型見出し）だと、直前の巨大コンテナ（前セクション
+  // 全体のテキスト）を誤マッチしてセクションが1つズレた（本人報告 2026-08-08 8/16:
+  // フロアはLEのみ・キッチンに必要Fが出る）。
+  // 新: 「セクション名ちょうどの短いラベル葉ノード」（箱見出し・sheet-header内の表記とも
+  // これで拾える）を候補に集め、文書順で列より前にある最後の候補を採る
+  // （編集画面の sectionCatOf と同じ決め方＝レイアウト非依存）。
+  // スタッフ行内の「正社員」バッジやタスク名「清掃」を拾わないよう user-row 等は除外。
+  const printSecCandidates = () => {
+    const out = [];
+    for (const el of document.querySelectorAll('*')) {
+      if (el.children.length) {
+        // 旧初期設定レイアウトの「ＧＴ…(フロア)」形式見出しも念のため拾う
+        if (/sheet-header/.test(String(el.className || ''))) {
+          const m = /[（(](フロア|キッチン|清掃|正社員)[)）]/.exec((el.textContent || '').slice(0, 80));
+          if (m) out.push({ el, sec: m[1] });
+        }
+        continue;
       }
-      cur = cur.parentElement;
+      const t = (el.textContent || '').trim();
+      if (t.length > 8) continue;
+      const m = /^(フロア|キッチン|清掃|正社員)(?:メモ[:：]?)?$/.exec(t);
+      if (!m) continue;
+      if (el.closest('.user-row, .user-cell, .schedule-table-contents, ' +
+                     '.rf-le-row-p, .rf-req-row-p, .hide-if-print')) continue;
+      out.push({ el, sec: m[1] });
     }
-    return null;
+    return out;
+  };
+  const printSecOf = (el, cands) => {
+    let sec = null;
+    for (const c of (cands || printSecCandidates())) {
+      if (c.el.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING) sec = c.sec;
+    }
+    return sec;
   };
 
-  function updatePrintRows(le, reqPack) {
+  function updatePrintRows(le, reqPack, act) {
     document.querySelectorAll('.rf-le-row-p, .rf-req-row-p').forEach((e) => e.remove());
     if (!le || !onOneDayTarget()) return;
     const secOf = printSecOf;
+    // 編集画面と同じマクド式ブロック（PLAN=モデルWS/SCH=実シフト/DIFF・30分ハーフセル）を
+    // 印刷にも出す（本人指定2026-08-08「ここが欲しい」＝編集画面の固定行スクショ）。
+    // 旧・必要F/K/FK行はPLAN行と同値（モデルWS人時）なので置き換え。mcdが組めない時だけ
+    // フォールバックで旧必要行を出す。
+    const hasAct = !!(act && !act.error);
+    const mcd = buildMcdData(hasAct ? act : null, le);
+    const secCands = printSecCandidates();   // セクションラベル候補（1回だけ走査）
+    const CAT_BG = { F: '#e8f1fb', K: '#e9f5ec', FK: '#f1ebfa', NP: '#fcf6dd' };
+    const r1s = (arr) => Math.round(arr.reduce((a, b) => a + b, 0) * 10) / 10;
+    const fmtH = (v) => (!v ? '' : String(Math.round(v * 10) / 10));
+    const fmtD = (v) => (v == null || v === 0 ? '' : (v > 0 ? `+${Math.round(v * 10) / 10}` : String(Math.round(v * 10) / 10)));
     for (const col of document.querySelectorAll('.shift-table-column')) {
-      const hr = col.querySelector('.hour-row');
+      const hr = printHourRowOf(col);   // 注入行(同じhour-rowクラス)を素材にしない
       const box = col.querySelector('.custom-field-rows');
       if (!hr || !box) continue;
-      const sec = secOf(col);
-      const mk = (cls, label, vals, color, total) => {
+      const sec = secOf(col, secCands);
+      const mk = (cls, label, vals, color, total, opts) => {
         const row = hr.cloneNode(true);
         row.classList.add(cls);
-        row.style.cssText += ';background:#fff;border-top:1px solid #ddd;';
+        row.style.cssText += `;background:${(opts && opts.bg) || '#fff'};border-top:1px solid #ddd;`;
         const lab = row.querySelector('.empty');
         if (lab) {
           lab.innerHTML = `<span style="font:700 10px/1.3 'Hiragino Sans',sans-serif;color:${color};` +
@@ -2572,13 +2694,64 @@
         for (const cell of row.querySelectorAll('.hour-col')) {
           const h = parseInt((cell.textContent || '').trim(), 10);
           const idx = HOURS.indexOf(h);
+          // 30分ハーフセル（編集画面の固定行と同じ見た目・opts.halves=36要素）
+          if (opts && opts.halves && idx >= 0) {
+            const half = (v, bl) =>
+              `<span style="flex:1 1 50%;min-width:0;display:flex;align-items:center;` +
+              `justify-content:center;font:700 8.5px/1.2 -apple-system,sans-serif;color:#374151;` +
+              `${bl ? 'border-left:1px solid #e3e3e3;' : ''}">${v}</span>`;
+            cell.style.cssText += ';display:flex;padding:0;';
+            cell.innerHTML = half(opts.halves[idx * 2] ?? '', false) + half(opts.halves[idx * 2 + 1] ?? '', true);
+            if (opts.halfStyle) {
+              opts.halfStyle(cell.children[0], idx * 2);
+              opts.halfStyle(cell.children[1], idx * 2 + 1);
+            }
+            continue;
+          }
           const v = idx >= 0 ? (vals[idx] || '') : '';
           cell.innerHTML = `<span style="font:700 10px/1.3 -apple-system,sans-serif;color:${color};">${v}</span>`;
         }
         box.appendChild(row);
       };
       mk('rf-le-row-p', 'LE客数', le.hours, '#1a5fb4', le.total);
-      if (sec === 'フロア') {
+      // 1区分ぶんの PLAN/SCH/DIFF（不足の赤塗り・過剰の緑は編集画面と同じ規則）
+      const addMcd = (cat, name) => {
+        const d = mcd && mcd.groups.find((x) => x.g === cat);
+        if (!d) return;
+        const bg = CAT_BG[cat];
+        mk('rf-req-row-p', `${name} PLAN`, d.plan.map(fmtH), MCD_COLORS.plan, r1s(d.plan),
+          { halves: d.plan30.map(fmtH), bg });
+        if (!hasAct) return;   // 実シフトが取れない時はPLANだけ（SCH/DIFFが全不足に見えるのを防ぐ）
+        mk('rf-req-row-p', `${name} SCH`, d.sch.map(fmtH), MCD_COLORS.sch, r1s(d.sch),
+          { halves: d.sch30.map(fmtH), bg,
+            // FKはF/Kの余剰でも埋まるため単独の不足判定はしない（編集画面と同じ）
+            halfStyle: cat === 'FK' ? null : (sp, k) => {
+              const df = (d.plan30[k] || 0) - (d.sch30[k] || 0);
+              if (df >= 1) { sp.style.background = '#fdecec'; sp.style.color = '#b02a2a'; }
+              else if (df > 1e-9) sp.style.color = '#b02a2a';
+            } });
+        mk('rf-req-row-p', `${name} DIFF`, d.diff.map(fmtD), '#6b7280', null,
+          { halves: d.diff30.map(fmtD), bg,
+            halfStyle: (sp, k) => {
+              const v = d.diff30[k];
+              if (v == null) return;
+              if (v <= -1) { sp.style.background = '#fdecec'; sp.style.color = '#b02a2a'; }
+              else if (v < 0) sp.style.color = '#b02a2a';
+              else if (v > 0) sp.style.color = '#2e9e5b';
+            } });
+      };
+      const addNp = () => {
+        if (!mcd) return;
+        mk('rf-req-row-p', '非生産 PLAN', mcd.fixP.map(fmtH), MCD_COLORS.plan, r1s(mcd.fixP),
+          { halves: mcd.fixP30.map(fmtH), bg: CAT_BG.NP });
+        if (hasAct) mk('rf-req-row-p', '非生産 SCH(TR/SB)', mcd.schTR.map(fmtH), MCD_COLORS.sch, r1s(mcd.schTR),
+          { halves: mcd.schTR30.map(fmtH), bg: CAT_BG.NP });
+      };
+      if (mcd && sec === 'フロア') {
+        addMcd('F', '生産性F'); addMcd('FK', 'FK'); addNp();
+      } else if (mcd && sec === 'キッチン') {
+        addMcd('K', '生産性K'); addMcd('FK', 'FK'); addNp();
+      } else if (sec === 'フロア') {   // フォールバック（LE Maker params未読込など）
         if (reqPack?.f) mk('rf-req-row-p', '必要F', reqPack.f.hours, '#2c6e49', reqPack.f.total);
         if (reqPack?.fk) mk('rf-req-row-p', '必要FK', reqPack.fk.hours, '#0e7490', reqPack.fk.total);
       } else if (sec === 'キッチン') {
@@ -2610,7 +2783,7 @@
   function updateLERows(le, reqPack, act) {
     lastLE = le ? { le, reqPack, act } : null;
     if (!le) lastGap = null;
-    if (isPrintPage) { updatePrintRows(le, reqPack); return; }
+    if (isPrintPage) { updatePrintRows(le, reqPack, act); return; }
     document.querySelectorAll('.rf-le-row, .rf-req-row, .rf-act-row, .rf-mcd-row, .rf-fill, .rf-gap-band')
       .forEach((e) => e.remove());
     document.querySelectorAll('[data-rf-fill]').forEach((e) => delete e.dataset.rfFill);
@@ -4515,9 +4688,12 @@
       // 必要行が無い塊も「壊れている」とみなして張り直す。
       const cols = [...document.querySelectorAll('.shift-table-column')].filter((c) => c.offsetWidth);
       if (!cols.length) return !!document.querySelector('.rf-le-row-p');
+      // ジオメトリが描画時から動いた（縮尺変更・設定パネル開閉等）→ 帯の座標が古いので引き直す
+      if (printGeoSig && printGeoNow() !== printGeoSig) return false;
+      const cands = printSecCandidates();
       return cols.every((c) => {
         if (!c.querySelector('.rf-le-row-p')) return false;
-        const s = printSecOf(c);
+        const s = printSecOf(c, cands);
         if ((s === 'フロア' || s === 'キッチン') && !c.querySelector('.rf-req-row-p')) return false;
         return true;
       });
