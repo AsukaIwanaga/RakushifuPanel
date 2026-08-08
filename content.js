@@ -1437,14 +1437,44 @@
   // 時刻→列マップを汚染して帯の終端列を誤引きする＝実測で発覚 2026-08-08）
   const printHourRowOf = (col) =>
     col.querySelector('.hour-row:not(.rf-le-row-p):not(.rf-req-row-p)');
-  // 注入先=最初のページ塊（本人指定2026-08-08「フロアの上のみでok」）。
+  // 注入先=日付ごとに最初のページ塊（本人指定2026-08-08「フロアの上のみでok」＋
+  // 「複数日を選んだ時、最初の1日にしか反映されない」対応）。
+  // ページ塊の日付は sheet-header の「YYYY年M月d日」を文書順で直前採用。
   // 注入側(updatePrintRows)と監視側(leRowsIntact)で必ず同じ選び方を使う。
-  const printFirstCol = () =>
-    [...document.querySelectorAll('.shift-table-column')]
-      .find((c) => c.offsetWidth && printHourRowOf(c) && c.querySelector('.custom-field-rows'))
-    || [...document.querySelectorAll('.shift-table-column')]
-      .find((c) => printHourRowOf(c) && c.querySelector('.custom-field-rows'))
-    || null;
+  const printDateCands = () => {
+    const out = [];
+    for (const el of document.querySelectorAll('.sheet-header')) {
+      const m = /(\d{4})年(\d{1,2})月(\d{1,2})日/.exec(el.textContent || '');
+      if (m) out.push({ el, iso: `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}` });
+    }
+    return out;
+  };
+  const printDateOf = (col, cands) => {
+    let iso = null;
+    for (const c of cands) {
+      if (c.el.compareDocumentPosition(col) & Node.DOCUMENT_POSITION_FOLLOWING) iso = c.iso;
+    }
+    return iso;
+  };
+  const printDayCols = () => {
+    const cands = printDateCands();
+    const all = [...document.querySelectorAll('.shift-table-column')]
+      .filter((c) => printHourRowOf(c) && c.querySelector('.custom-field-rows'));
+    const vis = all.filter((c) => c.offsetWidth);
+    const seen = new Set();
+    const out = [];
+    for (const c of (vis.length ? vis : all)) {
+      const iso = printDateOf(c, cands) || ymd(targetDate);
+      if (seen.has(iso)) continue;
+      seen.add(iso);
+      out.push({ iso, col: c });
+    }
+    return out;
+  };
+  // 日付ごとの表示データ（{le, reqPack, act} / 取得不能なら 'none'）。
+  // 実印刷の瞬間の同期再注入(beforeprint)にも使うので、必ずここに貯めてから注入する。
+  const printDayData = {};
+  let printRowsRun = 0;   // 追い取得の世代トークン（再注入と交錯した古い取得を捨てる）
   const printGeoNow = () => {
     const col = [...document.querySelectorAll('.shift-table-column')].find((c2) => c2.offsetWidth);
     const hr = col && printHourRowOf(col);
@@ -1457,6 +1487,7 @@
     const cases = (scState && scState.cases) || [];
     if (!cases.length) return;
     const FULL = [6 * 60, 24 * 60];
+    const dateCands = printDateCands();   // 複数日印刷: 帯もページ塊の日付で判定する
     for (const col of document.querySelectorAll('.shift-table-column')) {
       const hr0 = printHourRowOf(col);
       const cols = hr0 ? [...hr0.querySelectorAll('.hour-col')] : [];
@@ -1473,6 +1504,8 @@
         const h = parseInt((c2.textContent || '').trim(), 10);
         if (Number.isFinite(h)) byHour.set(h, c2);
       }
+      const colIso = printDateOf(col, dateCands);
+      const colDate = (colIso && parseYmd(colIso)) || targetDate;
       // 分→track内ローカルx。該当時刻の列のrectから直接出す（累積誤差なし）
       const minToX = (min, base) => {
         let h = Math.floor(min / 60);
@@ -1492,7 +1525,7 @@
         const nm = normName(nameEl.textContent);
         if (!nm) continue;
         const rel = cases.filter((c) => (c.target === '全員' || normName(c.target) === nm) && !c.is_done &&
-          (scMatchesDay(c, targetDate) || (!scClosed(c) && !(c.target_date || '').trim())));
+          (scMatchesDay(c, colDate) || (!scClosed(c) && !(c.target_date || '').trim())));
         if (!rel.length) continue;
         if (getComputedStyle(track).position === 'static') track.style.position = 'relative';
         const base = track.getBoundingClientRect().left;
@@ -2300,10 +2333,10 @@
 
   // マクド式のデータを組む。PLAN=その日に適用されるモデルWS型（レーン=生産・固定作業=非生産）
   // 戻り: { leH, groups:[{g,plan,sch,diff}], fixP, schTR, planTotH } — 予算行の下の行群と行埋めで使う
-  function buildMcdData(actual, le) {
+  function buildMcdData(actual, le, isoOpt) {
     const params = leMakerCache && leMakerCache.params;
     if (!params || !params.ws) return null;
-    const iso = ymd(targetDate);
+    const iso = isoOpt || ymd(targetDate);   // 印刷の複数日表示は日付を指定してくる
     const numv = (v) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
     const leH = HOURS.map((h, i) => numv(le && le.hours && le.hours[i]));
     const tpl = wsTplFor(params, iso, le ? numv(le.total) : 0);
@@ -2632,27 +2665,24 @@
   // セクション判定(printSecOf)はv1.149で撤去: ブロックを最初のページに1回だけ・F/K両方
   // まとめて出す方式になり不要になった（見出し形式がレイアウトごとに変わり誤判定の温床
   // だった。経緯は project-notes v1.145〜149 参照）。
-  function updatePrintRows(le, reqPack, act) {
-    document.querySelectorAll('.rf-le-row-p, .rf-req-row-p').forEach((e) => e.remove());
-    if (!le || !onOneDayTarget()) return;
-    // 編集画面と同じマクド式ブロック（PLAN=モデルWS/SCH=実シフト/DIFF・30分ハーフセル）を
-    // 印刷にも出す（本人指定2026-08-08「ここが欲しい」＝編集画面の固定行スクショ）。
-    // 旧・必要F/K/FK行はPLAN行と同値（モデルWS人時）なので置き換え。mcdが組めない時だけ
-    // フォールバックで旧必要行を出す。
+  // 1日ぶんのブロックを1つのページ塊へ同期注入する（編集画面と同じマクド式・
+  // PLAN=モデルWS/SCH=実シフト/DIFF・30分ハーフセル。F/K両方まとめて1回だけ＝
+  // 本人指定2026-08-08「フロアの上のみでok。同じ内容なので」）。
+  // 旧・必要F/K/FK行はPLAN行と同値（モデルWS人時）なので置き換え。mcdが組めない時だけ
+  // フォールバックで旧必要行を出す。
+  function injectPrintDay(col, day, iso) {
+    const { le, reqPack, act } = day;
     const hasAct = !!(act && !act.error);
-    const mcd = buildMcdData(hasAct ? act : null, le);
+    const mcd = buildMcdData(hasAct ? act : null, le, iso);
     const CAT_BG = { F: '#e8f1fb', K: '#e9f5ec', FK: '#f1ebfa', NP: '#fcf6dd' };
     const r1s = (arr) => Math.round(arr.reduce((a, b) => a + b, 0) * 10) / 10;
     const fmtH = (v) => (!v ? '' : String(Math.round(v * 10) / 10));
     const fmtD = (v) => (v == null || v === 0 ? '' : (v > 0 ? `+${Math.round(v * 10) / 10}` : String(Math.round(v * 10) / 10)));
-    // ブロックは最初のページ（フロアの上）に1回だけ・F/K両方まとめて出す
-    // （本人指定2026-08-08「フロアの上のみでok。同じ内容なので」）。
-    // 以降のページには何も注入しない。
-    const first = printFirstCol();
-    for (const col of (first ? [first] : [])) {
-      const hr = printHourRowOf(col);   // 注入行(同じhour-rowクラス)を素材にしない
-      const box = col.querySelector('.custom-field-rows');
-      if (!hr || !box) continue;
+    {
+      const col2 = col;
+      const hr = printHourRowOf(col2);   // 注入行(同じhour-rowクラス)を素材にしない
+      const box = col2.querySelector('.custom-field-rows');
+      if (!hr || !box) return;
       const mk = (cls, label, vals, color, total, opts) => {
         const row = hr.cloneNode(true);
         row.classList.add(cls);
@@ -2728,7 +2758,55 @@
         if (reqPack?.fk) mk('rf-req-row-p', '必要FK', reqPack.fk.hours, '#0e7490', reqPack.fk.total);
       }
     }
+  }
+
+  // キャッシュ済みデータを全日ぶん同期で注入し直す（beforeprint再注入と共通経路）
+  function injectPrintAllCached() {
+    for (const g of printDayCols()) {
+      const d = printDayData[g.iso];
+      if (d && d !== 'none' && !g.col.querySelector('.rf-le-row-p')) injectPrintDay(g.col, d, g.iso);
+    }
     // ページ塊の再描画で行と一緒に依頼帯も消えるため、行の張り直しに合わせて引き直す
+    if (scState) { try { updateReqLines(); } catch { /* noop */ } }
+  }
+
+  // 印刷ページの行注入の入口。表示中の日(targetDate)は引数のデータで即時注入し、
+  // 複数日印刷の残りの日はLE Maker/らくしふAPIから追い取得して日別に注入する
+  // （本人指定2026-08-08「複数日を選んだ時、最初の1日にしか反映されない」対応）。
+  async function updatePrintRows(le, reqPack, act) {
+    document.querySelectorAll('.rf-le-row-p, .rf-req-row-p').forEach((e) => e.remove());
+    if (!le) return;
+    const run = ++printRowsRun;
+    printDayData[ymd(targetDate)] = { le, reqPack, act };
+    const groups = printDayCols();
+    injectPrintAllCached();
+    for (const g of groups) {
+      if (printDayData[g.iso]) continue;
+      const d = parseYmd(g.iso);
+      if (!d) { printDayData[g.iso] = 'none'; continue; }
+      try {
+        const [sheet, act2] = await Promise.all([
+          fetchSheet(d),
+          fetchActual(d).catch((e) => ({ error: String(e && e.message || e) })),
+        ]);
+        if (run !== printRowsRun) return;   // 別の張り直しが始まっていたら破棄
+        if (!sheet || sheet.error || !sheet.hourly || !sheet.hourly['LE']) {
+          printDayData[g.iso] = 'none';     // 範囲外の日など＝この日は出せない（再試行しない）
+          continue;
+        }
+        printDayData[g.iso] = {
+          le: sheet.hourly['LE'],
+          reqPack: { f: sheet.hourly['REQ（F）'], k: sheet.hourly['REQ（K）'], fk: sheet.hourly['REQ（FK）'] },
+          act: act2,
+        };
+        if (g.col.isConnected && !g.col.querySelector('.rf-le-row-p')) {
+          injectPrintDay(g.col, printDayData[g.iso], g.iso);
+        }
+      } catch (e) {
+        console.warn('[rf] printDay', g.iso, e);
+        printDayData[g.iso] = 'none';
+      }
+    }
     if (scState) { try { updateReqLines(); } catch { /* noop */ } }
   }
 
@@ -4655,14 +4733,19 @@
       // さらに、見出しが未描画の一瞬に注入するとsec=nullでLE行だけになり、LE行があるせいで
       // 監視が固まる（実機PDF 8/18でフロアだけ必要F/FK欠落）。見出しが今は解決できるのに
       // 必要行が無い塊も「壊れている」とみなして張り直す。
-      // v1.149: ブロックは最初のページ塊だけに出す。監視も同じ選び方(printFirstCol)で、
-      // 「最初の塊にLE行と必要行群がある」ことだけを見る（旧・全塊チェックのままだと
-      // 2ページ目以降に行が無いのを壊れ扱いして永久再注入になる）。
-      const first = printFirstCol();
-      if (!first) return !!document.querySelector('.rf-le-row-p');
+      // v1.149-150: ブロックは日付ごとの最初のページ塊だけに出す。監視も同じ選び方
+      // (printDayCols)で「各日の最初の塊にLE行と必要行群がある」ことだけを見る
+      // （旧・全塊チェックのままだと2ページ目以降が壊れ扱いで永久再注入になる）。
+      const groups = printDayCols();
+      if (!groups.length) return !!document.querySelector('.rf-le-row-p');
       // ジオメトリが描画時から動いた（縮尺変更・設定パネル開閉等）→ 帯の座標が古いので引き直す
       if (printGeoSig && printGeoNow() !== printGeoSig) return false;
-      return !!(first.querySelector('.rf-le-row-p') && first.querySelector('.rf-req-row-p'));
+      return groups.every((g) => {
+        const d = printDayData[g.iso];
+        if (!d) return false;            // 未取得の日がある → 張り直し（追い取得が走る）
+        if (d === 'none') return true;   // 出せない日（LE範囲外等）は満たされている扱い
+        return !!(g.col.querySelector('.rf-le-row-p') && g.col.querySelector('.rf-req-row-p'));
+      });
     }
     const secs = metricAnchorThs().filter((th) => sectionCatOf(th.closest('tr') || th));
     if (!secs.length) return true;   // まだ描画されていない＝張り直しても入れる先がない
@@ -4891,6 +4974,21 @@
   renderUnconfirmed();
   scRefresh(); // バッジ表示のためダイアログ閉でも件数を取る
   updateReqButtons();
+  // ===== 実印刷への保険（本人報告2026-08-08「実印刷に反映されない」）=====
+  // 印刷ボタン/Cmd+Pの瞬間にらくしふ側が再描画し、注入行・帯が消えたまま
+  // スナップショットされることがある。beforeprintで同期＋マイクロタスクの二段で
+  // キャッシュ(printDayData)から張り直す。Vueが再描画をnextTick(マイクロタスク)で
+  // 行っても、こちらのqueueMicrotaskはその後に並ぶので最後に勝つ。
+  if (isPrintPage) {
+    const reinjectForPrint = () => {
+      try { injectPrintAllCached(); } catch (e) { console.warn('[rf] printReinject', e); }
+    };
+    window.addEventListener('beforeprint', () => {
+      reinjectForPrint();
+      queueMicrotask(reinjectForPrint);
+    });
+    window.addEventListener('afterprint', () => setTimeout(reinjectForPrint, 300));
+  }
   timers.push(setInterval(() => {
     if (!alive()) return contextLost();
     renderUnconfirmed();
