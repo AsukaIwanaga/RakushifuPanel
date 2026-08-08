@@ -1456,20 +1456,24 @@
     }
     return iso;
   };
+  // 罠(2026-08-08実測・本人設定「縦向き＋日付をページごと＋指標を分ける」等):
+  // らくしふはレイアウトによって**画面用シートと印刷専用シート(.printable)の二重DOM**を
+  // 持ち、@media printでは printable 側だけが表示される。画面側にだけ注入すると
+  // 画面は正しいのに実印刷/PDFから行が消える。→ 日付ごとに「画面側の最初の塊」と
+  // 「printable側の最初の塊」の**両方**へ注入する（printableが無いレイアウトは従来通り1つ）。
   const printDayCols = () => {
     const cands = printDateCands();
     const all = [...document.querySelectorAll('.shift-table-column')]
       .filter((c) => printHourRowOf(c) && c.querySelector('.custom-field-rows'));
-    const vis = all.filter((c) => c.offsetWidth);
-    const seen = new Set();
-    const out = [];
-    for (const c of (vis.length ? vis : all)) {
+    const groups = new Map();   // iso -> {iso, s: 画面側先頭, p: printable側先頭}
+    for (const c of all) {
       const iso = printDateOf(c, cands) || ymd(targetDate);
-      if (seen.has(iso)) continue;
-      seen.add(iso);
-      out.push({ iso, col: c });
+      let g = groups.get(iso);
+      if (!g) { g = { iso, s: null, p: null }; groups.set(iso, g); }
+      const kind = c.closest('.printable') ? 'p' : 's';
+      if (!g[kind]) g[kind] = c;
     }
-    return out;
+    return [...groups.values()].map((g) => ({ iso: g.iso, cols: [g.s, g.p].filter(Boolean) }));
   };
   // 日付ごとの表示データ（{le, reqPack, act} / 取得不能なら 'none'）。
   // 実印刷の瞬間の同期再注入(beforeprint)にも使うので、必ずここに貯めてから注入する。
@@ -1488,17 +1492,31 @@
     if (!cases.length) return;
     const FULL = [6 * 60, 24 * 60];
     const dateCands = printDateCands();   // 複数日印刷: 帯もページ塊の日付で判定する
+    // 印刷専用シート(.printable)は画面上display:noneで実測不能。可視シートの実測から
+    // 「分→トラック内%」の基準を作り、printable側は%で引く（%はページ縮尺・印刷スケールの
+    // 影響を受けない。シートは同一CSSの双子なので比率は一致する。DOM順は画面側が先）。
+    let refPct = null;
+    // 2パス: 先に可視シートを処理して%基準を確立→printableシート（レイアウトによっては
+    // DOM上で可視シートより前に来る＝1パスだと基準未取得でスキップされる）
+    for (const pass of [0, 1]) {
     for (const col of document.querySelectorAll('.shift-table-column')) {
       const hr0 = printHourRowOf(col);
       const cols = hr0 ? [...hr0.querySelectorAll('.hour-col')] : [];
       const c0 = cols[0];
       if (!c0) continue;
       const r0 = c0.getBoundingClientRect();
-      if (!r0.width) continue;             // 非表示塊（別パターン用DOM）は座標が取れない
+      const hidden = !r0.width;
+      if (pass === 0 && hidden) continue;  // パス0=可視シートのみ
+      if (pass === 1) {
+        if (!hidden) continue;             // パス1=印刷専用シートのみ
+        // 非表示塊のうち、印刷専用シートだけ%座標で引く。別パターン用DOMは従来通り無視
+        if (!col.closest('.printable')) continue;
+        if (!refPct) continue;             // 基準未取得（可視シートなし）なら引けない
+      }
       // ページ縮尺(transform)補正。offsetWidthは整数丸めで~0.5%誤差が出るため、
       // 行全体の幅比で取る（600px先で4px→0.3pxに縮む）
       const hrRect = hr0.getBoundingClientRect();
-      const scale = hr0.offsetWidth ? hrRect.width / hr0.offsetWidth : 1;
+      const scale = (!hidden && hr0.offsetWidth) ? hrRect.width / hr0.offsetWidth : 1;
       const byHour = new Map();
       for (const c2 of cols) {
         const h = parseInt((c2.textContent || '').trim(), 10);
@@ -1528,11 +1546,24 @@
           (scMatchesDay(c, colDate) || (!scClosed(c) && !(c.target_date || '').trim())));
         if (!rel.length) continue;
         if (getComputedStyle(track).position === 'static') track.style.position = 'relative';
-        const base = track.getBoundingClientRect().left;
+        const base = hidden ? 0 : track.getBoundingClientRect().left;
+        // 可視シートを最初に処理した時に、%基準（分→トラック幅%）を確定させる
+        if (!hidden && !refPct) {
+          const trackW = track.offsetWidth;
+          if (trackW) refPct = (min) => minToX(min, track.getBoundingClientRect().left) / trackW * 100;
+        }
         rel.forEach((c, idx) => {
           const [s, e] = reqSpanOf(c) || FULL;
-          const x = minToX(s, base);
-          const w = Math.max(2, minToX(e, base) - x);
+          let x, w, unit;
+          if (hidden) {
+            x = refPct(s);
+            w = Math.max(0.2, refPct(e) - x);
+            unit = '%';
+          } else {
+            x = minToX(s, base);
+            w = Math.max(2, minToX(e, base) - x);
+            unit = 'px';
+          }
           const blob = `${c.change || ''} ${c.title || ''}`;
           const rejected = c.is_rejected;
           const isOff = /休み|休暇/.test(blob);
@@ -1541,7 +1572,7 @@
           const fill = (rejected || isOff) ? 'rgba(220,38,38,.13)' : isLate ? 'rgba(37,99,235,.13)' : 'rgba(245,179,1,.18)';
           const band = document.createElement('div');
           band.className = 'rf-req-line';
-          band.style.cssText = `position:absolute;left:${x}px;width:${w}px;top:0;bottom:0;z-index:5;` +
+          band.style.cssText = `position:absolute;left:${x}${unit};width:${w}${unit};top:0;bottom:0;z-index:5;` +
             `pointer-events:none;box-sizing:border-box;background:${fill};` +
             `border-left:2px solid ${bg};border-right:2px solid ${bg};`;
           track.appendChild(band);
@@ -1550,12 +1581,14 @@
           lab.textContent = rejected ? '🚫拒否' : c.target === '全員' ? `🙋募集(${c.requester || ''}の代わり)`
             : isOff ? '休み希望' : isLate ? '途中希望' : `依頼中(${scStatusLabel(c)})`;
           if (!rejected && c.accepted_done) lab.textContent = `◯${lab.textContent}`;  // 快諾済み
-          lab.style.cssText = `position:absolute;left:${x + 1}px;top:${1 + idx * 11}px;z-index:6;` +
+          lab.style.cssText = `position:absolute;left:${unit === '%' ? `${x}%` : `${x + 1}px`};` +
+            `top:${1 + idx * 11}px;z-index:6;` +
             `pointer-events:none;font:700 8.5px/1.2 'Hiragino Sans',sans-serif;color:${bg};` +
             'background:rgba(255,255,255,.88);padding:0 3px;border-radius:2px;white-space:nowrap;';
           track.appendChild(lab);
         });
       }
+    }
     }
     printGeoSig = printGeoNow();
   }
@@ -2764,7 +2797,10 @@
   function injectPrintAllCached() {
     for (const g of printDayCols()) {
       const d = printDayData[g.iso];
-      if (d && d !== 'none' && !g.col.querySelector('.rf-le-row-p')) injectPrintDay(g.col, d, g.iso);
+      if (!d || d === 'none') continue;
+      for (const col of g.cols) {
+        if (!col.querySelector('.rf-le-row-p')) injectPrintDay(col, d, g.iso);
+      }
     }
     // ページ塊の再描画で行と一緒に依頼帯も消えるため、行の張り直しに合わせて引き直す
     if (scState) { try { updateReqLines(); } catch { /* noop */ } }
@@ -2799,8 +2835,10 @@
           reqPack: { f: sheet.hourly['REQ（F）'], k: sheet.hourly['REQ（K）'], fk: sheet.hourly['REQ（FK）'] },
           act: act2,
         };
-        if (g.col.isConnected && !g.col.querySelector('.rf-le-row-p')) {
-          injectPrintDay(g.col, printDayData[g.iso], g.iso);
+        for (const col of g.cols) {
+          if (col.isConnected && !col.querySelector('.rf-le-row-p')) {
+            injectPrintDay(col, printDayData[g.iso], g.iso);
+          }
         }
       } catch (e) {
         console.warn('[rf] printDay', g.iso, e);
@@ -4744,7 +4782,8 @@
         const d = printDayData[g.iso];
         if (!d) return false;            // 未取得の日がある → 張り直し（追い取得が走る）
         if (d === 'none') return true;   // 出せない日（LE範囲外等）は満たされている扱い
-        return !!(g.col.querySelector('.rf-le-row-p') && g.col.querySelector('.rf-req-row-p'));
+        return g.cols.every((c) =>
+          c.querySelector('.rf-le-row-p') && c.querySelector('.rf-req-row-p'));
       });
     }
     const secs = metricAnchorThs().filter((th) => sectionCatOf(th.closest('tr') || th));
