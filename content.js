@@ -38,7 +38,7 @@
     if (name === 'F' || name === 'K' || name === 'FK') return name;
     if (/^BU/.test(name || '')) return 'K';
     if (['MGT', 'TRer', 'TRee'].includes(name)) return isRegular ? 'MGT' : 'cMGT';
-    if (/スタンバイ/.test(name || '')) return 'NP';   // 非生産（本人指定2026-08-06）
+    if (/スタンバイ|商品管理/.test(name || '')) return 'NP';   // 非生産（スタンバイ=2026-08-06・商品管理=2026-08-09 本人指定）
     return null;
   };
   // パネル上部の統計チップ
@@ -1148,7 +1148,8 @@
     const res = await shiftApi('/api/shift/create', {
       target: r.name.replace(/\s+/g, ''),
       target_date: `${targetDate.getMonth() + 1}/${targetDate.getDate()}`,
-      change: r.change, req_time: r.req_time,
+      // 休み系は対象時間=全日（本人指定2026-08-09）
+      change: r.change, req_time: /休み|休暇/.test(String(r.change || '')) ? OFF_ALLDAY : r.req_time,
       requester: r.name.replace(/\s+/g, ''),
       source: 'らくしふ要確定', memo: `らくしふの要確定から自動起案（bar_id ${r.bar_id}）`,
     });
@@ -1162,6 +1163,10 @@
     scRefresh();   // 新しい案件をリストへ反映
     return true;
   }
+
+  // 休み希望の対象時間は「全日」（本人指定2026-08-09。現シフト時刻ではなく一日全体＝
+  // 赤帯も一日通しで出る）。プルダウンの範囲(6〜24時)いっぱい。
+  const OFF_ALLDAY = '6:00-24:00';
 
   // ===== 対象時間の入力ウィジェット（時・分プルダウン・分は既定00）=====
   // 手打ちが面倒なので、開始/終了を「時」「分」のselectで選ぶ。空欄なら変更内容から自動。
@@ -1955,16 +1960,17 @@
         scOpenNewFor(name, { dateStr, reqTime: t, change: endTok ? `${endTok}あがりのところ、` : '' });
       });
     // クルー発の「休みにしてほしい」を1タップで起票できる導線（本人報告2026-08-08
-    // 「休み希望への対応が拡張だけでできない」）。現シフト時間を対象区間にプリセットし、
+    // 「休み希望への対応が拡張だけでできない」）。対象時間は全日（本人指定2026-08-09
+    // 「休み希望の場合、時間は全日になります」＝現シフト時刻ではなく一日全体を対象にする）。
     // 変更内容=休みへ変更で新規フォームを開く。作成時に依頼済み/承諾は自動チェックされる
     // （本人発の希望なので依頼・承諾工程は完了扱い→すぐ「反映待ち」になる）。
     const btnOff = mkBtn('🛌 休み希望',
-      'この人・この日を「休みへ変更」で起票（クルー発。依頼済み/承諾は自動でチェックされ、' +
+      'この人・この日を「休みへ変更」で起票（クルー発。対象時間は全日。依頼済み/承諾は自動でチェックされ、' +
       'らくしふのシフト取消と周知だけが残る）',
       'border:1px solid #b9c8e8;background:#f2f6fd;color:#1d4ed8;',
       () => {
-        const { dateStr, t } = readPreset();
-        scOpenNewFor(name, { dateStr, reqTime: t, change: '休みへ変更' });
+        const { dateStr } = readPreset();
+        scOpenNewFor(name, { dateStr, reqTime: OFF_ALLDAY, change: '休みへ変更' });
       });
     cancel.insertAdjacentElement('afterend', btnOff);
     cancel.insertAdjacentElement('afterend', btn);
@@ -2065,6 +2071,12 @@
     if (t.matches('.scn-preset')) {   // 変更内容のワンタップ入力（休みへ変更 等）
       const el = $('#scNewChange');
       if (el) { el.value = t.dataset.v || ''; el.focus(); }
+      // 休み系は対象時間=全日（本人指定2026-08-09「休み希望の場合、時間は全日」）
+      if (/休み|休暇/.test(t.dataset.v || '')) {
+        const p = reqTimeToHM(OFF_ALLDAY);
+        const set = (cls, v) => { const s = $('#scNewForm').querySelector(`.scn-${cls}`); if (s) s.value = v; };
+        set('sh', p.sh); set('sm', p.sm); set('eh', p.eh); set('em', p.em);
+      }
       return;
     }
     if (t.matches('.sc-note-input button')) {
