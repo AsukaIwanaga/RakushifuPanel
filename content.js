@@ -1819,8 +1819,10 @@
     return { label: ds.map(fmt).join('〜'),
              urgent: (diff >= 0 && diff <= 7) ? '急遽の変更で恐れ入りますが、' : '' };
   };
-  // 対象時間 "HH:MM-HH:MM" → 「17:00〜22:00」。未設定なら空文字。
+  // 対象時間 "HH:MM-HH:MM" → 「17:00〜22:00」。未設定・全日(休み希望の既定)なら空文字
+  // （文言に「6:00〜24:00の休み希望」と出るのは不自然なため）。
   const reqTimeLabel = (reqTime) => {
+    if (String(reqTime || '').trim() === OFF_ALLDAY) return '';
     const p = reqTimeToHM(reqTime);
     return p ? `${p.sh}:${p.sm}〜${p.eh}:${p.em}` : '';
   };
@@ -2596,7 +2598,7 @@
       planFix = r1(fx);
     }
     const sch = actual ? { F: r1(actual.sum.F), K: r1(actual.sum.K), FK: r1(actual.sum.FK),
-                           TR: sum18(actual.TR) } : null;
+                           TR: sum18(actual.TR), NP: sum18(actual.NP) } : null;
     const tpls = [...params.ws.templates].sort((a, b) =>
       String(a.name || '').localeCompare(String(b.name || ''), 'ja', { numeric: true }));
     const opts = `<option value="">自動${autoT ? `（${autoT.name}）` : ''}</option>` +
