@@ -1573,13 +1573,15 @@
           const rejected = c.is_rejected;
           const isOff = /休み|休暇/.test(blob);
           const isLate = /途中希望|追加希望|再提出/.test(blob);
+          // 承諾済みの出勤依頼(黄)は緑の枠（編集画面と同ルール・本人指定2026-08-09）
+          const okd = !rejected && c.target !== '全員' && !isOff && !isLate && c.accepted_done;
           const bg = (rejected || isOff) ? '#dc2626' : isLate ? '#2563eb' : '#f5b301';
           const fill = (rejected || isOff) ? 'rgba(220,38,38,.13)' : isLate ? 'rgba(37,99,235,.13)' : 'rgba(245,179,1,.18)';
           const band = document.createElement('div');
           band.className = 'rf-req-line';
           band.style.cssText = `position:absolute;left:${x}${unit};width:${w}${unit};top:0;bottom:0;z-index:5;` +
             `pointer-events:none;box-sizing:border-box;background:${fill};` +
-            `border-left:2px solid ${bg};border-right:2px solid ${bg};`;
+            (okd ? 'border:2px solid #16a34a;' : `border-left:2px solid ${bg};border-right:2px solid ${bg};`);
           track.appendChild(band);
           const lab = document.createElement('div');
           lab.className = 'rf-req-line';
@@ -1635,13 +1637,16 @@
         const blob = `${c.change || ''} ${c.title || ''}`;
         const isOff = /休み|休暇/.test(blob);
         const isLate = /途中希望|追加希望|再提出/.test(blob);
+        // 店舗発の出勤依頼(黄)が承諾されたら緑の枠で囲う（本人指定2026-08-09）。
+        // 休み/途中希望はクルー発=起票時点で承諾済みが常なので対象外（赤/青の意味を保つ）。
+        const okd = !rejected && !zenin && !isOff && !isLate && c.accepted_done;
         const bg = (rejected || isOff) ? '#dc2626' : isLate ? '#2563eb' : '#f5b301';
         const fill = (rejected || isOff) ? 'rgba(220,38,38,.16)' : isLate ? 'rgba(37,99,235,.16)' : 'rgba(245,179,1,.22)';
         const band = document.createElement('div');
         band.className = 'rf-req-line';
         band.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:0;bottom:0;` +
           `z-index:2;pointer-events:none;box-sizing:border-box;background:${fill};` +
-          `border-left:2px solid ${bg};border-right:2px solid ${bg};`;
+          (okd ? 'border:2px solid #16a34a;' : `border-left:2px solid ${bg};border-right:2px solid ${bg};`);
         track.appendChild(band);
         // バー(.bars-container=z200・不透明)と重なる区間では最背面フィルが完全に隠れるため、
         // バーの上にも見える細い帯を前面(z300)に出す（本人指摘2026-08-06「ラインの上に表示がない」）。
