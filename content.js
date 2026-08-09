@@ -38,7 +38,7 @@
     if (name === 'F' || name === 'K' || name === 'FK') return name;
     if (/^BU/.test(name || '')) return 'K';
     if (['MGT', 'TRer', 'TRee'].includes(name)) return isRegular ? 'MGT' : 'cMGT';
-    if (/スタンバイ|商品管理/.test(name || '')) return 'NP';   // 非生産（スタンバイ=2026-08-06・商品管理=2026-08-09 本人指定）
+    if (/スタンバイ|商品管理|棚卸/.test(name || '')) return 'NP';   // 非生産（スタンバイ=2026-08-06・商品管理/棚卸し=2026-08-09 本人指定）
     return null;
   };
   // パネル上部の統計チップ
