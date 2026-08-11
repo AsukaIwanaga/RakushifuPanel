@@ -1558,8 +1558,11 @@
         if (!nameEl || !track) continue;
         const nm = normName(nameEl.textContent);
         if (!nm) continue;
-        const rel = cases.filter((c) => (c.target === '全員' || normName(c.target) === nm) && !c.is_done &&
-          (scMatchesDay(c, colDate) || (!scClosed(c) && !(c.target_date || '').trim())));
+        // 休み系は完了後も赤帯を出し続ける（本人指定2026-08-11・編集画面と同ルール）
+        const rel = cases.filter((c) => (c.target === '全員' || normName(c.target) === nm) &&
+          (scMatchesDay(c, colDate)
+            ? (!c.is_done || /休み|休暇/.test(`${c.change || ''} ${c.title || ''}`))
+            : (!c.is_done && !scClosed(c) && !(c.target_date || '').trim())));
         if (!rel.length) continue;
         if (getComputedStyle(track).position === 'static') track.style.position = 'relative';
         const base = hidden ? 0 : track.getBoundingClientRect().left;
@@ -1594,10 +1597,11 @@
             `pointer-events:none;box-sizing:border-box;background:${fill};` +
             (okd ? 'border:2px solid #16a34a;' : `border-left:2px solid ${bg};border-right:2px solid ${bg};`);
           track.appendChild(band);
+          if (c.is_done) band.style.borderStyle = 'dashed';   // 完了済みの休みは点線枠
           const lab = document.createElement('div');
           lab.className = 'rf-req-line';
           lab.textContent = rejected ? '🚫拒否' : c.target === '全員' ? `🙋募集(${c.requester || ''}の代わり)`
-            : isOff ? '休み希望' : isLate ? '途中希望' : `依頼中(${scStatusLabel(c)})`;
+            : isOff ? (c.is_done ? '休み(済)' : '休み希望') : isLate ? '途中希望' : `依頼中(${scStatusLabel(c)})`;
           if (!rejected && c.accepted_done) lab.textContent = `◯${lab.textContent}`;  // 快諾済み
           lab.style.cssText = `position:absolute;left:${unit === '%' ? `${x}%` : `${x + 1}px`};` +
             `top:${1 + idx * 11}px;z-index:6;` +
@@ -1624,8 +1628,13 @@
       if (!nm) continue;
       // 対象=この人・当日一致 or 日付未記入のオープン。状態は完了以外（保留=黄 / 拒否=赤×）
       // target='全員'（休み募集）は全行に出す（本人指定）。
-      const rel = cases.filter((c) => (c.target === '全員' || normName(c.target) === nm) && !c.is_done &&
-        (scMatchesDay(c, targetDate) || (!scClosed(c) && !(c.target_date || '').trim())));
+      // 休み系だけは完了(クローズ)後も赤帯を出し続ける（本人指定2026-08-11
+      // 「依頼がクローズしても赤枠などは表示したままにしてほしい」＝入れない目印を維持）。
+      const isOffCase = (c) => /休み|休暇/.test(`${c.change || ''} ${c.title || ''}`);
+      const rel = cases.filter((c) => (c.target === '全員' || normName(c.target) === nm) &&
+        (scMatchesDay(c, targetDate)
+          ? (!c.is_done || isOffCase(c))
+          : (!c.is_done && !scClosed(c) && !(c.target_date || '').trim())));
       if (!rel.length) continue;
       const track = tr.querySelector('.schedule-row');
       if (!track) continue;
@@ -1637,9 +1646,11 @@
         // ホバーで状態が分かるように、状態語(依頼中→承諾待ち→反映待ち…)を先頭に出す
         const title = rejected
           ? `🚫 拒否: ${c.title}` + (c.reject_reason ? `（理由: ${c.reject_reason}）` : '')
-          : zenin
-            ? `🙋 休み募集(${scStatusLabel(c)}): ${c.requester || ''}さんの代わり ${c.change || ''}`.trim()
-            : `🔄 ${scStatusLabel(c)}: ${c.title}`;
+          : c.is_done
+            ? `✅ 対応済み(帯は目印として維持): ${c.title}`
+            : zenin
+              ? `🙋 休み募集(${scStatusLabel(c)}): ${c.requester || ''}さんの代わり ${c.change || ''}`.trim()
+              : `🔄 ${scStatusLabel(c)}: ${c.title}`;
         // 最背面の塗りに変更（本人指定2026-08-05「依頼中や拒否のラインも同様に最背面の塗りつぶしで」）。
         // 全高フィル＋左右の細エッジで区間を示す。z=2＝不足/過剰帯(z1)の上・バー(z200)の下。
         // クリック透過でシフト編集を妨げず、ホバー用の小チップ(前面)は従来どおり。
@@ -1658,6 +1669,7 @@
         band.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:0;bottom:0;` +
           `z-index:2;pointer-events:none;box-sizing:border-box;background:${fill};` +
           (okd ? 'border:2px solid #16a34a;' : `border-left:2px solid ${bg};border-right:2px solid ${bg};`);
+        if (c.is_done) band.style.borderStyle = 'dashed';   // 完了済みの休みは点線枠
         track.appendChild(band);
         // バー(.bars-container=z200・不透明)と重なる区間では最背面フィルが完全に隠れるため、
         // バーの上にも見える細い帯を前面(z300)に出す（本人指摘2026-08-06「ラインの上に表示がない」）。
@@ -1970,7 +1982,14 @@
         const [mo, da] = dateStr.split('/').map(Number);
         const base = parseYmd(urlParams().from || '') || targetDate || new Date();
         const iso = `${base.getFullYear()}-${pad2(mo)}-${pad2(da)}`;
-        const q = new URLSearchParams({ belonging_store_id: '945', start_date: iso, end_date: iso });
+        const p2 = new URLSearchParams(location.search);
+        const q = new URLSearchParams();
+        q.set('page_ctx_name', 'admin');
+        q.set('store_id', p2.get('s') || '945');
+        for (const g of (p2.getAll('g').length ? p2.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+        q.set('start_date', iso);
+        q.set('end_date', iso);
+        q.set('is_staff_print_page', 'false');
         const r = await fetch('/ajax/admin/v2/schedules?' + q, {
           credentials: 'include', headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
         if (!r.ok) return null;
@@ -2752,6 +2771,52 @@
     }
   }
 
+  // ===== 天気予報（午前/午後）: 日付チップの隣に出す（本人指定2026-08-11） =====
+  // データ = LE Maker native/weather_forecast.json（open-meteo・毎朝更新・
+  // 朝(6-10)/昼(11-14)/午後(15-17)/夜(18-23)の4バンド）。午前=朝+昼 / 午後=午後+夜 に集約。
+  let weatherCache = null;   // {days: {...}} | 'none'
+  async function loadWeather() {
+    if (weatherCache) return weatherCache;
+    const r = await leMakerGet('/native/weather_forecast.json');
+    try { weatherCache = r && r.ok && r.text ? JSON.parse(r.text) : 'none'; }
+    catch { weatherCache = 'none'; }
+    return weatherCache;
+  }
+  const WX_EMOJI = [[/雷/, '⛈'], [/大雨|激しい/, '☔'], [/雨|霧雨/, '🌧'], [/霧/, '🌫'],
+    [/快晴|^晴$/, '☀'], [/晴/, '🌤'], [/曇/, '☁']];
+  const wxEmoji = (label) => (WX_EMOJI.find(([re]) => re.test(label || '')) || [null, ''])[1];
+  function wxHalf(day, bands) {
+    // 集約: 雨量は合算、概況は「雨が多い方のバンド」を代表にする
+    const cells = bands.map((b) => day[b]).filter(Boolean);
+    if (!cells.length) return null;
+    const rain = Math.round(cells.reduce((a, c) => a + (c.rain_mm || 0), 0) * 10) / 10;
+    const rep = [...cells].sort((a, b) => (b.rain_mm || 0) - (a.rain_mm || 0))[0];
+    const tmax = Math.round(Math.max(...cells.map((c) => c.tmax ?? -99)));
+    return { rain, label: rep['概況'] || '', tmax };
+  }
+  async function updateWeatherChip() {
+    document.querySelectorAll('.rf-wx-chip').forEach((e) => e.remove());
+    if (!onOneDayTarget()) return;
+    const wx = await loadWeather();
+    const day = wx && wx !== 'none' && wx.days && wx.days[ymd(targetDate)];
+    if (!day) return;
+    const anchor = document.querySelector('.rf-date-chip');
+    if (!anchor) return;
+    const am = wxHalf(day, ['朝(6-10)', '昼(11-14)']);
+    const pm = wxHalf(day, ['午後(15-17)', '夜(18-23)']);
+    const part = (tag, h) => (h ? `${tag}${wxEmoji(h.label)}${h.rain >= 0.5 ? `${h.rain}mm` : ''} ${h.tmax}°` : '');
+    const chip = document.createElement('span');
+    chip.className = 'rf-wx-chip';
+    chip.textContent = [part('午前', am), part('午後', pm)].filter(Boolean).join(' / ');
+    chip.title = Object.entries(day).map(([b, c]) =>
+      `${b} ${c['概況']}${c.rain_mm ? ` ☔${c.rain_mm}mm` : ''} 最高${c.tmax}℃`).join('\n') +
+      `\n(${(wx.fetched_at || '')} open-meteo 吉祥寺)`;
+    chip.style.cssText = 'display:inline-block;font-size:12px;font-weight:600;color:#474743;' +
+      'margin-right:14px;padding:1px 8px;border:1px solid #d9d8d2;background:#fff;' +
+      'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;white-space:nowrap;';
+    anchor.after(chip);
+  }
+
   // ===== 月次労務サマリ行（月次合計H…）の先頭に対象日を出す（本人指定2026-08-05） =====
   // どの日を見ているかがこの行だけで分かるように。日曜・祝日=赤 / 土曜=青。
   function updateDateChip() {
@@ -3498,6 +3563,7 @@
     try { updateWsSummary(hasActual ? actual : null, hourly['LE']); }
     catch (e) { console.warn('[rf] wsSummary', e); }
     try { updateDateChip(); } catch (e) { console.warn('[rf] dateChip', e); }
+    updateWeatherChip().catch(() => {});
     updateLERows(hourly['LE'],
       { sum: req, f: reqF, k: reqK, fk: reqFK, sub: secondary, basisName, subName },
       hasActual ? actual : null);
@@ -3554,6 +3620,7 @@
       const days = await fetchUnconfirmed(storeId);
       unconfirmedSet = new Set(days);
       try { updateDateChip(); } catch { /* チップ未描画時は次のtickで */ }
+      updateWeatherChip().catch(() => {});
       if (days.length === 0) {
         el.innerHTML = '<span class="allok">✓ すべて確定済み</span>';
         badge.style.display = 'none';
@@ -4918,6 +4985,7 @@
     guarded('leRows', () => { if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); });
     guarded('wsSum', () => { if (lastWsSum && !document.querySelector('.rf-ws-sum')) updateWsSummary(lastWsSum.actual, lastWsSum.le); });
     guarded('dateChip', () => { if (!document.querySelector('.rf-date-chip')) updateDateChip(); });
+    guarded('wxChip', () => { if (!document.querySelector('.rf-wx-chip')) updateWeatherChip().catch(() => {}); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
     guarded('gapBands', () => { if (lastGap && !document.querySelector('.rf-gap-band')) updateGapBands(); });
