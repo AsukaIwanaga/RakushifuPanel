@@ -32,13 +32,15 @@
   // MGT/cMGTタスクがシフトのこの割合以上を占めたら、そのシフトは丸ごとMGT扱いにする
   // （＝実F/実K/実計から全部抜く）。これ未満なら、そのタスク区間だけ抜いて残りはF/K。
   const MGT_WHOLE_RATIO = 0.8;
-  // 業務割振タスク名 → カウント先。F/K/FK=振替、BU系=キッチン扱い、
+  // 業務割振タスク名 → カウント先。F/K/FK=振替、BU=キッチン扱い、
   // MGT/TRer/TRee=OP Hに数えず MGT系へ（正社員→MGT、その他→cMGT）
   const moveGroup = (name, isRegular) => {
     if (name === 'F' || name === 'K' || name === 'FK') return name;
+    // 非生産（スタンバイ=08-06・商品管理/棚卸し/配送整理=08-09・BUSS(W)=08-11 本人指定）。
+    // BUSSは/^BU/より先に判定しないとK扱いになるのでこの位置
+    if (/スタンバイ|商品管理|棚卸|配送整理|BUSS/.test(name || '')) return 'NP';
     if (/^BU/.test(name || '')) return 'K';
     if (['MGT', 'TRer', 'TRee'].includes(name)) return isRegular ? 'MGT' : 'cMGT';
-    if (/スタンバイ|商品管理|棚卸|配送整理/.test(name || '')) return 'NP';   // 非生産（スタンバイ=2026-08-06・商品管理/棚卸し/配送整理=2026-08-09 本人指定）
     return null;
   };
   // パネル上部の統計チップ
