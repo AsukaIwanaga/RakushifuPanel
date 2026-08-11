@@ -221,6 +221,15 @@
     if (ovr) return w.templates.find((t) => t.id === ovr) || null;
     return wsAutoTpl(params, iso, leSum);
   }
+  // 固定作業のうち「トップ作業」「ラスト作業」は該当ポジション(sec)の生産ラインと同じ
+  // カウントにする（本人指定2026-08-11）。戻り: {固定作業id: 'F'|'K'} (生産扱いのものだけ)。
+  function wsProdFixSec(params) {
+    const out = {};
+    for (const ft of ((params && params.ws && params.ws.fixedTasks) || [])) {
+      if (/トップ作業|ラスト作業/.test(ft.label || '')) out[ft.id] = ft.sec;
+    }
+    return out;
+  }
   function computeWS(params, iso, leSum) {
     const tpl = wsTplFor(params, iso, leSum);
     if (!tpl) return null;
@@ -1935,7 +1944,8 @@
     const m = /(\d{1,2})\s*\((日|月|火|水|木|金|土)\)\s*([^\n]+)/.exec(txt);
     const name = m ? m[3].trim() : '';
     const day = m ? Number(m[1]) : null;
-    // モーダルから対象日・現在の勤務時間を読み取る（両ボタン共通）
+    // モーダルから対象日・勤務時間selectの現在値を読み取る（両ボタン共通）。
+    // 注意: selectはユーザーが編集済みかもしれない＝「変更後の希望時刻」の可能性がある。
     const readPreset = () => {
       // 対象日 = 表示中の月（URLのfrom）＋モーダルの日
       const base = parseYmd(urlParams().from || '') || targetDate || new Date();
@@ -1946,10 +1956,38 @@
       const p2m = (v) => String(v || '0').padStart(2, '0');
       const t = sels.length >= 4 && hv(sels[0]) && hv(sels[2])
         ? `${sels[0].value}:${p2m(sels[1].value)}-${sels[2].value}:${p2m(sels[3].value)}` : '';
-      // 文言は「HH時あがりのところ、」形式（本人指定2026-08-06。旧「現在20:0-21:0のところ、」は
-      // 分のゼロ埋め漏れ＋不自然だった）。延長依頼が主用途なので終業時刻を主語にする。
-      const endTok = t ? `${+sels[2].value}時${p2m(sels[3].value) !== '00' ? `${p2m(sels[3].value)}分` : ''}` : '';
-      return { dateStr, t, endTok };
+      const mins = t ? [(+sels[0].value) * 60 + (+sels[1].value || 0),
+                        (+sels[2].value) * 60 + (+sels[3].value || 0)] : null;
+      return { dateStr, t, mins };
+    };
+    const hmTok = (min) => `${Math.floor(min / 60)}時${min % 60 ? `${pad2(min % 60)}分` : ''}`;
+    const hmStr = (min) => `${Math.floor(min / 60)}:${pad2(min % 60)}`;
+    // 元シフト（らくしふ登録値）はajaxから引く。モーダルselectは編集済みかもしれないため、
+    // 「〜のところ、」の主語は必ずデータ側から取る（本人指摘2026-08-11: selectを22:30へ
+    // 直してから❗を押すと「23時あがりのところ」と新旧が混ざった文になっていた）。
+    const fetchOrigShift = async (dateStr) => {
+      try {
+        const [mo, da] = dateStr.split('/').map(Number);
+        const base = parseYmd(urlParams().from || '') || targetDate || new Date();
+        const iso = `${base.getFullYear()}-${pad2(mo)}-${pad2(da)}`;
+        const q = new URLSearchParams({ belonging_store_id: '945', start_date: iso, end_date: iso });
+        const r = await fetch('/ajax/admin/v2/schedules?' + q, {
+          credentials: 'include', headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+        if (!r.ok) return null;
+        const j = await r.json();
+        const nameOf = {};
+        for (const u of (j.users || [])) nameOf[u.id] = normName(u.name);
+        // このAPIは1日指定でも前日分を返す→日付厳密フィルタ必須
+        const rows = (j.instructed || []).filter((s) => s.date === iso && !s.is_deleted &&
+          !s.off && nameOf[s.user_id] === normName(name));
+        if (!rows.length) return null;
+        if (rows.length === 1) return [rows[0].start_as_min, rows[0].end_as_min];
+        // 複数バー（応援等）はモーダルselect値との重なりが最大のもの
+        const { mins } = readPreset();
+        const ov = (s) => (mins ? Math.max(0, Math.min(s.end_as_min, mins[1]) - Math.max(s.start_as_min, mins[0])) : 0);
+        rows.sort((a, b) => ov(b) - ov(a));
+        return [rows[0].start_as_min, rows[0].end_as_min];
+      } catch { return null; }
     };
     const mkBtn = (label, title, css, onClick) => {
       const b = document.createElement('button');
@@ -1962,11 +2000,38 @@
       return b;
     };
     const btn = mkBtn('❗ 依頼作成',
-      'この人・この日のシフト変更依頼を起票（共有台帳へ。らくしふには何も書き込みません）',
+      'この人・この日のシフト変更依頼を起票（共有台帳へ。らくしふには何も書き込みません）。' +
+      'モーダルの時刻を変更後の希望に直してから押すと「◯時あがりのところ、◯:◯◯までに変更できませんか？」まで自動で入ります',
       'border:1px solid #e0b4b4;background:#fff5f5;color:#b03030;',
-      () => {
-        const { dateStr, t, endTok } = readPreset();
-        scOpenNewFor(name, { dateStr, reqTime: t, change: endTok ? `${endTok}あがりのところ、` : '' });
+      async () => {
+        const { dateStr, t, mins } = readPreset();
+        const orig = await fetchOrigShift(dateStr);
+        // 文言（本人指定2026-08-06「HH時あがりのところ、」/ 2026-08-11 新旧比較で全文まで組む）:
+        //  select未編集(=元シフトと同値) or 元が引けない → 従来どおり前置きだけ
+        //  終業だけ変更 → 「{元}あがりのところ、{新}までに変更できませんか？」
+        //  始業だけ変更 → 「{元}INのところ、{新}INに変更できませんか？」
+        //  両方変更   → 「{元s}-{元e}のところ、{新s}-{新e}に変更できませんか？」
+        // 対象時間(帯)は変わった側の区間（延長なら旧終業〜新終業）。未編集なら現シフト全体。
+        let change = '';
+        let reqTime = t;
+        if (orig && mins && (orig[0] !== mins[0] || orig[1] !== mins[1])) {
+          const dS = orig[0] !== mins[0], dE = orig[1] !== mins[1];
+          if (dE && !dS) {
+            change = `${hmTok(orig[1])}あがりのところ、${hmStr(mins[1])}までに変更できませんか？`;
+            reqTime = `${hmStr(Math.min(orig[1], mins[1]))}-${hmStr(Math.max(orig[1], mins[1]))}`;
+          } else if (dS && !dE) {
+            change = `${hmTok(orig[0])}INのところ、${hmStr(mins[0])}INに変更できませんか？`;
+            reqTime = `${hmStr(Math.min(orig[0], mins[0]))}-${hmStr(Math.max(orig[0], mins[0]))}`;
+          } else {
+            change = `${hmStr(orig[0])}-${hmStr(orig[1])}のところ、${hmStr(mins[0])}-${hmStr(mins[1])}に変更できませんか？`;
+            reqTime = `${hmStr(Math.min(orig[0], mins[0]))}-${hmStr(Math.max(orig[1], mins[1]))}`;
+          }
+        } else {
+          const endMin = orig ? orig[1] : (mins ? mins[1] : null);
+          change = endMin != null ? `${hmTok(endMin)}あがりのところ、` : '';
+          if (orig) reqTime = `${hmStr(orig[0])}-${hmStr(orig[1])}`;
+        }
+        scOpenNewFor(name, { dateStr, reqTime, change });
       });
     // クルー発の「休みにしてほしい」を1タップで起票できる導線（本人報告2026-08-08
     // 「休み希望への対応が拡張だけでできない」）。対象時間は全日（本人指定2026-08-09
@@ -2397,11 +2462,19 @@
     const zero = () => HOURS.map(() => 0);
     const planG = { F: zero(), K: zero(), FK: zero() };
     const fixP = zero();
+    // トップ作業・ラスト作業だけは該当ポジションの生産ラインと同じカウント（本人指定2026-08-11）。
+    // スタンバイ・配送整理など他の固定作業は従来どおり非生産PLAN。
+    const prodFixSec = wsProdFixSec(params);
     if (tpl) {
       for (const rw of (tpl.rows || [])) if (planG[rw.sec])
         HOURS.forEach((h, i) => { planG[rw.sec][i] += Number((rw.hours || [])[i]) || 0; });
-      for (const id in (tpl.fixedHours || {}))
-        HOURS.forEach((h, i) => { fixP[i] += Number((tpl.fixedHours[id] || [])[i]) || 0; });
+      for (const id in (tpl.fixedHours || {})) {
+        const sec = prodFixSec[id];
+        HOURS.forEach((h, i) => {
+          const v = Number((tpl.fixedHours[id] || [])[i]) || 0;
+          if (sec && planG[sec]) planG[sec][i] += v; else fixP[i] += v;
+        });
+      }
       // ラインの無い手入力counts型は counts を全部生産扱い
       if (!['F', 'K', 'FK'].some((g) => planG[g].some((v) => v)) && !fixP.some((v) => v)) {
         const c = tpl.counts || {};
@@ -2422,11 +2495,15 @@
       for (const rw of (tpl.rows || [])) if (planG30[rw.sec])
         for (let k = 0; k < N30; k++)
           planG30[rw.sec][k] += Number((rw.h30 || [])[k] ?? (rw.hours || [])[k >> 1]) || 0;
+      const add30 = (id, k, v) => {
+        const sec = prodFixSec[id];
+        if (sec && planG30[sec]) planG30[sec][k] += v; else fixP30[k] += v;
+      };
       for (const id in (tpl.fixedH30 || {}))
-        for (let k = 0; k < N30; k++) fixP30[k] += Number((tpl.fixedH30[id] || [])[k]) || 0;
+        for (let k = 0; k < N30; k++) add30(id, k, Number((tpl.fixedH30[id] || [])[k]) || 0);
       if (!Object.keys(tpl.fixedH30 || {}).length)
         for (const id in (tpl.fixedHours || {}))
-          for (let k = 0; k < N30; k++) fixP30[k] += Number((tpl.fixedHours[id] || [])[k >> 1]) || 0;
+          for (let k = 0; k < N30; k++) add30(id, k, Number((tpl.fixedHours[id] || [])[k >> 1]) || 0);
       // counts型（ライン無し）は時間値をそのまま両半に
       if (!['F', 'K', 'FK'].some((g) => planG30[g].some((v) => v)) && !fixP30.some((v) => v)) {
         const c = tpl.counts || {};
@@ -2599,9 +2676,12 @@
     const planH = { F: 0, K: 0, FK: 0 };
     let planFix = 0;
     if (tpl) {
+      // counts はトップ/ラスト等の固定作業を区分に畳み込み済み。非生産PLANからは
+      // トップ作業・ラスト作業を除く（生産扱い・本人指定2026-08-11 = buildMcdDataと同ルール）
       for (const s of ['F', 'K', 'FK']) planH[s] = sum18((tpl.counts || {})[s]);
+      const prodIds = wsProdFixSec(params);
       let fx = 0;
-      for (const id in (tpl.fixedHours || {})) fx += sum18(tpl.fixedHours[id]);
+      for (const id in (tpl.fixedHours || {})) if (!prodIds[id]) fx += sum18(tpl.fixedHours[id]);
       planFix = r1(fx);
     }
     const sch = actual ? { F: r1(actual.sum.F), K: r1(actual.sum.K), FK: r1(actual.sum.FK),
