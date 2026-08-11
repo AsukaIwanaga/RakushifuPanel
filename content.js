@@ -985,6 +985,13 @@
     } catch { resolve({ ok: false, error: '拡張更新済み・要ページ再読込' }); }
   });
 
+  // クルー発の「純粋な休み希望」判定（依頼者=本人 かつ 休み系文言。「休み→勤務可」の
+  // 逆方向は除外）。カードの工程表示と起票時の対象外チェックの両方で使う。
+  const scOffCrew = (c) => !!(c && c.requester && normName(c.requester) === normName(c.target) &&
+    (String(c.req_time || '').trim() === OFF_ALLDAY ||
+     /休み希望|休みへ変更|休みに|お休み/.test(`${c.change || ''} ${c.title || ''}`)) &&
+    !/勤務可|出勤でき|出勤可能|出れます/.test(String(c.change || '')));
+
   const shiftPanel = $('#shiftPanel');
   let scFilter = 'open'; // 'open' | 'day' | 'all'
   let scState = null;
@@ -1227,9 +1234,17 @@
       title = title.replace(scDateRunRe, cur);
       multi = `<span class="sc-multi" title="全対象日: ${esc(rawDates)}">📅全${n}日</span>`;
     }
-    const checks = SC_CHECKS.map(([k, lbl]) =>
-      `<label><input type="checkbox" data-p="${esc(c.path)}" data-k="${k}" ${c[k] ? 'checked' : ''}>${lbl}</label>`
+    // クルー発の休み系は「確定前SH連絡・らくしふ確定完了」が工程として存在しない
+    // （本人指摘2026-08-11「休み希望でこのチェックボックスはおかしい」）。
+    // → その2項目は起票時に自動チェック（対象外扱い）・カードには出さない＝実質4項目。
+    const offCrew = scOffCrew(c);
+    const useChecks = offCrew
+      ? SC_CHECKS.filter(([k]) => k !== 'pre_sh_done' && k !== 'confirmed_done') : SC_CHECKS;
+    const checks = useChecks.map(([k, lbl]) =>
+      `<label><input type="checkbox" data-p="${esc(c.path)}" data-k="${k}" ${c[k] ? 'checked' : ''}>` +
+      `${offCrew && k === 'sh_done' ? '本人へ連絡' : lbl}</label>`
     ).join('');
+    const checkedShown = useChecks.filter(([k]) => c[k]).length;
     const notes = (c.notes || []).slice(0, 2)
       .map((n) => `<div>${esc(typeof n === 'string' ? n : (n.text || ''))}</div>`).join('');
     // 状態の頭記号: 拒否=🚫 / 完了=✅ / それ以外=未了
@@ -1245,7 +1260,7 @@
       ? '<span class="sc-nodate" title="対象日が未記入です。毎日バッジ・ラインが出ます。✏️で対象日を入れてください">📅未記入</span>' : '';
     return `<div class="sc-card${scClosed(c) ? ' done' : ''}">
       <div class="sc-title">${head} ${esc(title)} ${multi} ${noDate}
-        <span class="sc-meta">${c.checked_count}/6</span>
+        <span class="sc-meta">${checkedShown}/${useChecks.length}</span>
         ${rejBtn}
         <button class="sc-edit-btn" data-p="${esc(c.path)}" title="この依頼を編集（対象者/日/変更内容/対象時間）">✏️</button>
         <button class="sc-del-btn" data-p="${esc(c.path)}" title="この依頼を削除（理由必須・archivedへ退避）">🗑</button></div>
@@ -1613,6 +1628,82 @@
     }
     }
     printGeoSig = printGeoNow();
+  }
+
+  // ===== 新人マーク 🔰（本人指定2026-08-11）=====
+  // 初出勤から数えて「その日が何日目の勤務か」を名前の右に出す（勤務日ベース・5日目まで）。
+  // 履歴 = らくしふajaxを過去60日〜先35日で1回だけ取得（新人の初回はこの窓に必ず入る。
+  // 窓より古い初回の人は勤務日数が5日を超えるので自然に対象外）。ヘルプ枠は除外。
+  let newbieHistP = null;
+  function loadNewbieHist() {
+    if (newbieHistP) return newbieHistP;
+    newbieHistP = (async () => {
+      const p = new URLSearchParams(location.search);
+      const storeId = p.get('s');
+      if (!storeId) return null;
+      // このAPIは長期間指定を400で弾く（実測: 95日=400・31日=OK）→ 28日刻みで分割取得
+      const chunks = [];
+      for (let off = -60; off < 36; off += 28) {
+        const a = new Date(); a.setDate(a.getDate() + off);
+        const b = new Date(); b.setDate(b.getDate() + Math.min(off + 27, 35));
+        chunks.push([ymd(a), ymd(b)]);
+      }
+      const fetchChunk = async ([sd, ed]) => {
+        const q = new URLSearchParams();
+        q.set('page_ctx_name', 'admin');
+        q.set('store_id', storeId);
+        for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+        q.set('start_date', sd);
+        q.set('end_date', ed);
+        q.set('is_staff_print_page', 'false');
+        const r = await fetch('/ajax/admin/v2/schedules?' + q, {
+          credentials: 'include', headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
+        return r.ok ? r.json() : null;
+      };
+      const parts = (await Promise.all(chunks.map((c) => fetchChunk(c).catch(() => null)))).filter(Boolean);
+      if (!parts.length) return null;
+      const nameOf = {};
+      const byName = {};
+      for (const j of parts) {
+        for (const u of (j.users || [])) {
+          if (/ヘルプ/.test(u.name || '')) continue;
+          nameOf[u.id] = normName(u.name);
+        }
+        for (const s of (j.instructed || [])) {
+          if (s.off || s.is_deleted) continue;
+          const nm = nameOf[s.user_id];
+          if (!nm) continue;
+          (byName[nm] ||= new Set()).add(s.date);
+        }
+      }
+      const out = {};
+      for (const nm in byName) out[nm] = [...byName[nm]].sort();
+      return out;
+    })().catch(() => (newbieHistP = null));
+    return newbieHistP;
+  }
+  async function updateNewbieMarks() {
+    if (!onOneDayTarget()) return;
+    const hist = await loadNewbieHist();
+    if (!hist) return;
+    const iso = ymd(targetDate);
+    document.querySelectorAll('.rf-newbie').forEach((e) => e.remove());
+    for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
+      const nameEl = tr.querySelector('.user-cell .name');
+      if (!nameEl || nameEl.querySelector('.rf-newbie')) continue;
+      const days = hist[normName(nameEl.textContent)];
+      if (!days || !days.includes(iso)) continue;   // この日に勤務がある人だけ
+      const n = days.filter((d) => d <= iso).length;
+      if (n > 5) continue;
+      const b = document.createElement('span');
+      b.className = 'rf-newbie';
+      b.textContent = `🔰${n}日目`;
+      b.title = `新人（この店の勤務${n}日目・初回${days[0].slice(5).replace('-', '/')}。5日目まで表示）`;
+      b.style.cssText = 'display:inline-block;margin-left:4px;font-size:10.5px;font-weight:700;' +
+        'color:#15803d;background:#eefaf1;border:1px solid #b7e3c4;border-radius:3px;' +
+        'padding:0 4px;white-space:nowrap;vertical-align:middle;';
+      nameEl.appendChild(b);
+    }
   }
 
   function updateReqLines() {
@@ -2209,6 +2300,10 @@
       if (crewOff && notePath.startsWith('/')) {
         await shiftApi('/api/shift/flag', { path: notePath, key: 'requested_done', value: true });
         await shiftApi('/api/shift/flag', { path: notePath, key: 'accepted_done', value: true });
+        // 確定前SH連絡・らくしふ確定完了は休み希望に工程として存在しない=対象外チェック
+        // （本人指摘2026-08-11）。残る実作業は「らくしふ反映」と「本人へ連絡」だけ。
+        await shiftApi('/api/shift/flag', { path: notePath, key: 'pre_sh_done', value: true });
+        await shiftApi('/api/shift/flag', { path: notePath, key: 'confirmed_done', value: true });
       }
       scShowWowtalk(target, targetDate, change, requester, reqTime);   // 起票直後にWowTalk用文言を出す
       scRefresh();
@@ -2975,6 +3070,7 @@
     }
     // ページ塊の再描画で行と一緒に依頼帯も消えるため、行の張り直しに合わせて引き直す
     if (scState) { try { updateReqLines(); } catch { /* noop */ } }
+    updateNewbieMarks().catch(() => {});
   }
 
   // 印刷ページの行注入の入口。表示中の日(targetDate)は引数のデータで即時注入し、
@@ -3017,6 +3113,7 @@
       }
     }
     if (scState) { try { updateReqLines(); } catch { /* noop */ } }
+    updateNewbieMarks().catch(() => {});
   }
 
   // 注入アンカー: セクション表ごとに 修正客数 → 客数実績 → 客数計画 の優先順でthを1つ選ぶ。
@@ -4988,6 +5085,7 @@
     guarded('wxChip', () => { if (!document.querySelector('.rf-wx-chip')) updateWeatherChip().catch(() => {}); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
+    guarded('newbie', () => { if (!document.querySelector('.rf-newbie')) updateNewbieMarks().catch(() => {}); });
     guarded('gapBands', () => { if (lastGap && !document.querySelector('.rf-gap-band')) updateGapBands(); });
     // 固定行のずれ検知（v1.140: 割当後に行の高さが変わると単調増加のままずれるので、
     // 「期待top＝直上行の底」と実topの一致まで見る。ずれたらtopだけその場で積み直す）
