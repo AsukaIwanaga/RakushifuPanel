@@ -1533,6 +1533,8 @@
     return `${Math.round(r.left)}:${Math.round(r.width * 10)}`;
   };
   function updatePrintReqLines() {
+    // 🔰は帯描画の例外に巻き込まれないよう先に非同期で走らせる（帯とは独立）
+    updatePrintNewbie().catch(() => {});
     const cases = (scState && scState.cases) || [];
     if (!cases.length) return;
     const FULL = [6 * 60, 24 * 60];
@@ -1604,6 +1606,7 @@
           const [s, e] = reqSpanOf(c) || FULL;
           let x, w, unit;
           if (hidden) {
+            if (!refPct) return;   // 可視シート未計測=基準%なし。次のtickで再描画される
             x = refPct(s);
             w = Math.max(0.2, refPct(e) - x);
             unit = '%';
@@ -1642,25 +1645,18 @@
     }
     }
     printGeoSig = printGeoNow();
-    updatePrintNewbie().catch(() => {});
   }
 
-  // 印刷ページの名前にも 🔰N日目 を出す（本人指定2026-08-12・編集画面v1.155と同ルール）
+  // 印刷ページの名前にも 🔰N日目 を出す（本人指定2026-08-12・編集画面v1.155と同ルール）。
+  // 注意: printDateOf() はISO文字列を返す（Dateではない。v1.156デバッグで実測）。
   async function updatePrintNewbie() {
     const hist = await loadNewbieHist();
-    document.body.dataset.rfNbDbg = JSON.stringify({hist: hist ? Object.keys(hist).length : null});
     if (!hist) return;
-    document.querySelectorAll('.rf-newbie').forEach((e) => e.remove());
+    document.querySelectorAll('.shift-table-column .rf-newbie').forEach((e) => e.remove());
     const cands = printDateCands();
-    document.body.dataset.rfNbDbg2 = (document.body.dataset.rfNbDbg2 || '') + '|' +
-      [...document.querySelectorAll('.shift-table-column')].map((col) => {
-        const d = printDateOf(col, cands);
-        return d ? ymd(d) : 'x';
-      }).join(',');
     for (const col of document.querySelectorAll('.shift-table-column')) {
-      const colDate = printDateOf(col, cands);
-      if (!colDate) continue;
-      const iso = ymd(colDate);
+      const iso = printDateOf(col, cands);
+      if (!iso) continue;
       for (const row of col.querySelectorAll('.user-row')) {
         const nameEl = row.querySelector('.user-cell .name');
         if (!nameEl || nameEl.querySelector('.rf-newbie')) continue;
@@ -1682,10 +1678,12 @@
   // 初出勤から数えて「その日が何日目の勤務か」を名前の右に出す（勤務日ベース・5日目まで）。
   // 履歴 = らくしふajaxを過去60日〜先35日で1回だけ取得（新人の初回はこの窓に必ず入る。
   // 窓より古い初回の人は勤務日数が5日を超えるので自然に対象外）。ヘルプ枠は除外。
-  let newbieHistP = null;
+  let newbieHist = null;    // 解決済み {正規化名: [勤務日ISO...]}（以後は同期で返す）
+  let newbieHistP = null;   // 取得中Promise（失敗/タイムアウト時はnullに戻して次回再試行）
   function loadNewbieHist() {
+    if (newbieHist) return Promise.resolve(newbieHist);
     if (newbieHistP) return newbieHistP;
-    newbieHistP = (async () => {
+    const run = (async () => {
       const p = new URLSearchParams(location.search);
       const storeId = p.get('s');
       if (!storeId) return null;
@@ -1717,17 +1715,23 @@
           if (/ヘルプ/.test(u.name || '')) continue;
           nameOf[u.id] = normName(u.name);
         }
-        for (const s of (j.instructed || [])) {
-          if (s.off || s.is_deleted) continue;
-          const nm = nameOf[s.user_id];
+        for (const sh of (j.instructed || [])) {
+          if (sh.off || sh.is_deleted) continue;
+          const nm = nameOf[sh.user_id];
           if (!nm) continue;
-          (byName[nm] ||= new Set()).add(s.date);
+          (byName[nm] ||= new Set()).add(sh.date);
         }
       }
       const out = {};
       for (const nm in byName) out[nm] = [...byName[nm]].sort();
       return out;
-    })().catch(() => (newbieHistP = null));
+    })();
+    // 20秒で諦めて次のwatchdog tickに再試行させる（fetchが黙って固まる環境対策）
+    const timeout = new Promise((res) => setTimeout(() => res(null), 20000));
+    newbieHistP = Promise.race([run, timeout])
+      .then((o) => { if (o) newbieHist = o; return o; })
+      .catch(() => null)
+      .finally(() => { newbieHistP = null; });
     return newbieHistP;
   }
   async function updateNewbieMarks() {
@@ -5144,7 +5148,10 @@
     guarded('wxChip', () => { if (!document.querySelector('.rf-wx-chip')) updateWeatherChip().catch(() => {}); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
-    guarded('newbie', () => { if (!document.querySelector('.rf-newbie')) updateNewbieMarks().catch(() => {}); });
+    guarded('newbie', () => {
+      if (document.querySelector('.rf-newbie')) return;
+      (isPrintPage ? updatePrintNewbie() : updateNewbieMarks()).catch(() => {});
+    });
     guarded('gapBands', () => { if (lastGap && !document.querySelector('.rf-gap-band')) updateGapBands(); });
     // 固定行のずれ検知（v1.140: 割当後に行の高さが変わると単調増加のままずれるので、
     // 「期待top＝直上行の底」と実topの一致まで見る。ずれたらtopだけその場で積み直す）
