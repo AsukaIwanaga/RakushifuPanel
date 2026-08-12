@@ -1298,19 +1298,33 @@
     </div>`;
   }
 
+  // クルー発の「出勤可能」後提出（締切後の途中希望＝依頼ではなく情報）判定。
+  // 台帳リスト・バッジには出さず、青帯（枠）だけで見せる（本人指定2026-08-12
+  // 「依頼として台帳の表示をする必要はなく枠だけ表示してもらえると嬉しい」）。
+  // 「入れない/不可」を含む変更依頼や休み系は従来どおりカードを出す。
+  const scAvailOnly = (c) => {
+    if (!c || !c.requester || normName(c.requester) !== normName(c.target)) return false;
+    const blob = `${c.change || ''} ${c.title || ''}`;
+    if (scOffCrew(c)) return false;
+    if (/入れない|出れない|できない|不可|休み/.test(blob)) return false;
+    return /途中希望|追加希望|出勤希望/.test(blob) &&
+      /出勤でき|出勤可能|出勤可|出れ|入れます|何時でも/.test(blob);
+  };
+
   function scRenderList() {
     const el = $('#scList');
     if (!scState) return;
     const cases = scState.cases || [];
-    const open = cases.filter((c) => !scClosed(c));
+    const open = cases.filter((c) => !scClosed(c) && !scAvailOnly(c));
     $('#scFilterDay').textContent = `この日(${targetDate.getMonth() + 1}/${targetDate.getDate()})`;
     // 「この日」は名前バッジ・黄色ラインと同じ条件にする。
     // 日付未記入の未完了案件はバッジ/ラインが全日に出るので、ここでも出さないと
     // 「名前は依頼中なのにリストは"依頼なし"」という食い違いになる（2026-07-22修正）。
+    // 「すべて」だけは出勤可の後提出も含める（管理・クローズ用の入口を残す）。
     const list = scFilter === 'all' ? cases
       : scFilter === 'day'
-        ? cases.filter((c) => scMatchesDay(c, targetDate)
-            || (!scClosed(c) && !(c.target_date || '').trim()))
+        ? cases.filter((c) => (scMatchesDay(c, targetDate)
+            || (!scClosed(c) && !(c.target_date || '').trim())) && !scAvailOnly(c))
       : open;
     el.innerHTML = list.map((c) => scCard(c, scFilter === 'day')).join('') ||
       `<span class="muted">${scFilter === 'day' ? 'この日の依頼なし' : '未完了なし 🎉'}</span>`;
