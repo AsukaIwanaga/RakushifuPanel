@@ -1642,6 +1642,40 @@
     }
     }
     printGeoSig = printGeoNow();
+    updatePrintNewbie().catch(() => {});
+  }
+
+  // 印刷ページの名前にも 🔰N日目 を出す（本人指定2026-08-12・編集画面v1.155と同ルール）
+  async function updatePrintNewbie() {
+    const hist = await loadNewbieHist();
+    document.body.dataset.rfNbDbg = JSON.stringify({hist: hist ? Object.keys(hist).length : null});
+    if (!hist) return;
+    document.querySelectorAll('.rf-newbie').forEach((e) => e.remove());
+    const cands = printDateCands();
+    document.body.dataset.rfNbDbg2 = (document.body.dataset.rfNbDbg2 || '') + '|' +
+      [...document.querySelectorAll('.shift-table-column')].map((col) => {
+        const d = printDateOf(col, cands);
+        return d ? ymd(d) : 'x';
+      }).join(',');
+    for (const col of document.querySelectorAll('.shift-table-column')) {
+      const colDate = printDateOf(col, cands);
+      if (!colDate) continue;
+      const iso = ymd(colDate);
+      for (const row of col.querySelectorAll('.user-row')) {
+        const nameEl = row.querySelector('.user-cell .name');
+        if (!nameEl || nameEl.querySelector('.rf-newbie')) continue;
+        const days = hist[normName(nameEl.textContent)];
+        if (!days || !days.includes(iso)) continue;
+        const n = days.filter((d) => d <= iso).length;
+        if (n > 5) continue;
+        const b = document.createElement('span');
+        b.className = 'rf-newbie';
+        b.textContent = `🔰${n}日目`;
+        b.style.cssText = 'display:inline-block;margin-left:2px;font-size:8.5px;font-weight:700;' +
+          'color:#15803d;white-space:nowrap;';
+        nameEl.appendChild(b);
+      }
+    }
   }
 
   // ===== 新人マーク 🔰（本人指定2026-08-11）=====
@@ -1749,7 +1783,7 @@
         const rejected = c.is_rejected;
         const zenin = c.target === '全員';
         // ホバーで状態が分かるように、状態語(依頼中→承諾待ち→反映待ち…)を先頭に出す
-        const title = rejected
+        let title = rejected
           ? `🚫 拒否: ${c.title}` + (c.reject_reason ? `（理由: ${c.reject_reason}）` : '')
           : c.is_done
             ? `✅ 対応済み(帯は目印として維持): ${c.title}`
@@ -1767,8 +1801,19 @@
         // 店舗発の出勤依頼(黄)が承諾されたら緑の枠で囲う（本人指定2026-08-09）。
         // 休み/途中希望はクルー発=起票時点で承諾済みが常なので対象外（赤/青の意味を保つ）。
         const okd = !rejected && !zenin && !isOff && !isLate && c.accepted_done;
-        const bg = (rejected || isOff) ? '#dc2626' : isLate ? '#2563eb' : '#f5b301';
-        const fill = (rejected || isOff) ? 'rgba(220,38,38,.16)' : isLate ? 'rgba(37,99,235,.16)' : 'rgba(245,179,1,.22)';
+        // 休み希望でもシフトが既に無い日は取消作業が無い＝グレー枠（本人指定2026-08-12
+        // 「すでにシフトがない状態の希望依頼についてはグレーの枠を出して欲しい」）。
+        // シフト有無はこの行のバー(.schedule-bar)実物で判定（打診中バーもシフト扱い=赤のまま）。
+        // 「勤務シフトあり」= not-offラッパー内の希望バー(isDesired)以外（8/22実測:
+        // 休みバーはisOff・希望シフトバーはisDesiredで、どちらも.schedule-barを持つ）
+        const noShift = isOff && !rejected &&
+          !tr.querySelector('.schedule-bar-wrapper.not-off .schedule-bar:not(.isDesired)');
+        if (noShift) title += '（この日のシフトなし=取消作業なし・入れない目印）';
+        const bg = rejected ? '#dc2626' : isOff ? (noShift ? '#9ca3af' : '#dc2626')
+          : isLate ? '#2563eb' : '#f5b301';
+        const fill = rejected ? 'rgba(220,38,38,.16)'
+          : isOff ? (noShift ? 'rgba(156,163,175,.18)' : 'rgba(220,38,38,.16)')
+          : isLate ? 'rgba(37,99,235,.16)' : 'rgba(245,179,1,.22)';
         const band = document.createElement('div');
         band.className = 'rf-req-line';
         band.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:0;bottom:0;` +
@@ -1790,7 +1835,7 @@
         chip.dataset.tip = title;
         chip.style.cssText = `position:absolute;left:${s - 360}px;top:${top}px;width:15px;height:15px;` +
           `z-index:301;cursor:default;box-sizing:border-box;border-radius:4px;background:${bg};` +
-          `border:1px solid ${(rejected || isOff) ? '#b91c1c' : isLate ? '#1e40af' : '#d99500'};box-shadow:0 1px 2px rgba(0,0,0,.2);`;
+          `border:1px solid ${rejected ? '#b91c1c' : isOff ? (noShift ? '#6b7280' : '#b91c1c') : isLate ? '#1e40af' : '#d99500'};box-shadow:0 1px 2px rgba(0,0,0,.2);`;
         track.appendChild(chip);
         if (rejected) {
           const x = document.createElement('div');
