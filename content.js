@@ -1260,9 +1260,14 @@
     // 対象日が空だとバッジ・黄色ラインが毎日出る。気づけるよう印を出す（✏️で日付を入れる）
     const noDate = !scClosed(c) && !(c.target_date || '').trim()
       ? '<span class="sc-nodate" title="対象日が未記入です。毎日バッジ・ラインが出ます。✏️で対象日を入れてください">📅未記入</span>' : '';
+    // 全部完了: 残りのチェックを一括で付ける（本人指定2026-08-13。確認ダイアログは
+    // 出さない=チェックを外せば戻る可逆運用・vaultの「可視+可逆」原則）
+    const allDoneBtn = scClosed(c) ? ''
+      : `<button class="sc-all-done" data-p="${esc(c.path)}" title="残りのチェックを全部付けて完了にする（外せば戻せます）">✅全部完了</button>`;
     return `<div class="sc-card${scClosed(c) ? ' done' : ''}${c.is_rejected ? ' rej' : ''}">
       <div class="sc-title">${head} ${esc(title)} ${multi} ${noDate}
         <span class="sc-meta">${checkedShown}/${useChecks.length}</span>
+        ${allDoneBtn}
         ${rejBtn}
         <button class="sc-edit-btn" data-p="${esc(c.path)}" title="この依頼を編集（対象者/日/変更内容/対象時間）">✏️</button>
         <button class="sc-del-btn" data-p="${esc(c.path)}" title="この依頼を削除（理由必須・archivedへ退避）">🗑</button></div>
@@ -2326,6 +2331,24 @@
         const set = (cls, v) => { const s = $('#scNewForm').querySelector(`.scn-${cls}`); if (s) s.value = v; };
         set('sh', p.sh); set('sm', p.sm); set('eh', p.eh); set('em', p.em);
       }
+      return;
+    }
+    if (t.matches('.sc-all-done')) {
+      // 対象カードの表示中チェック（休み系は4項目）を全部trueに
+      const c = (scState && scState.cases || []).find((x) => x.path === t.dataset.p);
+      if (!c) return;
+      const keys = (scOffCrew(c)
+        ? SC_CHECKS.filter(([k]) => k !== 'pre_sh_done' && k !== 'confirmed_done')
+        : SC_CHECKS).map(([k]) => k).filter((k) => !c[k]);
+      // 休み系でも非表示2項目が未trueなら合わせて埋める（完了判定は6フラグ全true）
+      if (scOffCrew(c)) for (const k of ['pre_sh_done', 'confirmed_done']) if (!c[k]) keys.push(k);
+      t.disabled = true;
+      t.textContent = '⏳';
+      for (const k of keys) {
+        const r = await shiftApi('/api/shift/flag', { path: c.path, key: k, value: true });
+        if (!r.ok) { alert(`チェック失敗(${k}): ${r.error || r.data?.error || ''}`); break; }
+      }
+      scRefresh();
       return;
     }
     if (t.matches('.sc-note-input button')) {
