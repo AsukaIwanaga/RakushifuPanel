@@ -2965,6 +2965,39 @@
     catch { weatherCache = 'none'; }
     return weatherCache;
   }
+  // INITIAL客数（本部イニシャル査定・LE2のキャッシュを8788経由=symlinkで読む）
+  let initialKyakusu = null;
+  async function loadInitialKyakusu() {
+    if (initialKyakusu) return initialKyakusu;
+    const r = await leMakerGet('/native/initial_kyakusu.json');
+    try { initialKyakusu = r && r.ok && r.text ? JSON.parse(r.text) : {}; }
+    catch { initialKyakusu = {}; }
+    return initialKyakusu;
+  }
+  // 日付チップ横に INITIAL / LE の客数（本人指定2026-08-13）
+  async function updateKpiChip() {
+    document.querySelectorAll('.rf-kpi-chip').forEach((e) => e.remove());
+    if (!onOneDayTarget()) return;
+    const anchor = document.querySelector('.rf-date-chip');
+    if (!anchor) return;
+    const init = (await loadInitialKyakusu())[ymd(targetDate)];
+    const leTot = lastLE && lastLE.le && lastLE.le.total != null
+      ? Math.round(parseFloat(String(lastLE.le.total).replace(/,/g, '')) || 0) : null;
+    if (init == null && leTot == null) return;
+    const chip = document.createElement('span');
+    chip.className = 'rf-kpi-chip';
+    chip.innerHTML =
+      `<span style="color:#8c8c88">INITIAL</span> <b style="color:#474743">${init != null ? init : '-'}</b>` +
+      `<span style="color:#c9c8c2;margin:0 5px">/</span>` +
+      `<span style="color:#8c8c88">LE</span> <b style="color:#1a5fb4">${leTot != null ? leTot : '-'}</b>`;
+    chip.title = 'INITIAL=本部イニシャル査定の日客 / LE=最新のLE予測（客数予測アプリと同値）';
+    chip.style.cssText = 'display:inline-block;font-size:12.5px;font-weight:600;margin-right:14px;' +
+      'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;white-space:nowrap;';
+    anchor.after(chip);
+    // 天気はKPIの後ろへ並べ直す（順序: 日付 → INITIAL/LE → 天気）
+    const wx = document.querySelector('.rf-wx-chip');
+    if (wx) chip.after(wx);
+  }
   const WX_EMOJI = [[/雷/, '⛈'], [/大雨|激しい/, '☔'], [/雨|霧雨/, '🌧'], [/霧/, '🌫'],
     [/快晴|^晴$/, '☀'], [/晴/, '🌤'], [/曇/, '☁']];
   const wxEmoji = (label) => (WX_EMOJI.find(([re]) => re.test(label || '')) || [null, ''])[1];
@@ -2987,16 +3020,19 @@
     if (!anchor) return;
     const am = wxHalf(day, ['朝(6-10)', '昼(11-14)']);
     const pm = wxHalf(day, ['午後(15-17)', '夜(18-23)']);
-    const part = (tag, h) => (h ? `${tag}${wxEmoji(h.label)}${h.rain >= 0.5 ? `${h.rain}mm` : ''} ${h.tmax}°` : '');
+    // 見た目は最小限に（本人指摘2026-08-13「天気が醜い」: 枠・背景・細かいmm表記をやめる。
+    // 詳細はホバーの4バンド内訳に残す）
+    const part = (tag, h) => (h ? `${tag}${wxEmoji(h.label)}${h.rain >= 1 ? `${Math.round(h.rain)}㎜` : ''}` : '');
+    const tmax = Math.max(am ? am.tmax : -99, pm ? pm.tmax : -99);
     const chip = document.createElement('span');
     chip.className = 'rf-wx-chip';
-    chip.textContent = [part('午前', am), part('午後', pm)].filter(Boolean).join(' / ');
+    chip.textContent = [part('午前', am), part('午後', pm)].filter(Boolean).join(' ') +
+      (tmax > -99 ? ` ${tmax}°` : '');
     chip.title = Object.entries(day).map(([b, c]) =>
       `${b} ${c['概況']}${c.rain_mm ? ` ☔${c.rain_mm}mm` : ''} 最高${c.tmax}℃`).join('\n') +
       `\n(${(wx.fetched_at || '')} open-meteo 吉祥寺)`;
-    chip.style.cssText = 'display:inline-block;font-size:12px;font-weight:600;color:#474743;' +
-      'margin-right:14px;padding:1px 8px;border:1px solid #d9d8d2;background:#fff;' +
-      'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;white-space:nowrap;';
+    chip.style.cssText = 'display:inline-block;font-size:11.5px;font-weight:500;color:#6b7280;' +
+      'margin-right:14px;font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;white-space:nowrap;';
     anchor.after(chip);
   }
 
@@ -3806,6 +3842,7 @@
       unconfirmedSet = new Set(days);
       try { updateDateChip(); } catch { /* チップ未描画時は次のtickで */ }
       updateWeatherChip().catch(() => {});
+      updateKpiChip().catch(() => {});
       if (days.length === 0) {
         el.innerHTML = '<span class="allok">✓ すべて確定済み</span>';
         badge.style.display = 'none';
@@ -5171,6 +5208,7 @@
     guarded('wsSum', () => { if (lastWsSum && !document.querySelector('.rf-ws-sum')) updateWsSummary(lastWsSum.actual, lastWsSum.le); });
     guarded('dateChip', () => { if (!document.querySelector('.rf-date-chip')) updateDateChip(); });
     guarded('wxChip', () => { if (!document.querySelector('.rf-wx-chip')) updateWeatherChip().catch(() => {}); });
+    guarded('kpiChip', () => { if (!document.querySelector('.rf-kpi-chip')) updateKpiChip().catch(() => {}); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
     guarded('newbie', () => {
