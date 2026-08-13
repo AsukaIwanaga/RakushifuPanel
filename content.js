@@ -620,7 +620,9 @@
       .sc-head button:hover { border-color: var(--ink); }
       .sc-head button.on { background: var(--ink); color: var(--panel); border-color: var(--ink); font-weight: 600; }
       .sc-card { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 11px 0; margin-bottom: 0; }
-      .sc-card.done { opacity: .5; }
+      /* 完了カードは薄表示のまま、うっすら緑の枠で「完了」が一目で分かるように（本人指定2026-08-13） */
+      .sc-card.done { opacity: .55; border: 1.5px solid rgba(22, 163, 74, .4); border-radius: 4px; padding: 9px 8px; margin: 4px 0; background: rgba(22, 163, 74, .04); }
+      .sc-card.rej { border-color: rgba(220, 38, 38, .35); background: rgba(220, 38, 38, .04); }
       .sc-title { font-weight: 600; font-size: 14px; }
       .sc-title .undone { color: var(--neg); font-weight: 600; }
       .sc-meta { color: var(--faint); font-size: 12px; font-weight: 400; }
@@ -1258,7 +1260,7 @@
     // 対象日が空だとバッジ・黄色ラインが毎日出る。気づけるよう印を出す（✏️で日付を入れる）
     const noDate = !scClosed(c) && !(c.target_date || '').trim()
       ? '<span class="sc-nodate" title="対象日が未記入です。毎日バッジ・ラインが出ます。✏️で対象日を入れてください">📅未記入</span>' : '';
-    return `<div class="sc-card${scClosed(c) ? ' done' : ''}">
+    return `<div class="sc-card${scClosed(c) ? ' done' : ''}${c.is_rejected ? ' rej' : ''}">
       <div class="sc-title">${head} ${esc(title)} ${multi} ${noDate}
         <span class="sc-meta">${checkedShown}/${useChecks.length}</span>
         ${rejBtn}
