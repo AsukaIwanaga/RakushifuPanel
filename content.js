@@ -186,6 +186,13 @@
   const isHolidayExt = (iso) => !!jpHolidaysExt(Number(iso.slice(0, 4)))[iso];
 
   // 曜日割当だけで決まる型（日別上書きを見ない）。パネルの「自動」表示用にも使う。
+  // 月別モデルWS（スケジューラーと同一仕様・2026-08-13）: その月(ym)専用の型があれば
+  // その月の型だけを候補にし、無ければ共通(ymなし)の型を使う
+  function wsTplsForMonth(w, iso) {
+    const all = (w && w.templates) || [];
+    const m = all.filter((t) => t.ym === String(iso).slice(0, 7));
+    return m.length ? m : all.filter((t) => !t.ym);
+  }
   function wsAutoTpl(params, iso, leSum) {
     const w = params && params.ws;
     if (!w || !Array.isArray(w.templates)) return null;
@@ -196,7 +203,7 @@
       const wdN = isHolidayExt(iso) ? 0 : wdIdx2(iso);
       const le = leSum || 0;
       const hasCond = (t) => (t.wd && t.wd.length) || t.leMin != null || t.leMax != null;
-      const hit = w.templates.filter((t) => hasCond(t) &&
+      const hit = wsTplsForMonth(w, iso).filter((t) => hasCond(t) &&
         (!t.wd || !t.wd.length || t.wd.includes(wdN)) &&
         (t.leMin == null || le >= t.leMin) && (t.leMax == null || le <= t.leMax));
       if (hit.length) {
@@ -2888,7 +2895,7 @@
     }
     const sch = actual ? { F: r1(actual.sum.F), K: r1(actual.sum.K), FK: r1(actual.sum.FK),
                            TR: sum18(actual.TR), NP: sum18(actual.NP) } : null;
-    const tpls = [...params.ws.templates].sort((a, b) =>
+    const tpls = [...wsTplsForMonth(params.ws, iso)].sort((a, b) =>
       String(a.name || '').localeCompare(String(b.name || ''), 'ja', { numeric: true }));
     const opts = `<option value="">自動${autoT ? `（${autoT.name}）` : ''}</option>` +
       tpls.map((t) => `<option value="${t.id}"${ovr === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
