@@ -2686,9 +2686,24 @@
     // トップ作業・ラスト作業だけは該当ポジションの生産ラインと同じカウント（本人指定2026-08-11）。
     // スタンバイ・配送整理など他の固定作業は従来どおり非生産PLAN。
     const prodFixSec = wsProdFixSec(params);
+    // sec30 = 30分スロット単位の計上区分上書き（スケジューラーの右クリック機能・2026-08-13）
+    const rowAdd = (rw, addHalf, addHour) => {
+      const map = Array.isArray(rw.sec30) ? rw.sec30 : null;
+      const h30ok = Array.isArray(rw.h30) && rw.h30.length === 36;
+      if (map && map.some((x) => x && x !== rw.sec) && h30ok) {
+        for (let k = 0; k < 36; k++) {
+          if (!rw.h30[k]) continue;
+          addHalf((map[k] && ['F', 'K', 'FK'].includes(map[k])) ? map[k] : rw.sec, k);
+        }
+      } else {
+        addHour(rw.sec);
+      }
+    };
     if (tpl) {
       for (const rw of (tpl.rows || [])) if (planG[rw.sec])
-        HOURS.forEach((h, i) => { planG[rw.sec][i] += Number((rw.hours || [])[i]) || 0; });
+        rowAdd(rw,
+          (sec, k) => { planG[sec][k >> 1] += 0.5; },
+          (sec) => HOURS.forEach((h, i) => { planG[sec][i] += Number((rw.hours || [])[i]) || 0; }));
       for (const id in (tpl.fixedHours || {})) {
         const sec = prodFixSec[id];
         HOURS.forEach((h, i) => {
@@ -2714,8 +2729,10 @@
     const fixP30 = zero30();
     if (tpl) {
       for (const rw of (tpl.rows || [])) if (planG30[rw.sec])
-        for (let k = 0; k < N30; k++)
-          planG30[rw.sec][k] += Number((rw.h30 || [])[k] ?? (rw.hours || [])[k >> 1]) || 0;
+        rowAdd(rw,
+          (sec, k) => { planG30[sec][k] += 1; },
+          (sec) => { for (let k = 0; k < N30; k++)
+            planG30[sec][k] += Number((rw.h30 || [])[k] ?? (rw.hours || [])[k >> 1]) || 0; });
       const add30 = (id, k, v) => {
         const sec = prodFixSec[id];
         if (sec && planG30[sec]) planG30[sec][k] += v; else fixP30[k] += v;
