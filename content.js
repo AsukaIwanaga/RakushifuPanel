@@ -1638,8 +1638,10 @@
           }
           const blob = `${c.change || ''} ${c.title || ''}`;
           const rejected = c.is_rejected;
-          const isOff = /休み|休暇/.test(blob);
-          const isLate = /途中希望|追加希望|再提出/.test(blob);
+          // 逆方向（休み→勤務可）は休み扱いにしない（編集画面と同ルール・2026-08-13）
+          const availWordP = /勤務可|出勤でき|出勤可能|出れます|入れます/.test(blob);
+          const isOff = /休み|休暇/.test(blob) && !availWordP;
+          const isLate = !isOff && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWordP);
           // 承諾済みの出勤依頼(黄)は緑の枠（編集画面と同ルール・本人指定2026-08-09）
           const okd = !rejected && c.target !== '全員' && !isOff && !isLate && c.accepted_done;
           const bg = (rejected || isOff) ? '#dc2626' : isLate ? '#2563eb' : '#f5b301';
@@ -1821,8 +1823,11 @@
         // 休み系=赤（本人指定2026-08-06）・途中提出の希望=青（本人指定2026-08-06「途中提出の
         // 希望はわかりやすい表示が欲しい」・起票時に【途中希望】を付ける運用）・通常=黄。拒否=赤✕
         const blob = `${c.change || ''} ${c.title || ''}`;
-        const isOff = /休み|休暇/.test(blob);
-        const isLate = /途中希望|追加希望|再提出/.test(blob);
+        // 「休み → 勤務可に」のような逆方向（出られるようになった）は休み扱いにしない
+        // （本人指摘2026-08-13: 鉄平さん8/24がグレーになっていた→青が正しい）
+        const availWord = /勤務可|出勤でき|出勤可能|出れます|入れます/.test(blob);
+        const isOff = /休み|休暇/.test(blob) && !availWord;
+        const isLate = !isOff && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWord);
         // 店舗発の出勤依頼(黄)が承諾されたら緑の枠で囲う（本人指定2026-08-09）。
         // 休み/途中希望はクルー発=起票時点で承諾済みが常なので対象外（赤/青の意味を保つ）。
         const okd = !rejected && !zenin && !isOff && !isLate && c.accepted_done;
