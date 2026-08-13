@@ -189,9 +189,16 @@
   // 月別モデルWS（スケジューラーと同一仕様・2026-08-13）: その月(ym)専用の型があれば
   // その月の型だけを候補にし、無ければ共通(ymなし)の型を使う
   function wsTplsForMonth(w, iso) {
+    // 完全月別運用（2026-08-13）: その月 > 直近の過去月 > 最も近い未来月 > ym無し(旧互換)
     const all = (w && w.templates) || [];
-    const m = all.filter((t) => t.ym === String(iso).slice(0, 7));
-    return m.length ? m : all.filter((t) => !t.ym);
+    const ym = String(iso).slice(0, 7);
+    const exact = all.filter((t) => t.ym === ym);
+    if (exact.length) return exact;
+    const yms = [...new Set(all.map((t) => t.ym).filter(Boolean))].sort();
+    const past = yms.filter((m) => m < ym);
+    const pick = past.length ? past[past.length - 1] : yms.find((m) => m > ym);
+    if (pick) return all.filter((t) => t.ym === pick);
+    return all.filter((t) => !t.ym);
   }
   function wsAutoTpl(params, iso, leSum) {
     const w = params && params.ws;
