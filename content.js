@@ -2921,95 +2921,190 @@
   }
 
   // ===== モデルWSレーン表ビューア（本人要望2026-08-15「スケジューラーのモデルWSを拡張からも見たい」）=====
-  // スケジューラーのライン表(レーン+固定作業+sec30上書き)を読み取り専用で描く。
+  // スケジューラーのライン表と同じバー描画（時間帯サマリ＋レーンのバー＋トップ/ラスト斜線＋
+  // タスク区間＋右端計）を読み取り専用で再現する（本人要望2026-08-15「これが拡張からも見たい」）。
   // データは leMakerCache.params（=params.json・スケジューラーと同一SoT）なので取得は増えない。
-  function wsLaneOverlayShow(params, tpl, iso) {
+  function wsLaneOverlayShow(params, tpl, iso, le) {
     document.getElementById('rf-ws-lanes')?.remove();
     if (!tpl) return;
     const ftMap = {};
     for (const ft of ((params.ws && params.ws.fixedTasks) || [])) ftMap[ft.id] = ft;
     const prodIds = wsProdFixSec(params);
-    const SECC = { F: '#dbeafe', K: '#d1fae5', FK: '#ede9fe' };
-    const TL = (base) => `repeating-linear-gradient(45deg, ${base} 0 5px, #ffffff 5px 9px)`;
-    const cellW = 15, labW = 168;
-    const hourHdr = Array.from({ length: 18 }, (_, i) =>
-      `<td colspan="2" style="border:1px solid #d9d8d2;background:#f4f2ee;font-size:10px;text-align:center;padding:1px 0${i > 0 && (i + 6) % 4 === 2 ? ';border-left:2px solid #b9b8b2' : ''}">${i + 6}</td>`).join('');
-    const cellTd = (k, bg, title, hatch) =>
-      `<td title="${esc(title || '')}" style="width:${cellW}px;min-width:${cellW}px;height:19px;border:1px solid #e3e2dc;padding:0;` +
-      `${k > 1 && (k + 12) % 8 === 4 ? 'border-left:2px solid #b9b8b2;' : ''}` +
-      (bg ? `background:${hatch ? TL(bg) : bg};` : 'background:#fff;') + '"></td>';
-    // レーン行: 区分ごと（表示置き場=home、無ければsec）・開始時刻順。塗り無しレーンは省く
-    const lanes = (tpl.rows || []).filter((rw) => Array.isArray(rw.h30) && rw.h30.some((v) => Number(v)));
-    const firstOn = (rw) => rw.h30.findIndex((v) => Number(v));
-    const slotCnt = new Array(36).fill(0);
-    const secH = { F: 0, K: 0, FK: 0 };
-    let prodH = 0, npH = 0, body = '';
-    for (const sec of ['F', 'K', 'FK']) {
-      const rows = lanes.filter((rw) => (rw.home || rw.sec) === sec).sort((a, b) => firstOn(a) - firstOn(b));
-      const fixIds = Object.keys(tpl.fixedH30 || tpl.fixedHours || {})
-        .filter((id) => (ftMap[id] || {}).sec === sec)
-        .filter((id) => (tpl.fixedH30 ? tpl.fixedH30[id] : tpl.fixedHours[id] || []).some((v) => Number(v)));
-      if (!rows.length && !fixIds.length) continue;
-      body += `<tr><td colspan="38" style="background:${SECC[sec]};font-weight:700;font-size:11.5px;padding:2px 6px;border:1px solid #d9d8d2">${sec}${sec === 'F' ? '（フロア）' : sec === 'K' ? '（キッチン）' : '（共通）'}</td></tr>`;
-      let n = 0;
-      for (const rw of rows) {
-        n++;
-        let h = 0, tds = '';
-        for (let k = 0; k < 36; k++) {
-          if (!Number(rw.h30[k])) { tds += cellTd(k, null); continue; }
-          h += 0.5; slotCnt[k]++;
-          const ov = Array.isArray(rw.sec30) ? rw.sec30[k] : null;
-          const tl = k < 2 || k >= 34;   // 7時前/23時以降=自動トップ/ラスト(生産・斜線)
-          if (ov && ftMap[ov]) {         // 30分タスク上書き（非生産は琥珀）。F/K/FK計上は作業のsec（スケジューラーと同一規則）
-            const prod = !!prodIds[ov];
-            if (prod) prodH += 0.5; else npH += 0.5;
-            if (secH[ftMap[ov].sec] != null) secH[ftMap[ov].sec] += 0.5;
-            tds += cellTd(k, prod ? SECC[ftMap[ov].sec] || '#fde9c8' : '#f6c453', ftMap[ov].label, true);
-            continue;
-          }
-          const eff = (ov === 'F' || ov === 'K' || ov === 'FK') ? ov : rw.sec;
-          secH[eff] += 0.5; prodH += 0.5;
-          tds += cellTd(k, SECC[eff], tl ? 'トップ/ラスト作業（自動・生産）' : (ov ? `30分切替: ${eff}` : eff), tl);
-        }
-        body += `<tr><td style="font-size:11px;padding:1px 6px;border:1px solid #e3e2dc;white-space:nowrap">${sec}${n}</td>${tds}` +
-          `<td style="font-size:10.5px;text-align:right;padding:1px 4px;border:1px solid #e3e2dc;color:#7c2d12;font-weight:700">${h}h</td></tr>`;
-      }
-      for (const id of fixIds) {         // 固定作業行（トップ/ラスト=生産・他=非生産琥珀）
-        const a30 = tpl.fixedH30 ? tpl.fixedH30[id]
-          : (tpl.fixedHours[id] || []).flatMap((v) => [v, v]);
-        const prod = !!prodIds[id];
-        let h = 0, tds = '';
-        for (let k = 0; k < 36; k++) {
-          const v = Number(a30[k]) || 0;
-          if (!v) { tds += cellTd(k, null); continue; }
-          h += 0.5 * v; slotCnt[k] += v;
-          if (prod) prodH += 0.5 * v; else npH += 0.5 * v;
-          if (secH[(ftMap[id] || {}).sec] != null) secH[(ftMap[id] || {}).sec] += 0.5 * v;
-          tds += cellTd(k, prod ? SECC[(ftMap[id] || {}).sec] || '#fde9c8' : '#f6c453',
-            `${(ftMap[id] || {}).label || id}${v > 1 ? ` ×${v}` : ''}`, prod);
-        }
-        body += `<tr><td style="font-size:11px;padding:1px 6px;border:1px solid #e3e2dc;white-space:nowrap;color:#92600a">固 ${esc((ftMap[id] || {}).label || id)}</td>${tds}` +
-          `<td style="font-size:10.5px;text-align:right;padding:1px 4px;border:1px solid #e3e2dc;color:#92600a;font-weight:700">${h}h</td></tr>`;
+    const SLOTW = 16, LABW = 190, KEIW = 52;
+    const GRIDW = SLOTW * 36;
+    const BARC = { F: '#4f8df7', K: '#27ae7e', FK: '#8b74f0' };
+    const ROWBG = { F: '#eef4ff', K: '#eafaf3', FK: '#f3efff' };
+    const TASKC = '#7c5ce0';
+    const hatch = (c) => `repeating-linear-gradient(45deg, ${c} 0 6px, #ffffff 6px 10px)`;
+    const tmOf = (k) => `${Math.floor(6 + k / 2)}:${k % 2 ? '30' : '00'}`;
+    const fmtN = (v) => !v ? '' : (v % 1 ? v.toFixed(1) : String(v));
+    const esc2 = esc;
+
+    // --- 集計（スケジューラーwseRecountと同一規則: タスクコマ=作業のsecへ計上・トップ/ラスト=生産） ---
+    const laneTot = new Array(18).fill(0);
+    const secTot = { F: new Array(18).fill(0), K: new Array(18).fill(0), FK: new Array(18).fill(0) };
+    const prodTot = new Array(18).fill(0), npTot = new Array(18).fill(0);
+    const addSlot = (k, sec, isNp, v) => {
+      laneTot[k >> 1] += 0.5 * v;
+      (isNp ? npTot : prodTot)[k >> 1] += 0.5 * v;
+      if (secTot[sec]) secTot[sec][k >> 1] += 0.5 * v;
+    };
+    const slotInfo = (rw, k) => {   // 生産レーンの1コマ: {sec(計上先), np, kind, task}
+      const ov = Array.isArray(rw.sec30) ? rw.sec30[k] : null;
+      if (ov && ftMap[ov]) return { sec: ftMap[ov].sec, np: !prodIds[ov], kind: 'task', task: ftMap[ov] };
+      const eff = (ov === 'F' || ov === 'K' || ov === 'FK') ? ov : rw.sec;
+      return { sec: eff, np: false, kind: (k < 2 || k >= 34) ? 'tl' : 'base' };
+    };
+    const lanes = (tpl.rows || []);
+    for (const rw of lanes) {
+      if (!Array.isArray(rw.h30)) continue;
+      for (let k = 0; k < 36; k++) {
+        if (!Number(rw.h30[k])) continue;
+        const si = slotInfo(rw, k);
+        addSlot(k, si.sec, si.np, 1);
       }
     }
-    const cntRow = `<tr><td style="font-size:11px;font-weight:700;padding:1px 6px;border:1px solid #d9d8d2;background:#f4f2ee">人数</td>` +
-      slotCnt.map((v, k) => `<td style="font-size:9.5px;text-align:center;border:1px solid #e3e2dc;background:#f9f8f5;padding:0${k > 1 && (k + 12) % 8 === 4 ? ';border-left:2px solid #b9b8b2' : ''}">${v || ''}</td>`).join('') +
-      `<td style="border:1px solid #e3e2dc"></td></tr>`;
-    const r1 = (v) => Math.round(v * 10) / 10;
+    const fixIdsAll = Object.keys(tpl.fixedH30 || tpl.fixedHours || {});
+    const fix30 = (id) => tpl.fixedH30 ? (tpl.fixedH30[id] || []) : (tpl.fixedHours[id] || []).flatMap((v) => [v, v]);
+    for (const id of fixIdsAll) {
+      const a30 = fix30(id), ft = ftMap[id] || {};
+      for (let k = 0; k < 36; k++) {
+        const v = Number(a30[k]) || 0;
+        if (v) addSlot(k, ft.sec, !prodIds[id], v);
+      }
+    }
+    const sumH = (a) => Math.round(a.reduce((x, y) => x + y, 0) * 10) / 10;
+
+    // --- 上段サマリ表（客数/合計人数/F/K/FK/生産計/非生産計 × 時間帯18列） ---
+    const hcell = (v, i, color, bg) =>
+      `<td style="width:${SLOTW * 2}px;min-width:${SLOTW * 2}px;text-align:center;font-size:11px;padding:2px 0;` +
+      `border:1px solid #e3e2dc;${i > 0 && (i + 6) % 4 === 2 ? 'border-left:2px solid #c9c7c1;' : ''}` +
+      `${bg ? `background:${bg};` : ''}${color ? `color:${color};` : ''}">${v}</td>`;
+    const srow = (label, tot, cells, opt = {}) =>
+      `<tr><td style="width:${LABW}px;min-width:${LABW}px;font-size:11.5px;padding:2px 8px;border:1px solid #e3e2dc;` +
+      `white-space:nowrap;${opt.bg ? `background:${opt.bg};` : ''}${opt.lc ? `color:${opt.lc};` : ''}font-weight:700">` +
+      `${label}&nbsp;&nbsp;<span style="color:${opt.tc || '#b3562c'}">${tot}</span></td>${cells}` +
+      `<td style="width:${KEIW}px;min-width:${KEIW}px;text-align:right;font-size:11px;font-weight:700;padding:2px 6px;` +
+      `border:1px solid #e3e2dc;${opt.bg ? `background:${opt.bg};` : ''}color:${opt.tc || '#b3562c'}">${tot}</td></tr>`;
+    let sumHtml = '';
+    if (le && Array.isArray(le.hours)) {
+      const cells = le.hours.map((v, i) => hcell(v === '0' ? '' : v, i, '#1a5fb4')).join('');
+      sumHtml += srow('<span style="color:#1a5fb4">客数(時間帯)</span>', le.total || '', cells, { tc: '#1a5fb4' });
+    }
+    sumHtml += srow('合計人数', `${sumH(laneTot)}h`, laneTot.map((v, i) => hcell(fmtN(v), i)).join(''), { bg: '#f4f2ee' });
+    for (const s of ['F', 'K', 'FK']) {
+      sumHtml += srow(`　${s}`, `${sumH(secTot[s])}h`, secTot[s].map((v, i) => hcell(fmtN(v), i, null)).join(''), { bg: ROWBG[s] });
+    }
+    sumHtml += srow('生産計', `${sumH(prodTot)}h`, prodTot.map((v, i) => hcell(fmtN(v), i)).join(''), {});
+    sumHtml += srow('非生産計', `${sumH(npTot)}h`, npTot.map((v, i) => hcell(fmtN(v), i)).join(''), { bg: '#fdf3e3', tc: '#92600a' });
+    const hourHdr = `<tr><td style="font-size:10.5px;padding:2px 8px;border:1px solid #d9d8d2;background:#f4f2ee">＼時</td>` +
+      Array.from({ length: 18 }, (_, i) => hcell(`<b>${i + 6}</b>`, i, null, '#f4f2ee')).join('') +
+      `<td style="text-align:center;font-size:10.5px;border:1px solid #d9d8d2;background:#f4f2ee"><b>計</b></td></tr>`;
+
+    // --- レーンのバー描画 ---
+    const gridBg = 'background:' +
+      `repeating-linear-gradient(90deg, transparent 0 ${SLOTW * 2 - 1}px, #eceae5 ${SLOTW * 2 - 1}px ${SLOTW * 2}px);`;
+    const qLines = [10, 14, 18, 22].map((h) =>
+      `<i style="position:absolute;top:0;bottom:0;left:${(h - 6) * SLOTW * 2 - 1}px;width:2px;background:#d6d4ce"></i>`).join('');
+    const laneBar = (rw) => {   // 生産レーン1本 → {html, h, range}
+      let segs = '', h = 0, first = -1, last = -1;
+      let k = 0;
+      const painted = (j) => j >= 0 && j < 36 && Number((rw.h30 || [])[j]);
+      while (k < 36) {
+        if (!painted(k)) { k++; continue; }
+        const si = slotInfo(rw, k);
+        let j = k + 1;
+        const key = (x) => { const s2 = slotInfo(rw, x); return s2.kind + '|' + (s2.kind === 'task' ? s2.task.id : s2.sec); };
+        while (painted(j) && key(j) === key(k)) j++;
+        if (first < 0) first = k;
+        last = j;
+        h += (j - k) * 0.5;
+        const rl = !painted(k - 1) ? '13px' : '0', rr = !painted(j) ? '13px' : '0';
+        const base = BARC[si.sec] || BARC.F;
+        let style = `position:absolute;top:3px;height:20px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
+          `border-radius:${rl} ${rr} ${rr} ${rl};`;
+        let inner = '', title = `${tmOf(k)}〜${tmOf(j)}`;
+        if (si.kind === 'task') {
+          style += `background:${TASKC};`;
+          title += ` ${si.task.label}`;
+          if ((j - k) * SLOTW >= 40) inner = `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;overflow:hidden;white-space:nowrap;padding:0 3px">${esc2(si.task.label)}</span>`;
+        } else if (si.kind === 'tl') {
+          style += `background:${hatch(base)};`;
+          const lb = k < 2 ? 'トップ' : 'ラスト';
+          title += ` ${lb}作業（自動・生産）`;
+          inner = `<span style="position:absolute;top:2px;${k < 2 ? 'left:1px' : 'right:1px'};background:#fff;border:1px solid #d9d8d2;border-radius:7px;font-size:8.5px;padding:0 4px;color:#474743">${lb}</span>`;
+        } else {
+          style += `background:${base};`;
+          if (si.sec !== rw.sec) title += ` （30分切替: ${si.sec}）`;
+        }
+        segs += `<div title="${esc2(title)}" style="${style}">${inner}</div>`;
+        k = j;
+      }
+      const range = first < 0 ? '' : `${tmOf(first)}〜${tmOf(last)}`;
+      return { segs, h, range };
+    };
+    const secHdrRow = (sec) =>
+      `<div style="display:flex;border:1px solid #e3e2dc;border-top:2px solid #c9c7c1;background:${ROWBG[sec]}">` +
+      `<div style="width:${LABW}px;min-width:${LABW}px;font-size:11.5px;font-weight:700;padding:2px 8px">${sec}</div>` +
+      `<div style="width:${GRIDW}px;font-size:11px;color:#6d6d69;padding:2px 6px">${sec === 'F' ? 'フロア' : sec === 'K' ? 'キッチン' : 'F/K共通'}（レーン・開始時刻順）</div>` +
+      `<div style="width:${KEIW}px"></div></div>`;
+    const laneRow = (label, segs, h, extraTitle) =>
+      `<div style="display:flex;border:1px solid #e3e2dc;border-top:0;background:#fff">` +
+      `<div style="width:${LABW}px;min-width:${LABW}px;font-size:11px;padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc2(extraTitle || '')}">${label}</div>` +
+      `<div style="position:relative;width:${GRIDW}px;min-width:${GRIDW}px;height:26px;${gridBg}">${qLines}${segs}</div>` +
+      `<div style="width:${KEIW}px;min-width:${KEIW}px;text-align:right;font-size:10.5px;font-weight:700;color:#7c2d12;padding:5px 6px">${h ? h + 'h' : ''}</div></div>`;
+    let chart = '';
+    for (const sec of ['F', 'K', 'FK']) {
+      const rows = lanes.filter((rw) => (rw.home || rw.sec) === sec);
+      const fixIds = fixIdsAll.filter((id) => (ftMap[id] || {}).sec === sec && fix30(id).some((v) => Number(v)));
+      if (!rows.length && !fixIds.length) continue;
+      chart += secHdrRow(sec);
+      const bars = rows.map((rw) => ({ rw, ...laneBar(rw) }))
+        .sort((a, b) => (a.range ? (rw2k(a.rw)) : 999) - (b.range ? rw2k(b.rw) : 999));
+      let n = 0;
+      for (const b of bars) {
+        n++;
+        const lb = `<b>${sec}${n}</b>&nbsp;<span style="color:#6d6d69">${b.range}${b.h ? `・${b.h}h` : ''}</span>`;
+        chart += laneRow(lb, b.segs, b.h);
+      }
+      for (const id of fixIds) {
+        const a30 = fix30(id), ft = ftMap[id] || {};
+        const prod = !!prodIds[id];
+        let segs = '', h = 0, k = 0;
+        while (k < 36) {
+          const v = Number(a30[k]) || 0;
+          if (!v) { k++; continue; }
+          let j = k + 1;
+          while (j < 36 && (Number(a30[j]) || 0) === v) j++;
+          h += (j - k) * 0.5 * v;
+          const c = prod ? (BARC[ft.sec] || BARC.F) : '#e8a33d';
+          segs += `<div title="${esc2(`${tmOf(k)}〜${tmOf(j)} ${ft.label || id}${v > 1 ? ` ×${v}` : ''}`)}" ` +
+            `style="position:absolute;top:3px;height:20px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
+            `border-radius:13px;background:${prod ? hatch(c) : c};">` +
+            ((j - k) * SLOTW >= 44 ? `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:${prod ? '#474743' : '#fff'};font-size:9px;white-space:nowrap;overflow:hidden;padding:0 4px">${esc2((ft.label || '') + (v > 1 ? ` ×${v}` : ''))}</span>` : '') +
+            `</div>`;
+          k = j;
+        }
+        chart += laneRow(`<span style="color:#92600a">固 ${esc2(ft.label || id)}</span>`, segs, h);
+      }
+    }
+    function rw2k(rw) { const i = (rw.h30 || []).findIndex((v) => Number(v)); return i < 0 ? 999 : i; }
+
     const wrap = document.createElement('div');
     wrap.id = 'rf-ws-lanes';
-    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.35);overflow:auto;padding:28px 0;';
-    wrap.innerHTML = `<div style="margin:0 auto;width:${labW + cellW * 36 + 60}px;max-width:96vw;background:#fff;border:1px solid #d9d8d2;padding:12px 16px 14px;overflow-x:auto;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif">
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.35);overflow:auto;padding:24px 0;';
+    const W = LABW + GRIDW + KEIW + 36;
+    wrap.innerHTML = `<div style="margin:0 auto;width:${W}px;max-width:97vw;background:#fff;border:1px solid #d9d8d2;padding:12px 16px 14px;overflow-x:auto;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-        <b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">モデルWS ${esc(tpl.name)}型</b>
-        <span style="font-size:12px;color:#6d6d69">${esc(iso)} に適用${tpl.tc ? `・TC ${esc(String(tpl.tc))}` : ''}</span>
-        <span style="font-size:12px;color:#161616">F ${r1(secH.F)}h・K ${r1(secH.K)}h・FK ${r1(secH.FK)}h／<b style="color:#166534">生産計 ${r1(prodH)}h</b>・<b style="color:#92600a">非生産計 ${r1(npH)}h</b></span>
+        <b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">モデルWS ${esc2(tpl.name)}型</b>
+        <span style="font-size:12px;color:#6d6d69">${esc2(iso)} に適用${tpl.tc ? `・TC ${esc2(String(tpl.tc))}` : ''}${le && le.total ? `・LE ${esc2(String(le.total))}` : ''}</span>
         <span style="flex:1"></span>
         <a href="http://mac-mini.tail1f88ff.ts.net:8790/#ws" target="_blank" rel="noopener" style="font-size:12px;color:#1a5fb4;text-decoration:none">⚙編集はスケジューラーで↗</a>
-        <button class="rf-lanes-x" style="font-size:14px;border:1px solid #d9d8d2;background:#fff;cursor:pointer;padding:2px 10px">✕ 閉じる</button>
+        <button class="rf-lanes-x" style="font-size:13px;border:1px solid #d9d8d2;background:#fff;cursor:pointer;padding:2px 10px">✕ 閉じる</button>
       </div>
-      <table style="border-collapse:collapse"><tr><td style="border:1px solid #d9d8d2;background:#f4f2ee;font-size:10px;padding:1px 6px">＼時</td>${hourHdr}<td style="border:1px solid #d9d8d2;background:#f4f2ee;font-size:10px;text-align:center">計</td></tr>${cntRow}${body}</table>
-      <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラー）。斜線=トップ/ラスト作業（生産）・濃い琥珀=非生産タスクの30分上書き（マウスで作業名）。</div>
+      <table style="border-collapse:collapse;margin-bottom:0">${hourHdr}${sumHtml}</table>
+      <div style="border-top:0">${chart}</div>
+      <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラー・客数(時間帯)はこの日のLE）。斜線＋チップ=トップ/ラスト作業（生産）・紫=タスクの30分上書き・琥珀=非生産固定作業。バーにマウスで詳細。</div>
     </div>`;
     const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey); };
     const onKey = (ev) => { if (ev.key === 'Escape') close(); };
@@ -3130,7 +3225,7 @@
         leMakerCache = null;
         renderSheet();
       });
-      bar.querySelector('.rf-ws-view').addEventListener('click', () => wsLaneOverlayShow(params, tpl, iso));
+      bar.querySelector('.rf-ws-view').addEventListener('click', () => wsLaneOverlayShow(params, tpl, iso, le));
       t.appendChild(bar);
     }
   }
