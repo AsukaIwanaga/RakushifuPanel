@@ -38,7 +38,7 @@
     if (name === 'F' || name === 'K' || name === 'FK') return name;
     // 非生産（スタンバイ=08-06・商品管理/棚卸し/配送整理=08-09・BUSS(W)=08-11 本人指定）。
     // BUSSは/^BU/より先に判定しないとK扱いになるのでこの位置
-    if (/スタンバイ|商品管理|棚卸|配送整理|BUSS/.test(name || '')) return 'NP';
+    if (/スタンバイ|商品管理|棚卸|配送整理|BUSS|MTG/.test(name || '')) return 'NP';
     if (/^BU/.test(name || '')) return 'K';
     if (['MGT', 'TRer', 'TRee'].includes(name)) return isRegular ? 'MGT' : 'cMGT';
     return null;
