@@ -2920,6 +2920,105 @@
     }
   }
 
+  // ===== モデルWSレーン表ビューア（本人要望2026-08-15「スケジューラーのモデルWSを拡張からも見たい」）=====
+  // スケジューラーのライン表(レーン+固定作業+sec30上書き)を読み取り専用で描く。
+  // データは leMakerCache.params（=params.json・スケジューラーと同一SoT）なので取得は増えない。
+  function wsLaneOverlayShow(params, tpl, iso) {
+    document.getElementById('rf-ws-lanes')?.remove();
+    if (!tpl) return;
+    const ftMap = {};
+    for (const ft of ((params.ws && params.ws.fixedTasks) || [])) ftMap[ft.id] = ft;
+    const prodIds = wsProdFixSec(params);
+    const SECC = { F: '#dbeafe', K: '#d1fae5', FK: '#ede9fe' };
+    const TL = (base) => `repeating-linear-gradient(45deg, ${base} 0 5px, #ffffff 5px 9px)`;
+    const cellW = 15, labW = 168;
+    const hourHdr = Array.from({ length: 18 }, (_, i) =>
+      `<td colspan="2" style="border:1px solid #d9d8d2;background:#f4f2ee;font-size:10px;text-align:center;padding:1px 0${i > 0 && (i + 6) % 4 === 2 ? ';border-left:2px solid #b9b8b2' : ''}">${i + 6}</td>`).join('');
+    const cellTd = (k, bg, title, hatch) =>
+      `<td title="${esc(title || '')}" style="width:${cellW}px;min-width:${cellW}px;height:19px;border:1px solid #e3e2dc;padding:0;` +
+      `${k > 1 && (k + 12) % 8 === 4 ? 'border-left:2px solid #b9b8b2;' : ''}` +
+      (bg ? `background:${hatch ? TL(bg) : bg};` : 'background:#fff;') + '"></td>';
+    // レーン行: 区分ごと（表示置き場=home、無ければsec）・開始時刻順。塗り無しレーンは省く
+    const lanes = (tpl.rows || []).filter((rw) => Array.isArray(rw.h30) && rw.h30.some((v) => Number(v)));
+    const firstOn = (rw) => rw.h30.findIndex((v) => Number(v));
+    const slotCnt = new Array(36).fill(0);
+    const secH = { F: 0, K: 0, FK: 0 };
+    let prodH = 0, npH = 0, body = '';
+    for (const sec of ['F', 'K', 'FK']) {
+      const rows = lanes.filter((rw) => (rw.home || rw.sec) === sec).sort((a, b) => firstOn(a) - firstOn(b));
+      const fixIds = Object.keys(tpl.fixedH30 || tpl.fixedHours || {})
+        .filter((id) => (ftMap[id] || {}).sec === sec)
+        .filter((id) => (tpl.fixedH30 ? tpl.fixedH30[id] : tpl.fixedHours[id] || []).some((v) => Number(v)));
+      if (!rows.length && !fixIds.length) continue;
+      body += `<tr><td colspan="38" style="background:${SECC[sec]};font-weight:700;font-size:11.5px;padding:2px 6px;border:1px solid #d9d8d2">${sec}${sec === 'F' ? '（フロア）' : sec === 'K' ? '（キッチン）' : '（共通）'}</td></tr>`;
+      let n = 0;
+      for (const rw of rows) {
+        n++;
+        let h = 0, tds = '';
+        for (let k = 0; k < 36; k++) {
+          if (!Number(rw.h30[k])) { tds += cellTd(k, null); continue; }
+          h += 0.5; slotCnt[k]++;
+          const ov = Array.isArray(rw.sec30) ? rw.sec30[k] : null;
+          const tl = k < 2 || k >= 34;   // 7時前/23時以降=自動トップ/ラスト(生産・斜線)
+          if (ov && ftMap[ov]) {         // 30分タスク上書き（非生産は琥珀）。F/K/FK計上は作業のsec（スケジューラーと同一規則）
+            const prod = !!prodIds[ov];
+            if (prod) prodH += 0.5; else npH += 0.5;
+            if (secH[ftMap[ov].sec] != null) secH[ftMap[ov].sec] += 0.5;
+            tds += cellTd(k, prod ? SECC[ftMap[ov].sec] || '#fde9c8' : '#f6c453', ftMap[ov].label, true);
+            continue;
+          }
+          const eff = (ov === 'F' || ov === 'K' || ov === 'FK') ? ov : rw.sec;
+          secH[eff] += 0.5; prodH += 0.5;
+          tds += cellTd(k, SECC[eff], tl ? 'トップ/ラスト作業（自動・生産）' : (ov ? `30分切替: ${eff}` : eff), tl);
+        }
+        body += `<tr><td style="font-size:11px;padding:1px 6px;border:1px solid #e3e2dc;white-space:nowrap">${sec}${n}</td>${tds}` +
+          `<td style="font-size:10.5px;text-align:right;padding:1px 4px;border:1px solid #e3e2dc;color:#7c2d12;font-weight:700">${h}h</td></tr>`;
+      }
+      for (const id of fixIds) {         // 固定作業行（トップ/ラスト=生産・他=非生産琥珀）
+        const a30 = tpl.fixedH30 ? tpl.fixedH30[id]
+          : (tpl.fixedHours[id] || []).flatMap((v) => [v, v]);
+        const prod = !!prodIds[id];
+        let h = 0, tds = '';
+        for (let k = 0; k < 36; k++) {
+          const v = Number(a30[k]) || 0;
+          if (!v) { tds += cellTd(k, null); continue; }
+          h += 0.5 * v; slotCnt[k] += v;
+          if (prod) prodH += 0.5 * v; else npH += 0.5 * v;
+          if (secH[(ftMap[id] || {}).sec] != null) secH[(ftMap[id] || {}).sec] += 0.5 * v;
+          tds += cellTd(k, prod ? SECC[(ftMap[id] || {}).sec] || '#fde9c8' : '#f6c453',
+            `${(ftMap[id] || {}).label || id}${v > 1 ? ` ×${v}` : ''}`, prod);
+        }
+        body += `<tr><td style="font-size:11px;padding:1px 6px;border:1px solid #e3e2dc;white-space:nowrap;color:#92600a">固 ${esc((ftMap[id] || {}).label || id)}</td>${tds}` +
+          `<td style="font-size:10.5px;text-align:right;padding:1px 4px;border:1px solid #e3e2dc;color:#92600a;font-weight:700">${h}h</td></tr>`;
+      }
+    }
+    const cntRow = `<tr><td style="font-size:11px;font-weight:700;padding:1px 6px;border:1px solid #d9d8d2;background:#f4f2ee">人数</td>` +
+      slotCnt.map((v, k) => `<td style="font-size:9.5px;text-align:center;border:1px solid #e3e2dc;background:#f9f8f5;padding:0${k > 1 && (k + 12) % 8 === 4 ? ';border-left:2px solid #b9b8b2' : ''}">${v || ''}</td>`).join('') +
+      `<td style="border:1px solid #e3e2dc"></td></tr>`;
+    const r1 = (v) => Math.round(v * 10) / 10;
+    const wrap = document.createElement('div');
+    wrap.id = 'rf-ws-lanes';
+    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.35);overflow:auto;padding:28px 0;';
+    wrap.innerHTML = `<div style="margin:0 auto;width:${labW + cellW * 36 + 60}px;max-width:96vw;background:#fff;border:1px solid #d9d8d2;padding:12px 16px 14px;overflow-x:auto;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+        <b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">モデルWS ${esc(tpl.name)}型</b>
+        <span style="font-size:12px;color:#6d6d69">${esc(iso)} に適用${tpl.tc ? `・TC ${esc(String(tpl.tc))}` : ''}</span>
+        <span style="font-size:12px;color:#161616">F ${r1(secH.F)}h・K ${r1(secH.K)}h・FK ${r1(secH.FK)}h／<b style="color:#166534">生産計 ${r1(prodH)}h</b>・<b style="color:#92600a">非生産計 ${r1(npH)}h</b></span>
+        <span style="flex:1"></span>
+        <a href="http://mac-mini.tail1f88ff.ts.net:8790/#ws" target="_blank" rel="noopener" style="font-size:12px;color:#1a5fb4;text-decoration:none">⚙編集はスケジューラーで↗</a>
+        <button class="rf-lanes-x" style="font-size:14px;border:1px solid #d9d8d2;background:#fff;cursor:pointer;padding:2px 10px">✕ 閉じる</button>
+      </div>
+      <table style="border-collapse:collapse"><tr><td style="border:1px solid #d9d8d2;background:#f4f2ee;font-size:10px;padding:1px 6px">＼時</td>${hourHdr}<td style="border:1px solid #d9d8d2;background:#f4f2ee;font-size:10px;text-align:center">計</td></tr>${cntRow}${body}</table>
+      <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラー）。斜線=トップ/ラスト作業（生産）・濃い琥珀=非生産タスクの30分上書き（マウスで作業名）。</div>
+    </div>`;
+    const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = (ev) => { if (ev.key === 'Escape') close(); };
+    wrap.addEventListener('click', (ev) => { if (ev.target === wrap) close(); });
+    wrap.querySelector('.rf-lanes-x').addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(wrap);
+  }
+
   // ===== セクション見出しに モデルWS選択＋F/K/FK/非生産の時間数 PLAN/SCH を注入 =====
   // （本人指定2026-08-03。フロア/キッチン両方の見出しバーに同じものを出す）
   // PLAN=その日に適用されるモデルWS型（counts=レーン＋固定作業の区分別人時・非生産=固定作業のみ）
@@ -3004,6 +3103,9 @@
           ? `<span style="color:#dc2626;font-size:11.5px;font-weight:700;white-space:nowrap" ` +
             `title="${esc(shortTitle)}">⚠LE ${Math.round(leSum)}</span>`
           : '') +
+        `<button class="rf-ws-view" title="適用中のモデルWS型のレーン表（レーン・固定作業・30分切替）を表示" ` +
+        `style="font-size:12px;padding:1px 8px;border:1px solid #d9d8d2;border-radius:0;background:#fff;` +
+        `color:#161616;cursor:pointer;white-space:nowrap"${tpl ? '' : ' disabled'}>📐表</button>` +
         `<a href="http://mac-mini.tail1f88ff.ts.net:8790/#ws" target="_blank" rel="noopener" ` +
         `title="スケジューラーのモデルWS設定を開く（固定作業の編集もこちら）" ` +
         `style="font-size:12px;color:#1a5fb4;text-decoration:none;white-space:nowrap">⚙編集↗</a>` +
@@ -3028,6 +3130,7 @@
         leMakerCache = null;
         renderSheet();
       });
+      bar.querySelector('.rf-ws-view').addEventListener('click', () => wsLaneOverlayShow(params, tpl, iso));
       t.appendChild(bar);
     }
   }
