@@ -1612,11 +1612,10 @@
         if (!nameEl || !track) continue;
         const nm = normName(nameEl.textContent);
         if (!nm) continue;
-        // 休み系は完了後も赤帯を出し続ける（本人指定2026-08-11・編集画面と同ルール）
+        // 完了した依頼も帯は点線で残す（2026-08-14拡大・編集画面と同ルール）
         const rel = cases.filter((c) => (c.target === '全員' || normName(c.target) === nm) &&
           (scMatchesDay(c, colDate)
-            ? (!c.is_done || /休み|休暇/.test(`${c.change || ''} ${c.title || ''}`))
-            : (!c.is_done && !scClosed(c) && !(c.target_date || '').trim())));
+            || (!c.is_done && !scClosed(c) && !(c.target_date || '').trim())));
         if (!rel.length) continue;
         if (getComputedStyle(track).position === 'static') track.style.position = 'relative';
         const base = hidden ? 0 : track.getBoundingClientRect().left;
@@ -1658,7 +1657,9 @@
           const lab = document.createElement('div');
           lab.className = 'rf-req-line';
           lab.textContent = rejected ? '🚫拒否' : c.target === '全員' ? `🙋募集(${c.requester || ''}の代わり)`
-            : isOff ? (c.is_done ? '休み(済)' : '休み希望') : isLate ? '途中希望' : `依頼中(${scStatusLabel(c)})`;
+            : isOff ? (c.is_done ? '休み(済)' : '休み希望')
+            : isLate ? (c.is_done ? '途中希望(済)' : '途中希望')
+            : (c.is_done ? '変更済' : `依頼中(${scStatusLabel(c)})`);
           if (!rejected && c.accepted_done) lab.textContent = `◯${lab.textContent}`;  // 快諾済み
           lab.style.cssText = `position:absolute;left:${unit === '%' ? `${x}%` : `${x + 1}px`};` +
             `top:${1 + idx * 11}px;z-index:6;` +
@@ -1798,11 +1799,11 @@
       // target='全員'（休み募集）は全行に出す（本人指定）。
       // 休み系だけは完了(クローズ)後も赤帯を出し続ける（本人指定2026-08-11
       // 「依頼がクローズしても赤枠などは表示したままにしてほしい」＝入れない目印を維持）。
-      const isOffCase = (c) => /休み|休暇/.test(`${c.change || ''} ${c.title || ''}`);
+      // 完了した依頼も「その日」の帯は点線で残す（本人指摘2026-08-14: 浅野8/30の枠が消えた。
+      // 旧仕様は休み系のみ残存→全種類に拡大。色は現役時と同じ・点線+(済)で区別）
       const rel = cases.filter((c) => (c.target === '全員' || normName(c.target) === nm) &&
         (scMatchesDay(c, targetDate)
-          ? (!c.is_done || isOffCase(c))
-          : (!c.is_done && !scClosed(c) && !(c.target_date || '').trim())));
+          || (!c.is_done && !scClosed(c) && !(c.target_date || '').trim())));
       if (!rel.length) continue;
       const track = tr.querySelector('.schedule-row');
       if (!track) continue;
