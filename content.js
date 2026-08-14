@@ -1687,13 +1687,12 @@
       for (const row of col.querySelectorAll('.user-row')) {
         const nameEl = row.querySelector('.user-cell .name');
         if (!nameEl || nameEl.querySelector('.rf-newbie')) continue;
-        const days = hist[normName(nameEl.textContent)];
-        if (!days || !days.includes(iso)) continue;
-        const n = days.filter((d) => d <= iso).length;
-        if (n > 5) continue;
+        const bd = newbieBadge(hist[normName(nameEl.textContent)], iso);
+        if (!bd) continue;
         const b = document.createElement('span');
         b.className = 'rf-newbie';
-        b.textContent = `🔰${n}日目`;
+        b.textContent = bd.text;
+        b.title = bd.title;
         b.style.cssText = 'display:inline-block;margin-left:2px;font-size:8.5px;font-weight:700;' +
           'color:#15803d;white-space:nowrap;';
         nameEl.appendChild(b);
@@ -1761,6 +1760,21 @@
       .finally(() => { newbieHistP = null; });
     return newbieHistP;
   }
+  // 新人バッジの文言（本人指定2026-08-14「入って1か月経っていない子は、勤務が無い日でも
+  // 🔰と経過日数を出す」）。初出勤からの暦日でカウントし31日まで表示。勤務日は回数も併記
+  function newbieBadge(days, iso) {
+    if (!days || !days.length) return null;
+    const first = days[0];
+    if (first > iso) return { text: '🔰初回前', title: `新人（初回出勤予定 ${first.slice(5).replace('-', '/')}）` };
+    const cal = Math.round((new Date(iso) - new Date(first)) / 86400000) + 1;
+    if (cal > 31) return null;   // 初回から1か月で卒業
+    const workN = days.filter((d) => d <= iso).length;
+    const today = days.includes(iso);
+    return {
+      text: `🔰${cal}日目` + (today ? `・勤務${workN}回` : ''),
+      title: `新人（初回出勤 ${first.slice(5).replace('-', '/')} から${cal}日目・累計勤務${workN}回。1か月まで表示）`,
+    };
+  }
   async function updateNewbieMarks() {
     if (!onOneDayTarget()) return;
     const hist = await loadNewbieHist();
@@ -1770,14 +1784,12 @@
     for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
       const nameEl = tr.querySelector('.user-cell .name');
       if (!nameEl || nameEl.querySelector('.rf-newbie')) continue;
-      const days = hist[normName(nameEl.textContent)];
-      if (!days || !days.includes(iso)) continue;   // この日に勤務がある人だけ
-      const n = days.filter((d) => d <= iso).length;
-      if (n > 5) continue;
+      const bd = newbieBadge(hist[normName(nameEl.textContent)], iso);
+      if (!bd) continue;
       const b = document.createElement('span');
       b.className = 'rf-newbie';
-      b.textContent = `🔰${n}日目`;
-      b.title = `新人（この店の勤務${n}日目・初回${days[0].slice(5).replace('-', '/')}。5日目まで表示）`;
+      b.textContent = bd.text;
+      b.title = bd.title;
       b.style.cssText = 'display:inline-block;margin-left:4px;font-size:10.5px;font-weight:700;' +
         'color:#15803d;background:#eefaf1;border:1px solid #b7e3c4;border-radius:3px;' +
         'padding:0 4px;white-space:nowrap;vertical-align:middle;';
