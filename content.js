@@ -1645,8 +1645,9 @@
           const isLate = !isOff && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWordP);
           // 承諾済みの出勤依頼(黄)は緑の枠（編集画面と同ルール・本人指定2026-08-09）
           const okd = !rejected && c.target !== '全員' && !isOff && !isLate && c.accepted_done;
-          const bg = (rejected || isOff) ? '#dc2626' : isLate ? '#2563eb' : '#f5b301';
-          const fill = (rejected || isOff) ? 'rgba(220,38,38,.13)' : isLate ? 'rgba(37,99,235,.13)' : 'rgba(245,179,1,.18)';
+          const bg = (rejected || isOff) ? '#dc2626' : isLate ? '#2563eb' : (okd ? '#16a34a' : '#f5b301');
+          const fill = (rejected || isOff) ? 'rgba(220,38,38,.13)' : isLate ? 'rgba(37,99,235,.13)'
+            : okd ? 'rgba(22,163,74,.12)' : 'rgba(245,179,1,.18)';
           const band = document.createElement('div');
           band.className = 'rf-req-line';
           band.style.cssText = `position:absolute;left:${x}${unit};width:${w}${unit};top:0;bottom:0;z-index:5;` +
@@ -1843,10 +1844,12 @@
           !tr.querySelector('.schedule-bar-wrapper.not-off .schedule-bar:not(.isDesired)');
         if (noShift) title += '（この日のシフトなし=取消作業なし・入れない目印）';
         const bg = rejected ? '#dc2626' : isOff ? (noShift ? '#9ca3af' : '#dc2626')
-          : isLate ? '#2563eb' : '#f5b301';
+          : isLate ? '#2563eb' : (okd ? '#16a34a' : '#f5b301');
+        // 承諾済みの依頼は塗りも薄い緑（本人指定2026-08-14「緑の枠で残して・薄い緑色でいい」）
         const fill = rejected ? 'rgba(220,38,38,.16)'
           : isOff ? (noShift ? 'rgba(156,163,175,.18)' : 'rgba(220,38,38,.16)')
-          : isLate ? 'rgba(37,99,235,.16)' : 'rgba(245,179,1,.22)';
+          : isLate ? 'rgba(37,99,235,.16)'
+          : okd ? 'rgba(22,163,74,.13)' : 'rgba(245,179,1,.22)';
         const band = document.createElement('div');
         band.className = 'rf-req-line';
         band.style.cssText = `position:absolute;left:${s - 360}px;width:${e - s}px;top:0;bottom:0;` +
