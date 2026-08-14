@@ -194,11 +194,13 @@
     const ym = String(iso).slice(0, 7);
     const exact = all.filter((t) => t.ym === ym);
     if (exact.length) return exact;
+    const common = all.filter((t) => !t.ym);   // 共通を他月より優先(2026-08-14)
+    if (common.length) return common;
     const yms = [...new Set(all.map((t) => t.ym).filter(Boolean))].sort();
     const past = yms.filter((m) => m < ym);
     const pick = past.length ? past[past.length - 1] : yms.find((m) => m > ym);
     if (pick) return all.filter((t) => t.ym === pick);
-    return all.filter((t) => !t.ym);
+    return [];
   }
   function wsAutoTpl(params, iso, leSum) {
     const w = params && params.ws;
