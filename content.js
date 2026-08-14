@@ -2926,8 +2926,13 @@
     }
     const sch = actual ? { F: r1(actual.sum.F), K: r1(actual.sum.K), FK: r1(actual.sum.FK),
                            TR: sum18(actual.TR), NP: sum18(actual.NP) } : null;
-    const tpls = [...wsTplsForMonth(params.ws, iso)].sort((a, b) =>
-      String(a.name || '').localeCompare(String(b.name || ''), 'ja', { numeric: true }));
+    const wdi = (n) => '月火水木金土日'.indexOf(String(n));
+    const tpls = [...wsTplsForMonth(params.ws, iso)].sort((a, b) => {
+      const wa = wdi(a.name), wb = wdi(b.name);
+      if (wa >= 0 && wb >= 0) return wa - wb;
+      if (wa >= 0 || wb >= 0) return wa >= 0 ? 1 : -1;
+      return String(a.name || '').localeCompare(String(b.name || ''), 'ja', { numeric: true });
+    });
     const opts = `<option value="">自動${autoT ? `（${autoT.name}）` : ''}</option>` +
       tpls.map((t) => `<option value="${t.id}"${ovr === t.id ? ' selected' : ''}>${esc(t.name)}</option>`).join('');
     // モデルWSの日客(型名の数値)がLE予測を下回る日は赤で警告（本人指定2026-08-08）
