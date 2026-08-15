@@ -2746,11 +2746,14 @@
     // タスクid: トップ/ラスト=生産(そのsecへ)・他=非生産(fixPへ)＝固定作業行と同じ扱い(2026-08-14)
     const ftSecById = {};
     for (const ft of ((params.ws && params.ws.fixedTasks) || [])) ftSecById[ft.id] = ft.sec;
+    // 非生産はモデルWSどおりF/K別にも持つ（本人要望2026-08-15）。secがF以外はKに寄せる
+    const npSecOf = (id) => (ftSecById[id] === 'F' ? 'F' : 'K');
+    const fixPS = { F: zero(), K: zero() };
     const resolveOv = (v, base) => {
       if (!v) return { sec: base };
       if (['F', 'K', 'FK'].includes(v)) return { sec: v };
       if (prodFixSec[v]) return { sec: prodFixSec[v] };
-      if (ftSecById[v]) return { np: true };
+      if (ftSecById[v]) return { np: true, npSec: npSecOf(v) };
       return { sec: base };
     };
     const rowAdd = (rw, addHalf, addHour) => {
@@ -2768,13 +2771,13 @@
     if (tpl) {
       for (const rw of (tpl.rows || [])) if (planG[rw.sec])
         rowAdd(rw,
-          (tgt, k) => { if (tgt.np) fixP[k >> 1] += 0.5; else planG[tgt.sec][k >> 1] += 0.5; },
+          (tgt, k) => { if (tgt.np) { fixP[k >> 1] += 0.5; fixPS[tgt.npSec][k >> 1] += 0.5; } else planG[tgt.sec][k >> 1] += 0.5; },
           (sec) => HOURS.forEach((h, i) => { planG[sec][i] += Number((rw.hours || [])[i]) || 0; }));
       for (const id in (tpl.fixedHours || {})) {
         const sec = prodFixSec[id];
         HOURS.forEach((h, i) => {
           const v = Number((tpl.fixedHours[id] || [])[i]) || 0;
-          if (sec && planG[sec]) planG[sec][i] += v; else fixP[i] += v;
+          if (sec && planG[sec]) planG[sec][i] += v; else { fixP[i] += v; fixPS[npSecOf(id)][i] += v; }
         });
       }
       // ラインの無い手入力counts型は counts を全部生産扱い
@@ -2793,15 +2796,16 @@
     const zero30 = () => Array.from({ length: N30 }, () => 0);
     const planG30 = { F: zero30(), K: zero30(), FK: zero30() };
     const fixP30 = zero30();
+    const fixPS30 = { F: zero30(), K: zero30() };
     if (tpl) {
       for (const rw of (tpl.rows || [])) if (planG30[rw.sec])
         rowAdd(rw,
-          (tgt, k) => { if (tgt.np) fixP30[k] += 1; else planG30[tgt.sec][k] += 1; },
+          (tgt, k) => { if (tgt.np) { fixP30[k] += 1; fixPS30[tgt.npSec][k] += 1; } else planG30[tgt.sec][k] += 1; },
           (sec) => { for (let k = 0; k < N30; k++)
             planG30[sec][k] += Number((rw.h30 || [])[k] ?? (rw.hours || [])[k >> 1]) || 0; });
       const add30 = (id, k, v) => {
         const sec = prodFixSec[id];
-        if (sec && planG30[sec]) planG30[sec][k] += v; else fixP30[k] += v;
+        if (sec && planG30[sec]) planG30[sec][k] += v; else { fixP30[k] += v; fixPS30[npSecOf(id)][k] += v; }
       };
       for (const id in (tpl.fixedH30 || {}))
         for (let k = 0; k < N30; k++) add30(id, k, Number((tpl.fixedH30[id] || [])[k]) || 0);
@@ -2832,7 +2836,7 @@
     const planTotH = HOURS.map((h, i) =>
       planG.F[i] + planG.K[i] + planG.FK[i] + fixP[i]);   // 総労働時間予算=モデルWS全人時（非生産込み）
     return { leH, groups, fixP, schTR: sch ? sch.TR : zero(), planTotH,
-             fixP30, schTR30: sch30 ? sch30.TR : zero30() };
+             fixP30, schTR30: sch30 ? sch30.TR : zero30(), fixPS, fixPS30 };
   }
   let lastLE = null;
   const onOneDayTarget = () => {
@@ -3489,8 +3493,15 @@
       };
       const addNp = () => {
         if (!mcd) return;
-        mk('rf-req-row-p', '非生産 PLAN', mcd.fixP.map(fmtH), MCD_COLORS.plan, r1s(mcd.fixP),
-          { halves: mcd.fixP30.map(fmtH), bg: CAT_BG.NP });
+        {
+          const npSecs = ['F', 'K'].filter((g2) =>
+            (mcd.fixPS && mcd.fixPS[g2].some((v) => v)) || (mcd.fixPS30 && mcd.fixPS30[g2].some((v) => v)));
+          if (npSecs.length) for (const g2 of npSecs)
+            mk('rf-req-row-p', `非生産${g2} PLAN`, mcd.fixPS[g2].map(fmtH), MCD_COLORS.plan, r1s(mcd.fixPS[g2]),
+              { halves: mcd.fixPS30[g2].map(fmtH), bg: CAT_BG.NP });
+          else mk('rf-req-row-p', '非生産 PLAN', mcd.fixP.map(fmtH), MCD_COLORS.plan, r1s(mcd.fixP),
+            { halves: mcd.fixP30.map(fmtH), bg: CAT_BG.NP });
+        }
         if (hasAct) mk('rf-req-row-p', '非生産 SCH(TR/SB)', mcd.schTR.map(fmtH), MCD_COLORS.sch, r1s(mcd.schTR),
           { halves: mcd.schTR30.map(fmtH), bg: CAT_BG.NP });
       };
@@ -3862,7 +3873,13 @@
             tintRow(r3, sub2 || 'NP');
             rowsCat.push({ row: r3, cat: sub2 || 'NP' });
           };
-          add2('非生産', '', 'PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan, null, mcd.fixP30);
+          {
+            const npSecs = ['F', 'K'].filter((g2) =>
+              (mcd.fixPS && mcd.fixPS[g2].some((v) => v)) || (mcd.fixPS30 && mcd.fixPS30[g2].some((v) => v)));
+            if (npSecs.length) npSecs.forEach((g2, i2) =>
+              add2(i2 ? '' : '非生産', '', `${g2} PLAN`, mcd.fixPS[g2].map(fmt), MCD_COLORS.plan, null, mcd.fixPS30[g2]));
+            else add2('非生産', '', 'PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan, null, mcd.fixP30);
+          }
           add2('', '', 'SCH(TR/SB)', mcd.schTR.map(fmt), MCD_COLORS.sch, null, mcd.schTR30);
         }
       }
