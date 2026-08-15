@@ -558,19 +558,19 @@
         font-family: "Hiragino Sans", "Helvetica Neue", "Yu Gothic", "YuGothic", -apple-system, sans-serif;
         font-weight: 400; letter-spacing: .004em; }
       .num, .num * { font-variant-numeric: tabular-nums; }
-      @media print { #toggle, #panel { display: none !important; } }
+      @media print { #toggle, #panel, #wsLanesToggle { display: none !important; } }
       /* ---- トグル（四角・角丸なし・SVGアイコン・選択中は赤下線）---- */
-      #toggle, #shiftToggle, #reflectToggle {
+      #toggle, #shiftToggle, #reflectToggle, #wsLanesToggle {
         position: fixed; top: 12px; z-index: 2147483646;
         width: 42px; height: 42px; border-radius: 0; cursor: pointer;
         border: 1px solid var(--line2); background: var(--panel); color: var(--ink2);
         display: grid; place-items: center; padding: 0;
       }
-      #toggle { right: 12px; } #shiftToggle { right: 60px; } #reflectToggle { right: 108px; }
-      #toggle:hover, #shiftToggle:hover, #reflectToggle:hover { color: var(--ink); border-color: var(--ink); }
-      #toggle.on, #shiftToggle.on, #reflectToggle.on { color: var(--ink); border-color: var(--ink);
+      #toggle { right: 12px; } #shiftToggle { right: 60px; } #wsLanesToggle { right: 108px; } #reflectToggle { right: 156px; }
+      #toggle:hover, #shiftToggle:hover, #reflectToggle:hover, #wsLanesToggle:hover { color: var(--ink); border-color: var(--ink); }
+      #toggle.on, #shiftToggle.on, #reflectToggle.on, #wsLanesToggle.on { color: var(--ink); border-color: var(--ink);
         box-shadow: inset 0 -2px 0 var(--accent); }
-      #toggle svg, #shiftToggle svg, #reflectToggle svg {
+      #toggle svg, #shiftToggle svg, #reflectToggle svg, #wsLanesToggle svg {
         width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.4;
         stroke-linecap: round; stroke-linejoin: round; }
       #toggle .badge, #shiftToggle .badge {
@@ -789,7 +789,9 @@
       .unconfirmed .day {
         background: transparent; color: var(--neg); border: 1px solid var(--neg);
         border-radius: 0; padding: 2px 8px; font-variant-numeric: tabular-nums;
+        cursor: pointer;
       }
+      .unconfirmed .day:hover { background: var(--neg); color: #fff; }
       .allok { color: var(--pos); font-weight: 600; }
       .err { color: var(--neg); }
       .muted { color: var(--faint); font-size: 12px; }
@@ -803,6 +805,7 @@
     </style>
     <button id="toggle" title="客数予測パネル（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="badge" id="badge"></span></button>
     <button id="shiftToggle" title="シフト変更依頼（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span class="badge" id="shiftBadge"></span></button>
+    <button id="wsLanesToggle" title="モデルWSレーン表（この日に適用される型）"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="11" height="3.6" rx="1.8"/><rect x="8" y="10.2" width="13" height="3.6" rx="1.8"/><rect x="5" y="15.4" width="9" height="3.6" rx="1.8"/></svg></button>
     <!-- 反映パネルは2026-08-08撤去（本人「もう多分これいらない」・原案→反映ワークフロー廃止済み）。
          コードは温存し入口だけ非表示。復活はこの display:none を外すだけ。 -->
     <button id="reflectToggle" style="display:none" title="海賊版らくしふ → らくしふへ反映（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M3 6h13M3 6l3-3M3 6l3 3M21 18H8M21 18l-3-3M21 18l-3 3"/></svg></button>
@@ -925,6 +928,21 @@
   }
   $('#toggle').addEventListener('click', (ev) => clickTogglePanel('#toggle', ev));
   if (localStorage.getItem('rfPanelOpen') === '1') { panel.classList.add('open'); syncToggle('#toggle', true); }
+
+  // 📐 3つ目のアイコン: モデルWSレーン表（本人要望2026-08-15「三つ目のアイコンにして、そこにラインを見せて」）
+  // パネルではなくオーバーレイのトグル。表示日の適用型をその場で開く
+  $('#wsLanesToggle').addEventListener('click', () => {
+    const cur = document.getElementById('rf-ws-lanes');
+    if (cur) { cur.remove(); $('#wsLanesToggle').classList.remove('on'); return; }
+    const params = leMakerCache && leMakerCache.params;
+    if (!params || !params.ws) { alert('モデルWSが読めていません。パネルの「更新」で再取得してください'); return; }
+    const iso = ymd(targetDate);
+    const le = lastWsSum && lastWsSum.le;
+    const leSum = le && le.total ? (parseFloat(String(le.total).replace(/,/g, '')) || 0) : 0;
+    const tpl = wsTplFor(params, iso, leSum);
+    if (!tpl) { alert('この日に適用されるモデルWS型がありません'); return; }
+    wsLaneOverlayShow(params, tpl, iso, le);
+  });
 
   // 🔀 海賊版→らくしふ反映パネル（右寄せ・他パネルと重ならない）
   $('#reflectToggle').addEventListener('click', (ev) => clickTogglePanel('#reflectToggle', ev));
@@ -2546,6 +2564,17 @@
   });
   applyTasksFold();
 
+  // 未処理日チップ → その日のらくしふ画面(1日表示)へ遷移（本人要望2026-08-15）
+  $('#unconfirmed').addEventListener('click', (ev) => {
+    const chip = ev.target.closest('.day');
+    if (!chip || !chip.dataset.goto) return;
+    const u = new URL(location.href);
+    u.searchParams.set('from', chip.dataset.goto);
+    u.searchParams.set('to', chip.dataset.goto);
+    u.searchParams.set('u', 'OneDay');
+    location.href = u.toString();
+  });
+
   // 海賊版らくしふセクションの折りたたみ（見出しの月セレクタ/ボタン/リンクは対象外）
   function applyDraftFold() {
     const hidden = localStorage.getItem('rfDraftHidden') === '1';
@@ -3108,12 +3137,14 @@
       <div style="border-top:0">${chart}</div>
       <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラー・客数(時間帯)はこの日のLE）。斜線＋チップ=トップ/ラスト作業（生産）・紫=タスクの30分上書き・琥珀=非生産固定作業。バーにマウスで詳細。</div>
     </div>`;
-    const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey); };
+    const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey);
+      try { $('#wsLanesToggle').classList.remove('on'); } catch { /* パネル未注入時 */ } };
     const onKey = (ev) => { if (ev.key === 'Escape') close(); };
     wrap.addEventListener('click', (ev) => { if (ev.target === wrap) close(); });
     wrap.querySelector('.rf-lanes-x').addEventListener('click', close);
     document.addEventListener('keydown', onKey);
     document.body.appendChild(wrap);
+    try { $('#wsLanesToggle').classList.add('on'); } catch { /* パネル未注入時 */ }
   }
 
   // ===== セクション見出しに モデルWS選択＋F/K/FK/非生産の時間数 PLAN/SCH を注入 =====
@@ -4225,7 +4256,7 @@
       } else {
         el.innerHTML = days.map((d) => {
           const dt = parseYmd(d);
-          return `<span class="day">${dt.getMonth() + 1}/${dt.getDate()} (${WEEKDAYS[dt.getDay()]})</span>`;
+          return `<span class="day" data-goto="${d}" title="クリックでこの日のらくしふ画面(1日表示)へ">${dt.getMonth() + 1}/${dt.getDate()} (${WEEKDAYS[dt.getDay()]})</span>`;
         }).join('');
         badge.textContent = days.length;
         badge.style.display = 'block';
