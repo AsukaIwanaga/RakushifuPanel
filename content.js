@@ -3488,7 +3488,12 @@
               if (v == null) return;
               if (v <= -1) { sp.style.background = '#fdecec'; sp.style.color = '#b02a2a'; }
               else if (v < 0) sp.style.color = '#b02a2a';
-              else if (v > 0) sp.style.color = '#2e9e5b';
+              else if (v > 0) {
+                const npPend = cat !== 'FK' && mcd.fixPS30 && (mcd.fixPS30[cat] || [])[k] > 0 &&
+                  ((mcd.fixP30 || [])[k] || 0) - ((mcd.schTR30 || [])[k] || 0) > 1e-9;
+                if (npPend) { sp.style.background = '#fdf3c9'; sp.style.color = '#92600a'; sp.style.fontWeight = '700'; }
+                else sp.style.color = '#2e9e5b';
+              }
             } });
       };
       const addNp = () => {
@@ -3764,7 +3769,16 @@
               if (v == null) return;
               if (v <= -1) { sp.style.background = '#fdecec'; sp.style.color = '#b02a2a'; }
               else if (v < 0) sp.style.color = '#b02a2a';
-              else if (v > 0) sp.style.color = '#2e9e5b';
+              else if (v > 0) {
+                // 黄 = 人数は足りているが非生産業務が未割当（本人要望2026-08-15:
+                // この区分の過剰コマに、この区分の非生産PLANがあり、SCH(TR/SB)が未充足）
+                const npPend = g !== 'FK' && mcd.fixPS30 && (mcd.fixPS30[g] || [])[k] > 0 &&
+                  ((mcd.fixP30 || [])[k] || 0) - ((mcd.schTR30 || [])[k] || 0) > 1e-9;
+                if (npPend) {
+                  sp.style.background = '#fdf3c9'; sp.style.color = '#92600a'; sp.style.fontWeight = '700';
+                  sp.title = '人数は合っているが非生産業務が未割当（この過剰を非生産へ振る）';
+                } else sp.style.color = '#2e9e5b';
+              }
             } });
         anchor.after(r);
         anchor = r;
