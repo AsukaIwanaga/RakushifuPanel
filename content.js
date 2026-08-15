@@ -836,6 +836,8 @@
       <div class="section-title fold" id="tasksTitle"><span id="taskFold">▾</span> タスク 月次/週次/要請（<span id="taskDate">-</span>）
         <a id="mgtOpen" href="http://mac-mini.tail1f88ff.ts.net:8790/#mgt" target="_blank" rel="noopener" title="スケジューラーのMGR予定（月次タスクの計画）を開く" onclick="event.stopPropagation()">MGR予定↗</a></div>
       <div id="tasks" class="tasks muted">読込中…</div>
+      <div class="section-title">MGR業務・クルー業務（<span id="bizDate">-</span>）</div>
+      <div id="biz" class="tasks muted">読込中…</div>
       <div class="section-title">シフト確定 未処理日（今日〜月末）</div>
       <div id="unconfirmed" class="unconfirmed muted">確認中…</div>
     </div>
@@ -3904,6 +3906,7 @@
     if (res.error) {
       $('#stats').innerHTML = `<span class="err">${res.error}: ${res.sheetName}</span>`;
       renderTasks(); // 取得不可でもタスク欄は独立して更新する
+      renderBiz().catch(() => {});
       renderDraft().catch(() => {});
     updateDraftGhosts().catch(() => {});
       updateStrips(null);
@@ -4076,6 +4079,7 @@
       .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
       .catch(() => {});
     renderTasks();
+    renderBiz().catch(() => {});
     renderDraft().catch(() => {});
     updateDraftGhosts().catch(() => {});
   }
@@ -4107,6 +4111,101 @@
     } catch (e) {
       el.innerHTML = `<span class="err">${e.message}</span>`;
     }
+  }
+
+  // ===== MGR業務・クルー業務（本人要望2026-08-15・パネルのタスク欄の下）=====
+  // MGR業務 = スケジューラーMGR予定(vault月次タスク)のその日分（/api/mgt-tasks・scheduled一致）
+  // クルー業務 = その日に適用されるモデルWS型の非生産タスク（固定作業行＋レーン内30分コマ・トップ/ラスト除く）
+  let mgtTasksCache = null, mgtTasksAt = 0, bizSeq = 0;
+  async function fetchMgtTasks() {
+    if (mgtTasksCache && Date.now() - mgtTasksAt < 5 * 60e3) return mgtTasksCache;
+    const r = await draftApi('/api/mgt-tasks');
+    const tasks = (r && r.ok && r.data && Array.isArray(r.data.tasks)) ? r.data.tasks : null;
+    if (tasks) { mgtTasksCache = tasks; mgtTasksAt = Date.now(); }
+    return tasks || mgtTasksCache || [];
+  }
+  function wsNpItems(params, tpl) {   // 型の非生産タスク → [{k0,k1,label,n}]
+    if (!tpl) return [];
+    const ftMap = {};
+    for (const ft of ((params.ws && params.ws.fixedTasks) || [])) ftMap[ft.id] = ft;
+    const prodIds = wsProdFixSec(params);
+    const tmOf = (k) => `${Math.floor(6 + k / 2)}:${k % 2 ? '30' : '00'}`;
+    const out = [];
+    const push = (id, k0, k1, n) => out.push({ k0, label: ftMap[id].label || id, n,
+      time: `${tmOf(k0)}-${tmOf(k1)}` });
+    const fix30 = (id) => tpl.fixedH30 ? (tpl.fixedH30[id] || []) : ((tpl.fixedHours || {})[id] || []).flatMap((v) => [v, v]);
+    for (const id of Object.keys(tpl.fixedH30 || tpl.fixedHours || {})) {
+      if (!ftMap[id] || prodIds[id]) continue;
+      const a30 = fix30(id);
+      let k = 0;
+      while (k < 36) {
+        const v = Number(a30[k]) || 0;
+        if (!v) { k++; continue; }
+        let j = k + 1;
+        while (j < 36 && (Number(a30[j]) || 0) === v) j++;
+        push(id, k, j, v);
+        k = j;
+      }
+    }
+    for (const rw of (tpl.rows || [])) {
+      if (!Array.isArray(rw.sec30) || !Array.isArray(rw.h30)) continue;
+      let k = 0;
+      const tid = (x) => rw.h30[x] && rw.sec30[x] && ftMap[rw.sec30[x]] && !prodIds[rw.sec30[x]] ? rw.sec30[x] : null;
+      while (k < 36) {
+        const id = tid(k);
+        if (!id) { k++; continue; }
+        let j = k + 1;
+        while (j < 36 && tid(j) === id) j++;
+        push(id, k, j, 1);
+        k = j;
+      }
+    }
+    return out.sort((a, b) => a.k0 - b.k0);
+  }
+  async function renderBiz() {
+    const el = $('#biz');
+    if (!el) return;
+    const seq = ++bizSeq;
+    $('#bizDate').textContent = `${targetDate.getMonth() + 1}/${targetDate.getDate()}`;
+    const iso = ymd(targetDate);
+    // MGR業務
+    let mgrHtml = '';
+    try {
+      const tasks = (await fetchMgtTasks()).filter((t) => (t.scheduled || '') === iso);
+      tasks.sort((a, b) => String(a.plan_time || '').localeCompare(String(b.plan_time || '')));
+      mgrHtml = tasks.map((t) =>
+        `<div class="task"><span class="tid">MGR</span><span class="ttext">${esc(t.title)}` +
+        `<div class="tnote">${esc(t.plan_time || '')}${t.due ? ` / 期限 ${esc(t.due)}` : ''}</div></span></div>`).join('') ||
+        `<div class="task"><span class="tid">MGR</span><span class="ttext muted">この日のMGR予定なし</span></div>`;
+    } catch (e) {
+      mgrHtml = `<div class="task"><span class="tid">MGR</span><span class="ttext muted">取得失敗: ${esc(String(e && e.message || e))}</span></div>`;
+    }
+    // クルー業務（モデルWSの非生産タスク）
+    let crewHtml = '';
+    try {
+      const params = leMakerCache && leMakerCache.params;
+      if (params && params.ws) {
+        const leSum = lastWsSum && lastWsSum.le && lastWsSum.le.total
+          ? (parseFloat(String(lastWsSum.le.total).replace(/,/g, '')) || 0) : 0;
+        const tpl = wsTplFor(params, iso, leSum);
+        const items = wsNpItems(params, tpl);
+        crewHtml = items.map((x) =>
+          `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
+          `<span class="ttext">${esc(x.label)}${x.n > 1 ? ` ×${x.n}` : ''}<div class="tnote">${esc(x.time)}` +
+          `${tpl ? ` / ${esc(tpl.name)}型` : ''}</div></span></div>`).join('') ||
+          `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
+          `<span class="ttext muted">この日の非生産タスクなし${tpl ? `（${esc(tpl.name)}型）` : ''}</span></div>`;
+      } else {
+        crewHtml = `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
+          `<span class="ttext muted">モデルWS未読込（更新で再取得）</span></div>`;
+      }
+    } catch (e) {
+      crewHtml = `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
+        `<span class="ttext muted">取得失敗: ${esc(String(e && e.message || e))}</span></div>`;
+    }
+    if (seq !== bizSeq) return;   // 古い非同期結果で上書きしない
+    el.classList.remove('muted');
+    el.innerHTML = mgrHtml + crewHtml;
   }
 
   async function renderUnconfirmed() {
