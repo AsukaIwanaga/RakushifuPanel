@@ -4172,7 +4172,8 @@
     let mgrHtml = '';
     try {
       const tasks = (await fetchMgtTasks()).filter((t) => (t.scheduled || '') === iso);
-      tasks.sort((a, b) => String(a.plan_time || '').localeCompare(String(b.plan_time || '')));
+      const tKey = (t) => String(t.plan_time || '99').replace(/^(\d):/, '0$1:');   // "9:00"<"10:00"の文字列比較対策
+      tasks.sort((a, b) => tKey(a).localeCompare(tKey(b)));
       mgrHtml = tasks.map((t) =>
         `<div class="task"><span class="tid">MGR</span><span class="ttext">${esc(t.title)}` +
         `<div class="tnote">${esc(t.plan_time || '')}${t.due ? ` / 期限 ${esc(t.due)}` : ''}</div></span></div>`).join('') ||
