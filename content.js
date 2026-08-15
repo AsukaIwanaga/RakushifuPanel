@@ -603,6 +603,16 @@
       #reflectPanel .rp-head .muted { color: var(--faint); }
       #rfCapBox { border: 0; border-left: 2px solid var(--accent); background: transparent; border-radius: 0;
         padding: 4px 0 4px 9px; margin-bottom: 8px; }
+      #wsLanesPanel {
+        position: fixed; right: 12px; top: 62px; z-index: 2147483646;
+        width: 872px; max-width: calc(100vw - 24px);
+        max-height: calc(100vh - 78px); overflow: auto;
+        background: var(--panel); border: 1px solid var(--line2); border-radius: 0;
+        box-shadow: 0 8px 30px rgba(20,20,18,.12); padding: 10px 14px 12px; display: none;
+        font-size: 13px; color: var(--ink);
+      }
+      #wsLanesPanel.open { display: block; }
+      @media print { #wsLanesPanel { display: none !important; } }
       #shiftPanel {
         position: fixed; right: 60px; top: 62px; z-index: 2147483647;
         width: 490px; max-width: calc(100vw - 24px);
@@ -844,6 +854,9 @@
       <div class="section-title">シフト確定 未処理日（今日〜月末）</div>
       <div id="unconfirmed" class="unconfirmed muted">確認中…</div>
     </div>
+    <div id="wsLanesPanel">
+      <div id="wsLanesBody" class="muted">モデルWS読込中…</div>
+    </div>
     <div id="reflectPanel">
       <div class="rp-head"><b>海賊版らくしふ → 反映</b>
         <span class="muted" style="font-size:11px">確定送信はしません／反映は1件ずつ手押し</span>
@@ -886,6 +899,7 @@
 
   const $ = (sel) => shadow.querySelector(sel);
   const panel = $('#panel'), badge = $('#badge');
+  const wsLanesPanel = $('#wsLanesPanel');
 
   let targetDate = parseYmd(urlParams().from || '') || new Date();
   let lastHref = location.href;
@@ -906,14 +920,16 @@
   // トグルボタンの選択中スタイル(.on)をパネルの開閉に同期する
   const syncToggle = (btnSel, isOpen) => $(btnSel).classList.toggle('on', isOpen);
   // 3パネルは既定で「どれか1つだけ表示」。Shift+クリックのときだけ他を閉じず複数表示。
-  const PANELS = { '#toggle': () => panel, '#shiftToggle': () => shiftPanel, '#reflectToggle': () => reflectPanel };
+  const PANELS = { '#toggle': () => panel, '#shiftToggle': () => shiftPanel, '#reflectToggle': () => reflectPanel, '#wsLanesToggle': () => wsLanesPanel };
   const persistPanels = () => {
     localStorage.setItem('rfPanelOpen', panel.classList.contains('open') ? '1' : '0');
     localStorage.setItem('rfShiftOpen', shiftPanel.classList.contains('open') ? '1' : '0');
     localStorage.setItem('rfReflectOpen', reflectPanel.classList.contains('open') ? '1' : '0');
+    localStorage.setItem('rfWsLanesOpen', wsLanesPanel.classList.contains('open') ? '1' : '0');
     syncToggle('#toggle', panel.classList.contains('open'));
     syncToggle('#shiftToggle', shiftPanel.classList.contains('open'));
     syncToggle('#reflectToggle', reflectPanel.classList.contains('open'));
+    syncToggle('#wsLanesToggle', wsLanesPanel.classList.contains('open'));
   };
   function clickTogglePanel(sel, ev) {
     const p = PANELS[sel]();
@@ -925,24 +941,15 @@
     persistPanels();
     repositionShiftPanel();
     if (sel === '#shiftToggle' && shiftPanel.classList.contains('open')) scRefresh();
+    if (sel === '#wsLanesToggle' && wsLanesPanel.classList.contains('open')) renderWsLanes();
   }
   $('#toggle').addEventListener('click', (ev) => clickTogglePanel('#toggle', ev));
   if (localStorage.getItem('rfPanelOpen') === '1') { panel.classList.add('open'); syncToggle('#toggle', true); }
 
-  // 📐 3つ目のアイコン: モデルWSレーン表（本人要望2026-08-15「三つ目のアイコンにして、そこにラインを見せて」）
-  // パネルではなくオーバーレイのトグル。表示日の適用型をその場で開く
-  $('#wsLanesToggle').addEventListener('click', () => {
-    const cur = document.getElementById('rf-ws-lanes');
-    if (cur) { cur.remove(); $('#wsLanesToggle').classList.remove('on'); return; }
-    const params = leMakerCache && leMakerCache.params;
-    if (!params || !params.ws) { alert('モデルWSが読めていません。パネルの「更新」で再取得してください'); return; }
-    const iso = ymd(targetDate);
-    const le = lastWsSum && lastWsSum.le;
-    const leSum = le && le.total ? (parseFloat(String(le.total).replace(/,/g, '')) || 0) : 0;
-    const tpl = wsTplFor(params, iso, leSum);
-    if (!tpl) { alert('この日に適用されるモデルWS型がありません'); return; }
-    wsLaneOverlayShow(params, tpl, iso, le);
-  });
+  // 📐 3つ目のアイコン: モデルWSレーン表パネル（本人要望2026-08-15
+  // 「三つ目のアイコンにして、そこにラインを見せて」→「ポップアップではなく右の表示の切り替えで」）
+  $('#wsLanesToggle').addEventListener('click', (ev) => clickTogglePanel('#wsLanesToggle', ev));
+  if (localStorage.getItem('rfWsLanesOpen') === '1') { wsLanesPanel.classList.add('open'); syncToggle('#wsLanesToggle', true); }
 
   // 🔀 海賊版→らくしふ反映パネル（右寄せ・他パネルと重ならない）
   $('#reflectToggle').addEventListener('click', (ev) => clickTogglePanel('#reflectToggle', ev));
@@ -2955,9 +2962,8 @@
   // スケジューラーのライン表と同じバー描画（時間帯サマリ＋レーンのバー＋トップ/ラスト斜線＋
   // タスク区間＋右端計）を読み取り専用で再現する（本人要望2026-08-15「これが拡張からも見たい」）。
   // データは leMakerCache.params（=params.json・スケジューラーと同一SoT）なので取得は増えない。
-  function wsLaneOverlayShow(params, tpl, iso, le) {
-    document.getElementById('rf-ws-lanes')?.remove();
-    if (!tpl) return;
+  function wsLaneHtml(params, tpl, iso, le) {
+    if (!tpl) return '<div class="muted" style="padding:10px 0">この日に適用されるモデルWS型がありません</div>';
     const ftMap = {};
     for (const ft of ((params.ws && params.ws.fixedTasks) || [])) ftMap[ft.id] = ft;
     const prodIds = wsProdFixSec(params);
@@ -3121,30 +3127,33 @@
     }
     function rw2k(rw) { const i = (rw.h30 || []).findIndex((v) => Number(v)); return i < 0 ? 999 : i; }
 
-    const wrap = document.createElement('div');
-    wrap.id = 'rf-ws-lanes';
-    wrap.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.35);overflow:auto;padding:24px 0;';
-    const W = LABW + GRIDW + KEIW + 36;
-    wrap.innerHTML = `<div style="margin:0 auto;width:${W}px;max-width:97vw;background:#fff;border:1px solid #d9d8d2;padding:12px 16px 14px;overflow-x:auto;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+    return `<div style="width:fit-content;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616">
+      <div style="display:flex;align-items:center;gap:12px;margin:2px 0 8px">
         <b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">モデルWS ${esc2(tpl.name)}型</b>
         <span style="font-size:12px;color:#6d6d69">${esc2(iso)} に適用${tpl.tc ? `・TC ${esc2(String(tpl.tc))}` : ''}${le && le.total ? `・LE ${esc2(String(le.total))}` : ''}</span>
         <span style="flex:1"></span>
-        <a href="http://mac-mini.tail1f88ff.ts.net:8790/#ws" target="_blank" rel="noopener" style="font-size:12px;color:#1a5fb4;text-decoration:none">⚙編集はスケジューラーで↗</a>
-        <button class="rf-lanes-x" style="font-size:13px;border:1px solid #d9d8d2;background:#fff;cursor:pointer;padding:2px 10px">✕ 閉じる</button>
+        <a href="http://mac-mini.tail1f88ff.ts.net:8790/#ws" target="_blank" rel="noopener" style="font-size:12px;color:#1a5fb4;text-decoration:none;white-space:nowrap">⚙編集はスケジューラーで↗</a>
       </div>
       <table style="border-collapse:collapse;margin-bottom:0">${hourHdr}${sumHtml}</table>
       <div style="border-top:0">${chart}</div>
       <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラー・客数(時間帯)はこの日のLE）。斜線＋チップ=トップ/ラスト作業（生産）・紫=タスクの30分上書き・琥珀=非生産固定作業。バーにマウスで詳細。</div>
     </div>`;
-    const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey);
-      try { $('#wsLanesToggle').classList.remove('on'); } catch { /* パネル未注入時 */ } };
-    const onKey = (ev) => { if (ev.key === 'Escape') close(); };
-    wrap.addEventListener('click', (ev) => { if (ev.target === wrap) close(); });
-    wrap.querySelector('.rf-lanes-x').addEventListener('click', close);
-    document.addEventListener('keydown', onKey);
-    document.body.appendChild(wrap);
-    try { $('#wsLanesToggle').classList.add('on'); } catch { /* パネル未注入時 */ }
+  }
+
+  // レーン表パネルの再描画（開いている時だけ・日付/データに追従）
+  function renderWsLanes() {
+    const el = $('#wsLanesBody');
+    if (!el || !wsLanesPanel.classList.contains('open')) return;
+    const params = leMakerCache && leMakerCache.params;
+    if (!params || !params.ws) {
+      el.innerHTML = '<span class="muted">モデルWS読込中…（出ない時はパネルの「更新」）</span>';
+      return;
+    }
+    const iso = ymd(targetDate);
+    const le = lastWsSum && lastWsSum.le;
+    const leSum = le && le.total ? (parseFloat(String(le.total).replace(/,/g, '')) || 0) : 0;
+    const tpl = wsTplFor(params, iso, leSum);
+    el.innerHTML = wsLaneHtml(params, tpl, iso, le);
   }
 
   // ===== セクション見出しに モデルWS選択＋F/K/FK/非生産の時間数 PLAN/SCH を注入 =====
@@ -3258,7 +3267,10 @@
         leMakerCache = null;
         renderSheet();
       });
-      bar.querySelector('.rf-ws-view').addEventListener('click', () => wsLaneOverlayShow(params, tpl, iso, le));
+      bar.querySelector('.rf-ws-view').addEventListener('click', (ev) => {
+        if (!wsLanesPanel.classList.contains('open')) clickTogglePanel('#wsLanesToggle', ev);
+        else renderWsLanes();
+      });
       t.appendChild(bar);
     }
   }
@@ -4093,6 +4105,7 @@
     });
     try { updateWsSummary(hasActual ? actual : null, hourly['LE']); }
     catch (e) { console.warn('[rf] wsSummary', e); }
+    try { renderWsLanes(); } catch (e) { console.warn('[rf] wsLanes', e); }
     try { updateDateChip(); } catch (e) { console.warn('[rf] dateChip', e); }
     updateWeatherChip().catch(() => {});
     updateLERows(hourly['LE'],
