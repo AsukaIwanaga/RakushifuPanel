@@ -1794,12 +1794,13 @@
     const first = days[0];
     if (first > iso) return { text: '🔰初回前', title: `新人（初回出勤予定 ${first.slice(5).replace('-', '/')}）` };
     const cal = Math.round((new Date(iso) - new Date(first)) / 86400000) + 1;
-    if (cal > 31) return null;   // 初回から1か月で卒業
+    if (cal > 31) return null;   // 初回から1か月で卒業（表示期間は暦日のまま）
+    // カウントは勤務回数ベース（本人指定2026-08-16「日数カウントは勤務のカウントで」）
     const workN = days.filter((d) => d <= iso).length;
     const today = days.includes(iso);
     return {
-      text: `🔰${cal}日目` + (today ? `・勤務${workN}回` : ''),
-      title: `新人（初回出勤 ${first.slice(5).replace('-', '/')} から${cal}日目・累計勤務${workN}回。1か月まで表示）`,
+      text: today ? `🔰勤務${workN}回目` : `🔰勤務${workN}回`,
+      title: `新人（初回出勤 ${first.slice(5).replace('-', '/')}・この日${today ? `で勤務${workN}回目` : `までの勤務${workN}回`}・初回から${cal}日目。1か月まで表示）`,
     };
   }
   async function updateNewbieMarks() {
