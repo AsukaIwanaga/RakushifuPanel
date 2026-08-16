@@ -2975,7 +2975,7 @@
     const GRIDW = SLOTW * 36;
     const BARC = { F: '#4f8df7', K: '#27ae7e', FK: '#8b74f0' };
     const ROWBG = { F: '#eef4ff', K: '#eafaf3', FK: '#f3efff' };
-    const TASKC = '#7c5ce0';
+    const TASKC = '#e8a33d';   // 非生産タスク=黄(琥珀)。FK切替の紫(BARC.FK)とは別
     const hatch = (c) => `repeating-linear-gradient(45deg, ${c} 0 6px, #ffffff 6px 10px)`;
     const tmOf = (k) => `${Math.floor(6 + k / 2)}:${k % 2 ? '30' : '00'}`;
     const fmtN = (v) => !v ? '' : (v % 1 ? v.toFixed(1) : String(v));
@@ -3066,8 +3066,9 @@
           `border-radius:${rl} ${rr} ${rr} ${rl};`;
         let inner = '', title = `${tmOf(k)}〜${tmOf(j)}`;
         if (si.kind === 'task') {
-          style += `background:${TASKC};`;
-          title += ` ${si.task.label}`;
+          // 非生産タスク=黄(琥珀・本人指定2026-08-16「紫ではなく黄色で」)・生産(トップ/ラスト系)=斜線
+          style += `background:${si.np ? TASKC : hatch(base)};`;
+          title += ` ${si.task.label}${si.np ? '（非生産）' : '（生産）'}`;
           if ((j - k) * SLOTW >= 40) inner = `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;overflow:hidden;white-space:nowrap;padding:0 3px">${esc2(si.task.label)}</span>`;
         } else if (si.kind === 'tl') {
           style += `background:${hatch(base)};`;
@@ -3140,7 +3141,7 @@
       </div>
       <table style="border-collapse:collapse;margin-bottom:0">${hourHdr}${sumHtml}</table>
       <div style="border-top:0">${chart}</div>
-      <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラー・客数(時間帯)はこの日のLE）。斜線＋チップ=トップ/ラスト作業（生産）・紫=タスクの30分上書き・琥珀=非生産固定作業。バーにマウスで詳細。</div>
+      <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラー・客数(時間帯)はこの日のLE）。斜線＋チップ=トップ/ラスト作業（生産）・黄=非生産タスクの30分上書き/固定作業・紫=FK切替。バーにマウスで詳細。</div>
     </div>`;
   }
 
