@@ -2815,6 +2815,19 @@
       box.querySelector('.mc-body').innerHTML = `<span style="color:#b02a2a">取得失敗: ${esc(String(e2.message || e2))}</span>`;
     }
   }
+  // 週バッジクリック→月間カレンダー（委譲・capture。直付けだとVue再描画のノード複製で
+  // リスナーが剥がれて「クリックしても出ない」事象になる: 本人報告2026-08-18）
+  document.addEventListener('click', (ev) => {
+    const b = ev.target && ev.target.closest && ev.target.closest('.rf-week-badge');
+    if (!b) return;
+    const tr = b.closest('tr');
+    const nameEl = tr && tr.querySelector('.user-cell .name');
+    if (!nameEl) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    openMonthCal(cellName(nameEl).trim(), ev);
+  }, true);
+
   const addYm = (ym, n) => {
     const [y, m] = ym.split('-').map(Number);
     const d = new Date(y, m - 1 + n, 1);
@@ -2851,11 +2864,7 @@
       const myAvail = availByName[normName(cellName(nameEl))] || [];
       const wishDates = weekDates.filter((d) => !st.days.has(ymd(d)) &&
         ((st.wish && st.wish.has(ymd(d))) || myAvail.some((c) => scMatchesDay(c, d))));
-      if (!b.dataset.mcal) {   // クリックで月間カレンダー（本人要望2026-08-17）
-        b.dataset.mcal = '1';
-        b.style.cursor = 'pointer';
-        b.addEventListener('click', (ev) => openMonthCal(cellName(nameEl).trim() || nm, ev));
-      }
+      b.style.cursor = 'pointer';   // クリックで月間カレンダー（委譲ハンドラが拾う）
       b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h` +
         (wishDates.length ? `＋希望${wishDates.length}日` : '');
       b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）。クリックで月間カレンダー` +
