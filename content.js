@@ -2674,7 +2674,8 @@
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     const um = Object.fromEntries((j.users || []).map((u) => [u.id, (u.name || '').replace(/\s+/g, '')]));
-    const per = {}; // 名前 -> {days:Set, mins}
+    const per = {}; // 名前 -> {days:Set, mins, wish:Set}
+    const ent = (nm) => (per[nm] ||= { days: new Set(), mins: 0, wish: new Set() });
     for (const sh of j.instructed || []) {
       if (sh.off || sh.is_deleted) continue;
       if (sh.date < ymd(mon) || sh.date > ymd(sun)) continue; // APIの前後日パディング除去
@@ -2684,9 +2685,16 @@
       for (const rt of sh.rest_times || []) {
         mins -= Math.max(0, (rt.end_hour * 60 + rt.end_minute) - (rt.start_hour * 60 + rt.start_minute));
       }
-      const st = (per[nm] ||= { days: new Set(), mins: 0 });
+      const st = ent(nm);
       st.days.add(sh.date);
       st.mins += Math.max(0, mins);
+    }
+    // らくしふ提出の希望シフト(desired・勤務系のみ)＝希望日（本人確認2026-08-17「希望が出ている日は下線」）
+    for (const w of j.desired || []) {
+      if (w.off || w.is_deleted) continue;
+      if (w.date < ymd(mon) || w.date > ymd(sun)) continue;
+      const nm = um[w.user_id];
+      if (nm) ent(nm).wish.add(w.date);
     }
     return per;
   }
@@ -2720,7 +2728,7 @@
       const nm = cellName(nameEl).replace(/\s+/g, '');
       // 週データに居ない人＝この週の出勤ゼロ(全休)。以前はバッジを消していたが、
       // 全休でも「週0日/0h」を出す（本人指定2026-08-08「全部休みでも出してほしい」）
-      const st = per[nm] || { days: new Set(), mins: 0 };
+      const st = per[nm] || { days: new Set(), mins: 0, wish: new Set() };
       const box = badgeBox(nameEl);
       if (!box) continue;
       let b = box.querySelector('.rf-week-badge');
@@ -2733,13 +2741,12 @@
       }
       // 台帳の出勤可希望日（アサイン済みの日は除く）
       const myAvail = availByName[normName(cellName(nameEl))] || [];
-      const wishDates = myAvail.length
-        ? weekDates.filter((d) => !st.days.has(ymd(d)) && myAvail.some((c) => scMatchesDay(c, d)))
-        : [];
+      const wishDates = weekDates.filter((d) => !st.days.has(ymd(d)) &&
+        ((st.wish && st.wish.has(ymd(d))) || myAvail.some((c) => scMatchesDay(c, d))));
       b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h` +
         (wishDates.length ? `＋希望${wishDates.length}日` : '');
       b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）` +
-        (wishDates.length ? `。＋台帳の出勤可希望が${wishDates.length}日（青の曜日・未アサイン）` : '');
+        (wishDates.length ? `。＋希望${wishDates.length}日（青点線下線・未アサイン。らくしふ提出＋WowTalk台帳）` : '');
       // 週0(全休)はグレー、出勤ありは緑、希望のみは青
       b.style.color = st.days.size ? '#2c6e49' : (wishDates.length ? '#1d4ed8' : '#8c8c88');
       b.style.background = st.days.size ? '#eef4f0' : (wishDates.length ? '#e8effd' : '#f3f3f1');
@@ -2761,7 +2768,7 @@
         const deco = !dows.has(dow) && wishDows.has(dow) ? 'text-decoration:underline dotted;' : '';
         return `<span style="color:${col};${deco}">${WEEKDAYS[dow]}</span>`;
       }).join('');
-      wd.title = '出勤曜日（この週）。濃色=アサイン済み・青点線下線=台帳の出勤可希望（未アサイン）';
+      wd.title = '出勤曜日（この週）。濃色=アサイン済み・青点線下線=希望あり未アサイン（らくしふ提出＋WowTalk台帳）';
     }
   }
 
