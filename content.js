@@ -4383,15 +4383,8 @@
         `font:12.5px/1.5 'Hiragino Sans','Yu Gothic',sans-serif;white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis">` +
         `<b style="flex:none;font-size:10px;color:${col};border:1px solid ${bd};background:${bg};padding:0 4px;border-radius:3px">${lbl}</b>` +
         `<span style="overflow:hidden;text-overflow:ellipsis">${esc(text)}</span></span>`);
-    try {   // 月次/週次/要請（Googleシート・パネルのタスク欄と同じ源）
-      const { defRows, reqRows } = await fetchTaskRows();
-      for (const t of defRows.filter((x) => taskMatches(x, targetDate)))
-        chip(t.id, t.task, '#474743', '#f4f2ee', '#d9d8d2', `${t.id} ${t.task}${t.note ? ' / ' + t.note : ''}`);
-      const today = ymd(new Date());
-      for (const t of reqRows)
-        chip('要請', t.task, '#b02a2a', '#fdecec', '#e8b4b4',
-          `${t.task}${t.due ? ` / 期限 ${t.due}` : ''}${t.due && t.due < today ? '（⚠期限超過）' : ''}`);
-    } catch { /* シート不達時はMGR/クルーだけ出す */ }
+    // 月次/週次/要請(Googleシート)は出さない（本人指定2026-08-17「量が想定外・スケジューラーに絞る」。
+    // シート系はパネルのタスク欄に残っている）
     try {   // MGR業務（スケジューラーMGR予定）
       const tKey = (t) => String(t.plan_time || '99').replace(/^(\d):/, '0$1:');
       const tasks = (await fetchMgtTasks()).filter((t) => (t.scheduled || '') === iso)
