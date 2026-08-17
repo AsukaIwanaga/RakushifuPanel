@@ -4357,9 +4357,11 @@
       const items = ((r2 && r2.ok && r2.data && r2.data.items) || [])
         .filter((x) => (x.wd || []).includes(targetDate.getDay()) &&
                        (!Array.isArray(x.nth) || !x.nth.length || x.nth.includes(nth2)));
-      crewHtml = items.map((x) =>
-        `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
-        `<span class="ttext">${esc(x.label)}<div class="tnote">${esc(x.time || '')} / 週次（👷クルー週次で設定）</div></span></div>`).join('') ||
+      crewHtml = items.map((x) => {
+        const mgt = x.cat === 'MGT';
+        return `<div class="task"><span class="tid" style="color:${mgt ? '#1d4ed8' : '#92600a'};border-color:${mgt ? '#b6c8f5' : '#e8c877'}">${mgt ? 'MGT' : 'クルー'}</span>` +
+        `<span class="ttext">${esc(x.label)}<div class="tnote">${esc(x.time || '')} / 週次（👷週次タスクで設定）</div></span></div>`;
+      }).join('') ||
         `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
         `<span class="ttext muted">この曜日のクルー週次タスクなし</span></div>`;
     } catch (e) {
@@ -4405,8 +4407,10 @@
         if (!(x.wd || []).includes(wd)) continue;
         if (Array.isArray(x.nth) && x.nth.length && !x.nth.includes(nthOfMonth)) continue;   // 第n週指定
         const nthTxt = Array.isArray(x.nth) && x.nth.length ? `（第${x.nth.join('・')}）` : '';
-        chip('クルー', `${x.time ? x.time + ' ' : ''}${x.label}`, '#92600a', '#fdf3e3', '#e8c877',
-          `クルー週次タスク: ${x.label}${x.time ? ` ${x.time}` : ''}${nthTxt}（設定=スケジューラーMGR予定の「👷クルー週次」）`);
+        const mgt = x.cat === 'MGT';   // 週次のMGTタスク（例: 毎週日曜の翌週客数修正・2026-08-17）
+        chip(mgt ? 'MGT' : 'クルー', `${x.time ? x.time + ' ' : ''}${x.label}`,
+          mgt ? '#1d4ed8' : '#92600a', mgt ? '#e8effd' : '#fdf3e3', mgt ? '#b6c8f5' : '#e8c877',
+          `週次${mgt ? 'MGT' : 'クルー'}タスク: ${x.label}${x.time ? ` ${x.time}` : ''}${nthTxt}（設定=スケジューラーMGR予定の「👷週次タスク」）`);
       }
     } catch { /* 8790不達時はスキップ */ }
     if (seq !== taskStripSeq) return;   // 古い非同期結果で二重挿入しない
