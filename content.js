@@ -1310,7 +1310,7 @@
     // 出さない=チェックを外せば戻る可逆運用・vaultの「可視+可逆」原則）
     const allDoneBtn = scClosed(c) ? ''
       : `<button class="sc-all-done" data-p="${esc(c.path)}" title="残りのチェックを全部付けて完了にする（外せば戻せます）">✅全部完了</button>`;
-    return `<div class="sc-card${scClosed(c) ? ' done' : ''}${c.is_rejected ? ' rej' : ''}">
+    return `<div class="sc-card${scClosed(c) ? ' done' : ''}${c.is_rejected ? ' rej' : ''}" data-p="${esc(c.path)}">
       <div class="sc-title">${head} ${esc(title)} ${multi} ${noDate}
         <span class="sc-meta">${checkedShown}/${useChecks.length}</span>
         ${allDoneBtn}
@@ -1363,6 +1363,29 @@
     return /途中希望|追加希望|出勤希望/.test(blob) &&
       /出勤でき|出勤可能|出勤可|出れ|入れます|何時でも/.test(blob);
   };
+
+  // 依頼チップ→変更依頼パネルの該当カードへ（本人要望2026-08-17）
+  function openScCase(c) {
+    if (!shiftPanel.classList.contains('open')) {
+      shiftPanel.classList.add('open');
+      persistPanels();
+      repositionShiftPanel();
+    }
+    // クローズ済み・出勤可の後提出は「未完了」に出ない → 「すべて」へ切替（ボタン状態も同期）
+    if ((scClosed(c) || scAvailOnly(c)) && scFilter !== 'all') scSetFilter('all');
+    else scRenderList();
+    let tries = 0;
+    const seek = () => {
+      const card = $('#scList') && $('#scList').querySelector(`.sc-card[data-p="${CSS.escape(c.path)}"]`);
+      if (card) {
+        card.scrollIntoView({ block: 'center' });
+        card.style.transition = 'box-shadow .25s';
+        card.style.boxShadow = '0 0 0 3px #f5b301';
+        setTimeout(() => { card.style.boxShadow = ''; }, 2000);
+      } else if (++tries < 16) setTimeout(seek, 250);
+    };
+    setTimeout(seek, 60);
+  }
 
   function scRenderList() {
     const el = $('#scList');
@@ -1935,9 +1958,13 @@
         track.appendChild(stripe);
         const chip = document.createElement('div');
         chip.className = 'rf-req-line';
-        chip.dataset.tip = title;
+        chip.dataset.tip = title + '\n（クリックで変更依頼画面を開く）';
+        chip.addEventListener('click', (ev) => {   // 本人要望2026-08-17「クリックで変更依頼の画面」
+          ev.preventDefault(); ev.stopPropagation();
+          openScCase(c);
+        });
         chip.style.cssText = `position:absolute;left:${s - 360}px;top:${top}px;width:15px;height:15px;` +
-          `z-index:301;cursor:default;box-sizing:border-box;border-radius:4px;background:${bg};` +
+          `z-index:301;cursor:pointer;box-sizing:border-box;border-radius:4px;background:${bg};` +
           `border:1px solid ${rejected ? '#b91c1c' : isOff ? (noShift ? '#6b7280' : '#b91c1c') : isLate ? '#1e40af' : '#d99500'};box-shadow:0 1px 2px rgba(0,0,0,.2);`;
         track.appendChild(chip);
         if (rejected) {
