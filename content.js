@@ -1085,6 +1085,9 @@
   };
   // 名前の正規化（空白と敬称を除いて突き合わせ）
   const normName = (s) => String(s || '').replace(/\s+/g, '').replace(/(さん|くん|ちゃん)$/, '');
+  // 名前セルの「素の名前」= テキストノードのみ（🔰バッジ等の注入spanを除外。
+  // 2026-08-17発覚: nameEl.textContentだと『角松 龍🔰勤務3回目』になり照合が全滅する）
+  const cellName = (el) => [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join('');
   // シフト表に出ている人の名前一覧（対象者の候補。全角空白は半角に）
   const crewNames = () => {
     const set = new Set();
@@ -1410,6 +1413,12 @@
     const stage = SC_STATUS.find(([k]) => !c[k]);
     return stage ? stage[1] : '完了';
   };
+  // 出勤可系(途中希望・勤務可)の依頼か（休み系は除外）。週バッジ合流とチップ判定で共用
+  const scAvailCase = (c) => {
+    const b = `${c.change || ''} ${c.title || ''}`;
+    const aw = /勤務可|出勤でき|出勤可能|出れます|入れます|途中希望|追加希望|再提出|出勤希望/.test(b);
+    return aw && !(/休み|休暇/.test(b) && !/勤務可|出勤でき|出勤可能|出れます|入れます/.test(b));
+  };
 
   // ===== シフト表の名前横に変更依頼マーク（状態語=赤 / 変更済=緑）。印刷画面には出さない =====
   // ===== 時間帯の不足/過剰を、スタッフ行のライン最背面に塗る（本人指定2026-08-05） =====
@@ -1446,7 +1455,7 @@
     document.querySelectorAll('.rf-sc-mark').forEach((e) => e.remove());
     const cases = scState.cases || [];
     for (const nameEl of document.querySelectorAll('.user-cell .name')) {
-      const nm = normName(nameEl.textContent);
+      const nm = normName(cellName(nameEl));
       if (!nm) continue;
       // この人の案件: 表示日一致、または日付未記入の未完了(オープン)案件。
       // target='全員'(休み募集)は名前バッジは発信者(休みたい人=requester)にだけ出す
@@ -1458,11 +1467,29 @@
       const pending = rel.filter((c) => !scClosed(c));
       const box = badgeBox(nameEl);
       if (!box) continue;
+      // 出勤可系(途中希望)の依頼は、表示日に実シフトが既に入っていれば「この日は反映済み」
+      // （本人指摘2026-08-17: 角松8/24=6-10反映済みなのに赤「反映待ち」のままだった）。
+      // 休み系は逆(シフト残=取消が必要)なので対象外。カード自体のチェックは手動のまま。
+      const availC = scAvailCase;
+      const trRow = nameEl.closest('tr');
+      const hasRealShift = trRow &&
+        trRow.querySelector('.schedule-bar-wrapper.not-off .schedule-bar:not(.isDesired)');
+      const daySat = (c) => availC(c) && hasRealShift && scMatchesDay(c, targetDate) &&
+        c.requested_done && c.accepted_done && !c.rakushifu_done;
+      const pendingLive = pending.filter((c) => !daySat(c));
       const mark = document.createElement('span');
       mark.className = 'rf-sc-mark';
-      if (pending.length) {
+      if (pending.length && !pendingLive.length) {
+        mark.textContent = '✔この日反映済み';
+        mark.title = '出勤可依頼のこの日ぶんはシフト反映済み（カードの反映チェックは期間全体の完了時に）';
+        mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+          'color:#1e7a44;background:#e8f5ec;border:1px solid #b5d9c3;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
+        box.appendChild(mark);
+        continue;
+      }
+      if (pendingLive.length) {
         // 進捗段階を状態語で表示（最初の未チェック工程＝今の状態）
-        const label = pending.length === 1 ? scStatusLabel(pending[0]) : `依頼${pending.length}件`;
+        const label = pendingLive.length === 1 ? scStatusLabel(pendingLive[0]) : `依頼${pendingLive.length}件`;
         mark.textContent = `🔄${label}`;
         mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#b02a2a;background:#fdecec;border:1px solid #e8b4b4;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
@@ -1714,7 +1741,7 @@
       for (const row of col.querySelectorAll('.user-row')) {
         const nameEl = row.querySelector('.user-cell .name');
         if (!nameEl || nameEl.querySelector('.rf-newbie')) continue;
-        const bd = newbieBadge(hist[normName(nameEl.textContent)], iso);
+        const bd = newbieBadge(hist[normName(cellName(nameEl))], iso);
         if (!bd) continue;
         const b = document.createElement('span');
         b.className = 'rf-newbie';
@@ -1812,7 +1839,7 @@
     for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
       const nameEl = tr.querySelector('.user-cell .name');
       if (!nameEl || nameEl.querySelector('.rf-newbie')) continue;
-      const bd = newbieBadge(hist[normName(nameEl.textContent)], iso);
+      const bd = newbieBadge(hist[normName(cellName(nameEl))], iso);
       if (!bd) continue;
       const b = document.createElement('span');
       b.className = 'rf-newbie';
@@ -2653,8 +2680,17 @@
 
   function updateWeekBadges(per) {
     if (!per || isPrintPage) return; // 印刷画面にはバッジを出さない（紙に載せない）
+    // 台帳(WowTalk発)の出勤可依頼を「この週の希望日」として合流（本人指摘2026-08-17
+    // 「wowtalkから取得した希望変更依頼が反映されていない」= らくしふ提出が無い新人等は週0に見えていた）
+    const monD = (() => { const d = new Date(targetDate); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; })();
+    const weekDates = [...Array(7)].map((_, i) => { const d = new Date(monD); d.setDate(monD.getDate() + i); return d; });
+    const availByName = {};
+    for (const c of ((scState && scState.cases) || [])) {
+      if (scClosed(c) || c.is_rejected || c.target === '全員' || !scAvailCase(c)) continue;
+      (availByName[normName(c.target)] ||= []).push(c);
+    }
     for (const nameEl of document.querySelectorAll('.user-cell .name')) {
-      const nm = (nameEl.textContent || '').replace(/\s+/g, '');
+      const nm = cellName(nameEl).replace(/\s+/g, '');
       // 週データに居ない人＝この週の出勤ゼロ(全休)。以前はバッジを消していたが、
       // 全休でも「週0日/0h」を出す（本人指定2026-08-08「全部休みでも出してほしい」）
       const st = per[nm] || { days: new Set(), mins: 0 };
@@ -2668,11 +2704,18 @@
           'border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
         box.appendChild(b);
       }
-      b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h`;
-      b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）`;
-      // 週0(全休)はグレー、出勤ありは緑
-      b.style.color = st.days.size ? '#2c6e49' : '#8c8c88';
-      b.style.background = st.days.size ? '#eef4f0' : '#f3f3f1';
+      // 台帳の出勤可希望日（アサイン済みの日は除く）
+      const myAvail = availByName[normName(cellName(nameEl))] || [];
+      const wishDates = myAvail.length
+        ? weekDates.filter((d) => !st.days.has(ymd(d)) && myAvail.some((c) => scMatchesDay(c, d)))
+        : [];
+      b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h` +
+        (wishDates.length ? `＋希望${wishDates.length}日` : '');
+      b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）` +
+        (wishDates.length ? `。＋台帳の出勤可希望が${wishDates.length}日（青の曜日・未アサイン）` : '');
+      // 週0(全休)はグレー、出勤ありは緑、希望のみは青
+      b.style.color = st.days.size ? '#2c6e49' : (wishDates.length ? '#1d4ed8' : '#8c8c88');
+      b.style.background = st.days.size ? '#eef4f0' : (wishDates.length ? '#e8effd' : '#f3f3f1');
 
       // 出勤曜日の表示（月〜日、出勤日を濃く）
       let wd = box.querySelector('.rf-week-days');
@@ -2684,10 +2727,14 @@
         b.after(wd);
       }
       const dows = new Set([...st.days].map((ds) => parseYmd(ds)?.getDay()));
-      wd.innerHTML = [1, 2, 3, 4, 5, 6, 0].map((dow) =>
-        `<span style="color:${dows.has(dow) ? (dow === 0 ? '#c33' : dow === 6 ? '#26c' : '#222') : '#d5d5d5'}">${WEEKDAYS[dow]}</span>`
-      ).join('');
-      wd.title = '出勤曜日（この週）';
+      const wishDows = new Set(wishDates.map((d) => d.getDay()));
+      wd.innerHTML = [1, 2, 3, 4, 5, 6, 0].map((dow) => {
+        const col = dows.has(dow) ? (dow === 0 ? '#c33' : dow === 6 ? '#26c' : '#222')
+          : wishDows.has(dow) ? '#1d4ed8' : '#d5d5d5';
+        const deco = !dows.has(dow) && wishDows.has(dow) ? 'text-decoration:underline dotted;' : '';
+        return `<span style="color:${col};${deco}">${WEEKDAYS[dow]}</span>`;
+      }).join('');
+      wd.title = '出勤曜日（この週）。濃色=アサイン済み・青点線下線=台帳の出勤可希望（未アサイン）';
     }
   }
 
