@@ -3597,7 +3597,7 @@
         if (hasAct) {
           mk('rf-req-row-p', '非生産 SCH(SB等)', mcd.schNP.map(fmtH), MCD_COLORS.sch, r1s(mcd.schNP),
             { halves: mcd.schNP30.map(fmtH), bg: CAT_BG.NP });
-          mk('rf-req-row-p', 'トレーニングH SCH(TR)', mcd.schTR.map(fmtH), MCD_COLORS.sch, r1s(mcd.schTR),
+          mk('rf-req-row-p', 'TR H SCH(TR)', mcd.schTR.map(fmtH), MCD_COLORS.sch, r1s(mcd.schTR),
             { halves: mcd.schTR30.map(fmtH), bg: CAT_BG.NP });
         }
       };
@@ -3804,7 +3804,10 @@
       const VAL_COLOR = '#374151';
       // スクロール固定の対象選別用に、注入行を区分付きで控えておく
       const rowsCat = [];
+      // マクド行の折りたたみ: '1'ならDIFF行だけ表示（本人指定2026-08-17）
+      const mcdFolded = localStorage.getItem('rfMcdFold') === '1';
       const addReq = (grp, sub, row, color, cont, grpD) => {
+        if (mcdFolded) return;
         if (!row && !grpD) return;
         const halves = grpD ? grpD.plan30.map((v) => (!v ? '' : String(Math.round(v * 10) / 10))) : null;
         const r = mkRow('rf-req-row',
@@ -3821,6 +3824,7 @@
       // 実人数（いまらくしふ上で組まれている人数）を対応するPLAN行の直下に出す。
       // 色・不足判定はパネルの実F/実K行と同じ規則（紫、不足1人以上=赤塗り・1人未満=赤字）。
       const addAct = (leaf, cat, arr, reqRow, sumV, grpD) => {
+        if (mcdFolded) return;
         if (!arr && !(grpD && grpD.sch30)) return;
         const halves = grpD ? grpD.sch30.map((v) => (!v ? '' : String(Math.round(v * 10) / 10))) : null;
         // 不足判定は半セル単位（PLAN30比・判定基準は従来と同じ 1人以上=赤塗り/未満=赤字）
@@ -3852,7 +3856,7 @@
         const grpD = mcd && mcd.groups.find((x) => x.g === g);
         if (!grpD) return;
         const r = mkRow('rf-mcd-row',
-          partLabel('', '', 'DIFF', '#374151', null),
+          partLabel(mcdFolded && g === 'F' ? '生産性' : '', mcdFolded ? g : '', 'DIFF', '#374151', null),
           grpD.diff.map(fmtD), VAL_COLOR, null, null,
           { halves: grpD.diff30.map(fmtD),
             halfStyle: (sp, k) => {
@@ -3873,9 +3877,9 @@
             } });
         anchor.after(r);
         anchor = r;
-        mergeTh(r, true);
+        mergeTh(r, mcdFolded ? g !== 'F' : true);
         tintRow(r, g);
-        rowsCat.push({ row: r, cat: g });
+        rowsCat.push({ row: r, cat: g, diff: true });
       };
       // パネルの基準切替(LE⇔WS)に関わらず、この表は常にモデルWS側を使う。
       // reqPack.f/k/fk は基準側・sub はもう一方なので、基準名で WS 側を選ぶ。
@@ -3893,6 +3897,24 @@
       // FK SCH: FK需要はF/Kの余剰でも埋まるため単独の不足判定はしない（パネルと同じ）
       addAct('SCH', 'FK', act?.FK, null, act?.sum?.FK, g30('FK'));
       addDiff('FK');
+      // 折りたたみトグル（先頭行のラベルセルに設置。状態は記憶して再描画にも効く）
+      if (rowsCat.length) {
+        const th0 = rowsCat[0].row.querySelector('th');
+        if (th0 && !th0.querySelector('.rf-mcd-fold')) {
+          const tb = document.createElement('button');
+          tb.className = 'rf-mcd-fold';
+          tb.textContent = mcdFolded ? '▸全行' : '▾DIFFのみ';
+          tb.title = mcdFolded ? 'PLAN/SCH/非生産/TR Hも表示する' : '折りたたんで各区分のDIFF行だけにする';
+          tb.style.cssText = 'margin-left:6px;font-size:9px;padding:0 4px;border:1px solid #d9d8d2;' +
+            'background:#fff;cursor:pointer;border-radius:3px;vertical-align:middle;';
+          tb.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            localStorage.setItem('rfMcdFold', mcdFolded ? '0' : '1');
+            try { if (lastLE) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); } catch { /* 次の再描画で反映 */ }
+          });
+          th0.appendChild(tb);
+        }
+      }
 
       // ===== 予算・計画行を埋める＋その下にマクド式の生産行（本人指定2026-08-04） =====
       // 計画=LE由来（売上計画=LE×客単価・客数計画=LE客数）
@@ -3978,15 +4000,44 @@
             tintRow(r3, sub2 || 'NP');
             rowsCat.push({ row: r3, cat: sub2 || 'NP' });
           };
-          {
+          if (localStorage.getItem('rfMcdFold') !== '1') {
             const npSecs = ['F', 'K'].filter((g2) =>
               (mcd.fixPS && mcd.fixPS[g2].some((v) => v)) || (mcd.fixPS30 && mcd.fixPS30[g2].some((v) => v)));
             if (npSecs.length) npSecs.forEach((g2, i2) =>
               add2(i2 ? '' : '非生産', '', `${g2} PLAN`, mcd.fixPS[g2].map(fmt), MCD_COLORS.plan, null, mcd.fixPS30[g2]));
             else add2('非生産', '', 'PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan, null, mcd.fixP30);
           }
-          add2('', '', 'SCH(SB等)', mcd.schNP.map(fmt), MCD_COLORS.sch, null, mcd.schNP30);
-          add2('トレーニングH', '', 'SCH(TR)', mcd.schTR.map(fmt), MCD_COLORS.sch, null, mcd.schTR30);
+          if (localStorage.getItem('rfMcdFold') !== '1') {
+            add2('', '', 'SCH(SB等)', mcd.schNP.map(fmt), MCD_COLORS.sch, null, mcd.schNP30);
+          } else {
+            // DIFFのみ表示: 非生産もDIFF(SCH(SB等)−PLAN)で1行に（本人指定2026-08-17）
+            const dNP30 = Array.from({ length: 36 }, (_, k) => {
+              const p = (mcd.fixP30 || [])[k] || 0, s = (mcd.schNP30 || [])[k] || 0;
+              return (!p && !s) ? null : Math.round((s - p) * 10) / 10;
+            });
+            const dNP = HOURS.map((h, i) => {
+              const p = (mcd.fixP || [])[i] || 0, s = (mcd.schNP || [])[i] || 0;
+              return (!p && !s) ? null : Math.round((s - p) * 10) / 10;
+            });
+            const r3 = mkRow('rf-mcd-row',
+              partLabel('非生産', '', 'DIFF', '#374151', null),
+              dNP.map(fmtD), VAL_COLOR, null, null,
+              { halves: dNP30.map(fmtD),
+                halfStyle: (sp, k) => {
+                  const v = dNP30[k];
+                  if (v == null) return;
+                  if (v <= -1) { sp.style.background = '#fdecec'; sp.style.color = '#b02a2a'; }
+                  else if (v < 0) sp.style.color = '#b02a2a';
+                  else if (v > 0) sp.style.color = '#2e9e5b';
+                } });
+            a2.after(r3);
+            a2 = r3;
+            mergeTh(r3, cont2);
+            tintRow(r3, 'NP');
+            rowsCat.push({ row: r3, cat: 'NP', diff: true });
+          }
+          // TR HのSCH行は畳んでいても表示（本人指定2026-08-17「トレーニングHはそのまま表示」）
+          add2('TR H', '', 'SCH(TR)', mcd.schTR.map(fmt), MCD_COLORS.sch, null, mcd.schTR30);
         }
       }
 
@@ -3997,7 +4048,8 @@
       // th=z1099(角セル1100未満)・td=z990(timeline1000未満)。tdは透けるので行の塗り色を敷く。
       {
         const pinCats = (sectionCatOf(tr) === 'K') ? ['K', 'FK', 'NP'] : ['F', 'FK', 'NP'];
-        const pins = rowsCat.filter((x) => pinCats.includes(x.cat)).map((x) => x.row);
+        // DIFF行は他セクション分もピン（本人指定2026-08-17「フロアでK DIFFだけは見たい」）
+        const pins = rowsCat.filter((x) => pinCats.includes(x.cat) || x.diff).map((x) => x.row);
         const tlTh = tbl.querySelector('th.timeline-sticky');
         if (tlTh && pins.length) {
           // ずれ対策(2026-08-06 本人報告): レイアウト前(高さ0)や旧世代(再注入で除去済み)の行を
