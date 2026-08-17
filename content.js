@@ -2763,12 +2763,13 @@
       const dows = new Set([...st.days].map((ds) => parseYmd(ds)?.getDay()));
       const wishDows = new Set(wishDates.map((d) => d.getDay()));
       wd.innerHTML = [1, 2, 3, 4, 5, 6, 0].map((dow) => {
-        const col = dows.has(dow) ? (dow === 0 ? '#c33' : dow === 6 ? '#26c' : '#222')
-          : wishDows.has(dow) ? '#1d4ed8' : '#d5d5d5';
-        const deco = !dows.has(dow) && wishDows.has(dow) ? 'text-decoration:underline dotted;' : '';
+        // 希望のみ(未アサイン)は色を変えず下線だけ（本人指定2026-08-17「希望を出していない日と同じ色で下線だけ」）
+        const col = dows.has(dow) ? (dow === 0 ? '#c33' : dow === 6 ? '#26c' : '#222') : '#d5d5d5';
+        const deco = !dows.has(dow) && wishDows.has(dow)
+          ? 'text-decoration:underline;text-underline-offset:2px;' : '';
         return `<span style="color:${col};${deco}">${WEEKDAYS[dow]}</span>`;
       }).join('');
-      wd.title = '出勤曜日（この週）。濃色=アサイン済み・青点線下線=希望あり未アサイン（らくしふ提出＋WowTalk台帳）';
+      wd.title = '出勤曜日（この週）。濃色=アサイン済み・下線=希望あり未アサイン（らくしふ提出＋WowTalk台帳）';
     }
   }
 
