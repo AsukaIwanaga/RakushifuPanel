@@ -4341,25 +4341,17 @@
     } catch (e) {
       mgrHtml = `<div class="task"><span class="tid">MGR</span><span class="ttext muted">取得失敗: ${esc(String(e && e.message || e))}</span></div>`;
     }
-    // クルー業務（モデルWSの非生産タスク）
+    // クルー業務 = スケジューラーのクルー週次タスク（本人指定2026-08-17・モデルWS準拠をやめた）
     let crewHtml = '';
     try {
-      const params = leMakerCache && leMakerCache.params;
-      if (params && params.ws) {
-        const leSum = lastWsSum && lastWsSum.le && lastWsSum.le.total
-          ? (parseFloat(String(lastWsSum.le.total).replace(/,/g, '')) || 0) : 0;
-        const tpl = wsTplFor(params, iso, leSum);
-        const items = wsNpItems(params, tpl);
-        crewHtml = items.map((x) =>
-          `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
-          `<span class="ttext">${esc(x.label)}${x.n > 1 ? ` ×${x.n}` : ''}<div class="tnote">${esc(x.time)}` +
-          `${tpl ? ` / ${esc(tpl.name)}型` : ''}</div></span></div>`).join('') ||
-          `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
-          `<span class="ttext muted">この日の非生産タスクなし${tpl ? `（${esc(tpl.name)}型）` : ''}</span></div>`;
-      } else {
-        crewHtml = `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
-          `<span class="ttext muted">モデルWS未読込（更新で再取得）</span></div>`;
-      }
+      const r2 = await draftApi('/api/crew-weekly');
+      const items = ((r2 && r2.ok && r2.data && r2.data.items) || [])
+        .filter((x) => (x.wd || []).includes(targetDate.getDay()));
+      crewHtml = items.map((x) =>
+        `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
+        `<span class="ttext">${esc(x.label)}<div class="tnote">${esc(x.time || '')} / 週次（👷クルー週次で設定）</div></span></div>`).join('') ||
+        `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
+        `<span class="ttext muted">この曜日のクルー週次タスクなし</span></div>`;
     } catch (e) {
       crewHtml = `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
         `<span class="ttext muted">取得失敗: ${esc(String(e && e.message || e))}</span></div>`;
@@ -4403,17 +4395,17 @@
         chip('MGR', `${t.plan_time ? t.plan_time + ' ' : ''}${t.title}`, '#1d4ed8', '#e8effd', '#b6c8f5',
           `MGR予定: ${t.title}${t.plan_time ? ` (${t.plan_time})` : ''}`);
     } catch { /* 8790不達時はスキップ */ }
-    try {   // クルー業務（適用モデルWS型の非生産タスク）
-      const params = leMakerCache && leMakerCache.params;
-      if (params && params.ws) {
-        const le = lastWsSum && lastWsSum.le;
-        const leSum = le && le.total ? (parseFloat(String(le.total).replace(/,/g, '')) || 0) : 0;
-        const tpl = wsTplFor(params, iso, leSum);
-        for (const x of wsNpItems(params, tpl))
-          chip('クルー', `${x.time} ${x.label}${x.n > 1 ? ` ×${x.n}` : ''}`, '#92600a', '#fdf3e3', '#e8c877',
-            `モデルWS(${tpl ? tpl.name : ''}型)の非生産タスク: ${x.label} ${x.time}`);
+    try {   // クルー業務 = スケジューラーの「クルー週次タスク」（本人指定2026-08-17
+      // 「モデルWSに準拠しない」= 非生産にはタスクでないものもある。設定=MGR予定の👷クルー週次）
+      const r = await draftApi('/api/crew-weekly');
+      const items = (r && r.ok && r.data && r.data.items) || [];
+      const wd = targetDate.getDay();
+      for (const x of items) {
+        if (!(x.wd || []).includes(wd)) continue;
+        chip('クルー', `${x.time ? x.time + ' ' : ''}${x.label}`, '#92600a', '#fdf3e3', '#e8c877',
+          `クルー週次タスク: ${x.label}${x.time ? ` ${x.time}` : ''}（設定=スケジューラーMGR予定の「👷クルー週次」）`);
       }
-    } catch { /* params未読込時はスキップ */ }
+    } catch { /* 8790不達時はスキップ */ }
     if (seq !== taskStripSeq) return;   // 古い非同期結果で二重挿入しない
     document.querySelectorAll('.rf-task-strip').forEach((e) => e.remove());
     const tt = [...document.querySelectorAll('.table-title')].find((t) =>
