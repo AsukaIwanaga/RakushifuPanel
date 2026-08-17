@@ -2835,9 +2835,10 @@
           HOURS.forEach((h, i) => { planG[g][i] = Number((c[g] || [])[i]) || 0; });
       }
     }
-    // 非生産SCH = TR(研修枠) + NP(スタンバイ等の非生産タスク・2026-08-06追加)
+    // 非生産SCH = NP(スタンバイ等の非生産タスク)。TR(研修枠)は別枠に切り分け
+    // （本人指定2026-08-17「非生産からトレーニングHを切り分けて」。旧: TR+NP合算）
     const sch = actual ? { F: actual.F, K: actual.K, FK: actual.FK,
-                           TR: actual.TR.map((v, i) => v + ((actual.NP || [])[i] || 0)) } : null;
+                           TR: actual.TR.slice(), NP: (actual.NP || zero()).slice() } : null;
     // ===== 30分粒度（2026-08-05 本人指定）: PLAN=rows.h30/fixedH30（無い型は時間値を流用）・
     // SCH=act.h30（実シフトの30分並走集計）。表示のセル2分割と帯はこちらを使う =====
     const N30 = 36;
@@ -2869,7 +2870,7 @@
     }
     const sch30raw = actual && actual.h30 ? actual.h30 : null;
     const sch30 = sch30raw ? { ...sch30raw,
-      TR: sch30raw.TR.map((v, k) => v + ((sch30raw.NP || [])[k] || 0)) } : null;
+      TR: sch30raw.TR.slice(), NP: (sch30raw.NP || zero30()).slice() } : null;
     const groups = [];
     for (const g of ['F', 'K', 'FK']) {
       const p = planG[g], s = (sch && sch[g]) || zero();
@@ -2883,8 +2884,9 @@
     }
     const planTotH = HOURS.map((h, i) =>
       planG.F[i] + planG.K[i] + planG.FK[i] + fixP[i]);   // 総労働時間予算=モデルWS全人時（非生産込み）
-    return { leH, groups, fixP, schTR: sch ? sch.TR : zero(), planTotH,
-             fixP30, schTR30: sch30 ? sch30.TR : zero30(), fixPS, fixPS30 };
+    return { leH, groups, fixP, schTR: sch ? sch.TR : zero(), schNP: sch ? sch.NP : zero(), planTotH,
+             fixP30, schTR30: sch30 ? sch30.TR : zero30(), schNP30: sch30 ? sch30.NP : zero30(),
+             fixPS, fixPS30 };
   }
   let lastLE = null;
   const onOneDayTarget = () => {
@@ -3302,8 +3304,9 @@
         `<span style="color:#8c8c88">h:</span>` +
         seg('F', planH.F, sch && sch.F) + seg('K', planH.K, sch && sch.K) +
         seg('FK', planH.FK, sch && sch.FK) +
-        seg('非生産', planFix, sch && Math.round(((sch.TR || 0) + (sch.NP || 0)) * 10) / 10) +
-        `<span style="color:#8c8c88;font-size:11px;white-space:nowrap" title="PLAN非生産=モデルWSの固定作業／SCH非生産=らくしふのTR(研修)枠で代用">琥珀=PLAN/紫=SCH</span>`;
+        seg('非生産', planFix, sch && Math.round((sch.NP || 0) * 10) / 10) +
+        seg('TR', '-', sch && Math.round((sch.TR || 0) * 10) / 10) +
+        `<span style="color:#8c8c88;font-size:11px;white-space:nowrap" title="PLAN非生産=モデルWSの固定作業／SCH非生産=SB等の非生産タスク／TR=研修枠(TRer/TRee・PLANなし)">琥珀=PLAN/紫=SCH</span>`;
       bar.querySelector('.rf-ws-sel').addEventListener('change', async (ev) => {
         const sel = ev.target;
         const p2 = (leMakerCache && leMakerCache.params) || {};
@@ -3539,7 +3542,7 @@
               else if (v < 0) sp.style.color = '#b02a2a';
               else if (v > 0) {
                 const npPend = cat !== 'FK' && mcd.fixPS30 && (mcd.fixPS30[cat] || [])[k] > 0 &&
-                  ((mcd.fixP30 || [])[k] || 0) - ((mcd.schTR30 || [])[k] || 0) > 1e-9;
+                  ((mcd.fixP30 || [])[k] || 0) - ((mcd.schNP30 || [])[k] || 0) > 1e-9;
                 if (npPend) { sp.style.background = '#fdf3c9'; sp.style.color = '#92600a'; sp.style.fontWeight = '700'; }
                 else sp.style.color = '#2e9e5b';
               }
@@ -3556,8 +3559,12 @@
           else mk('rf-req-row-p', '非生産 PLAN', mcd.fixP.map(fmtH), MCD_COLORS.plan, r1s(mcd.fixP),
             { halves: mcd.fixP30.map(fmtH), bg: CAT_BG.NP });
         }
-        if (hasAct) mk('rf-req-row-p', '非生産 SCH(TR/SB)', mcd.schTR.map(fmtH), MCD_COLORS.sch, r1s(mcd.schTR),
-          { halves: mcd.schTR30.map(fmtH), bg: CAT_BG.NP });
+        if (hasAct) {
+          mk('rf-req-row-p', '非生産 SCH(SB等)', mcd.schNP.map(fmtH), MCD_COLORS.sch, r1s(mcd.schNP),
+            { halves: mcd.schNP30.map(fmtH), bg: CAT_BG.NP });
+          mk('rf-req-row-p', 'トレーニングH SCH(TR)', mcd.schTR.map(fmtH), MCD_COLORS.sch, r1s(mcd.schTR),
+            { halves: mcd.schTR30.map(fmtH), bg: CAT_BG.NP });
+        }
       };
       if (mcd) {
         addMcd('F', '生産性F'); addMcd('K', '生産性K'); addMcd('FK', 'FK'); addNp();
@@ -3822,7 +3829,7 @@
                 // 黄 = 人数は足りているが非生産業務が未割当（本人要望2026-08-15:
                 // この区分の過剰コマに、この区分の非生産PLANがあり、SCH(TR/SB)が未充足）
                 const npPend = g !== 'FK' && mcd.fixPS30 && (mcd.fixPS30[g] || [])[k] > 0 &&
-                  ((mcd.fixP30 || [])[k] || 0) - ((mcd.schTR30 || [])[k] || 0) > 1e-9;
+                  ((mcd.fixP30 || [])[k] || 0) - ((mcd.schNP30 || [])[k] || 0) > 1e-9;
                 if (npPend) {
                   sp.style.background = '#fdf3c9'; sp.style.color = '#92600a'; sp.style.fontWeight = '700';
                   sp.title = '人数は合っているが非生産業務が未割当（この過剰を非生産へ振る）';
@@ -3943,7 +3950,8 @@
               add2(i2 ? '' : '非生産', '', `${g2} PLAN`, mcd.fixPS[g2].map(fmt), MCD_COLORS.plan, null, mcd.fixPS30[g2]));
             else add2('非生産', '', 'PLAN', mcd.fixP.map(fmt), MCD_COLORS.plan, null, mcd.fixP30);
           }
-          add2('', '', 'SCH(TR/SB)', mcd.schTR.map(fmt), MCD_COLORS.sch, null, mcd.schTR30);
+          add2('', '', 'SCH(SB等)', mcd.schNP.map(fmt), MCD_COLORS.sch, null, mcd.schNP30);
+          add2('トレーニングH', '', 'SCH(TR)', mcd.schTR.map(fmt), MCD_COLORS.sch, null, mcd.schTR30);
         }
       }
 
