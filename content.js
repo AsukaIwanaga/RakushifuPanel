@@ -2713,6 +2713,114 @@
     return box;
   }
 
+  // ===== 名前横バッジ→月間カレンダー（勤務日/希望日）ポップアップ（本人要望2026-08-17）=====
+  const mcalCache = {};   // 'YYYY-MM' -> {perName: {名前: {asg:Set, wish:Set}}}
+  async function mcalMonth(ym) {
+    if (mcalCache[ym]) return mcalCache[ym];
+    const p = new URLSearchParams(location.search);
+    const storeId = p.get('s') || '945';
+    const [y, m] = ym.split('-').map(Number);
+    const last = new Date(y, m, 0).getDate();
+    const q = new URLSearchParams();
+    q.set('page_ctx_name', 'admin');
+    q.set('store_id', storeId);
+    for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    q.set('start_date', `${ym}-01`);
+    q.set('end_date', `${ym}-${String(last).padStart(2, '0')}`);
+    q.set('is_staff_print_page', 'false');
+    const r = await fetch('/ajax/admin/v2/schedules?' + q, {
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    const um = Object.fromEntries((j.users || []).map((u) => [u.id, normName(u.name)]));
+    const perName = {};
+    const ent = (nm) => (perName[nm] ||= { asg: new Set(), wish: new Set(), asgT: {} });
+    for (const sh of j.instructed || []) {
+      if (sh.off || sh.is_deleted || !String(sh.date || '').startsWith(ym)) continue;
+      const nm = um[sh.user_id];
+      if (!nm) continue;
+      const e2 = ent(nm);
+      e2.asg.add(sh.date);
+      const hm2 = (x) => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, '0')}`;
+      e2.asgT[sh.date] = `${hm2(sh.start_as_min)}-${hm2(sh.end_as_min)}`;
+    }
+    for (const w of j.desired || []) {
+      if (w.off || w.is_deleted || !String(w.date || '').startsWith(ym)) continue;
+      const nm = um[w.user_id];
+      if (nm) ent(nm).wish.add(w.date);
+    }
+    mcalCache[ym] = perName;
+    return perName;
+  }
+  async function openMonthCal(name, ev, ymOpt) {
+    document.getElementById('rf-mcal')?.remove();
+    const ym = ymOpt || ymd(targetDate).slice(0, 7);
+    const box = document.createElement('div');
+    box.id = 'rf-mcal';
+    box.style.cssText = 'position:fixed;z-index:2147483200;background:#fff;border:1px solid #d9d8d2;' +
+      'box-shadow:0 8px 30px rgba(20,20,18,.18);padding:10px 12px;width:308px;' +
+      "font-family:'Hiragino Sans','Yu Gothic',sans-serif;font-size:12px;color:#161616;";
+    const x = Math.min((ev && ev.clientX) || 200, innerWidth - 330);
+    const y = Math.min((ev && ev.clientY) || 120, innerHeight - 340);
+    box.style.left = `${Math.max(8, x)}px`;
+    box.style.top = `${Math.max(8, y)}px`;
+    box.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <b style="box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">${esc(name)}</b>
+      <button class="mc-prev" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">◀</button>
+      <span class="mc-ym" style="font-weight:600">${ym.replace('-', '/')}</span>
+      <button class="mc-next" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">▶</button>
+      <span style="flex:1"></span>
+      <button class="mc-x" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">✕</button></div>
+      <div class="mc-body" style="min-height:230px;color:#8c8c88">読込中…</div>
+      <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒=勤務(アサイン済み・時間はマウスで)・下線=希望のみ（らくしふ提出＋台帳）</div>`;
+    document.body.appendChild(box);
+    const close = () => { box.remove(); document.removeEventListener('mousedown', out); };
+    const out = (e2) => { if (!box.contains(e2.target)) close(); };
+    document.addEventListener('mousedown', out);
+    box.querySelector('.mc-x').addEventListener('click', close);
+    box.querySelector('.mc-prev').addEventListener('click', () => { close(); openMonthCal(name, ev, addYm(ym, -1)); });
+    box.querySelector('.mc-next').addEventListener('click', () => { close(); openMonthCal(name, ev, addYm(ym, 1)); });
+    try {
+      const perName = await mcalMonth(ym);
+      const st = perName[normName(name)] || { asg: new Set(), wish: new Set(), asgT: {} };
+      // 台帳の出勤可希望も合流
+      const avail = ((scState && scState.cases) || []).filter((c) =>
+        !scClosed(c) && !c.is_rejected && c.target !== '全員' && scAvailCase(c) &&
+        normName(c.target) === normName(name));
+      const [y, m] = ym.split('-').map(Number);
+      const last = new Date(y, m, 0).getDate();
+      const cells = [];
+      const first = new Date(y, m - 1, 1);
+      for (let i = 0; i < (first.getDay() + 6) % 7; i++) cells.push('<span></span>');
+      for (let d = 1; d <= last; d++) {
+        const iso = `${ym}-${String(d).padStart(2, '0')}`;
+        const dt = new Date(y, m - 1, d);
+        const asg = st.asg.has(iso);
+        const wish = !asg && (st.wish.has(iso) || avail.some((c) => scMatchesDay(c, dt)));
+        const wdCol = dt.getDay() === 0 ? '#c33' : dt.getDay() === 6 ? '#26c' : '#161616';
+        let s2 = 'display:flex;align-items:center;justify-content:center;height:30px;font-size:11.5px;';
+        if (asg) s2 += 'background:#161616;color:#fff;font-weight:600;';
+        else if (wish) s2 += `color:${wdCol};text-decoration:underline;text-underline-offset:3px;font-weight:600;`;
+        else s2 += 'color:#c9c8c2;';
+        cells.push(`<span title="${iso}${asg ? ` 勤務 ${st.asgT[iso] || ''}` : wish ? ' 希望' : ''}" style="${s2}">${d}</span>`);
+      }
+      box.querySelector('.mc-body').innerHTML =
+        `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:2px">` +
+        ['月', '火', '水', '木', '金', '土', '日'].map((w, i) =>
+          `<span style="text-align:center;font-size:10px;color:${i === 6 ? '#c33' : i === 5 ? '#26c' : '#8c8c88'}">${w}</span>`).join('') + '</div>' +
+        `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">${cells.join('')}</div>`;
+    } catch (e2) {
+      box.querySelector('.mc-body').innerHTML = `<span style="color:#b02a2a">取得失敗: ${esc(String(e2.message || e2))}</span>`;
+    }
+  }
+  const addYm = (ym, n) => {
+    const [y, m] = ym.split('-').map(Number);
+    const d = new Date(y, m - 1 + n, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  };
+
   function updateWeekBadges(per) {
     if (!per || isPrintPage) return; // 印刷画面にはバッジを出さない（紙に載せない）
     // 台帳(WowTalk発)の出勤可依頼を「この週の希望日」として合流（本人指摘2026-08-17
@@ -2743,9 +2851,14 @@
       const myAvail = availByName[normName(cellName(nameEl))] || [];
       const wishDates = weekDates.filter((d) => !st.days.has(ymd(d)) &&
         ((st.wish && st.wish.has(ymd(d))) || myAvail.some((c) => scMatchesDay(c, d))));
+      if (!b.dataset.mcal) {   // クリックで月間カレンダー（本人要望2026-08-17）
+        b.dataset.mcal = '1';
+        b.style.cursor = 'pointer';
+        b.addEventListener('click', (ev) => openMonthCal(cellName(nameEl).trim() || nm, ev));
+      }
       b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h` +
         (wishDates.length ? `＋希望${wishDates.length}日` : '');
-      b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）` +
+      b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）。クリックで月間カレンダー` +
         (wishDates.length ? `。＋希望${wishDates.length}日（青点線下線・未アサイン。らくしふ提出＋WowTalk台帳）` : '');
       // 週0(全休)はグレー、出勤ありは緑、希望のみは青
       b.style.color = st.days.size ? '#2c6e49' : (wishDates.length ? '#1d4ed8' : '#8c8c88');
@@ -4395,7 +4508,7 @@
       const tKey = (t) => String(t.plan_time || '99').replace(/^(\d):/, '0$1:');   // "9:00"<"10:00"の文字列比較対策
       tasks.sort((a, b) => tKey(a).localeCompare(tKey(b)));
       mgrHtml = tasks.map((t) =>
-        `<div class="task"><span class="tid">MGR</span><span class="ttext">${esc(t.title)}` +
+        `<div class="task"><span class="tid">MGR</span><span class="ttext">${esc(String(t.title || '').replace(/^M-\d+\s*/, ''))}` +
         `<div class="tnote">${esc(t.plan_time || '')}${t.due ? ` / 期限 ${esc(t.due)}` : ''}</div></span></div>`).join('') ||
         `<div class="task"><span class="tid">MGR</span><span class="ttext muted">この日のMGR予定なし</span></div>`;
     } catch (e) {
@@ -4445,8 +4558,9 @@
       const tKey = (t) => String(t.plan_time || '99').replace(/^(\d):/, '0$1:');
       const tasks = (await fetchMgtTasks()).filter((t) => (t.scheduled || '') === iso)
         .sort((a, b) => tKey(a).localeCompare(tKey(b)));
+      const dispT = (t) => String(t.title || '').replace(/^M-\d+\s*/, '');   // 通番は非表示(本人指定2026-08-17)
       for (const t of tasks)
-        chip('MGR', `${t.plan_time ? t.plan_time + ' ' : ''}${t.title}`, '#1d4ed8', '#e8effd', '#b6c8f5',
+        chip('MGR', `${t.plan_time ? t.plan_time + ' ' : ''}${dispT(t)}`, '#1d4ed8', '#e8effd', '#b6c8f5',
           `MGR予定: ${t.title}${t.plan_time ? ` (${t.plan_time})` : ''}`);
     } catch { /* 8790不達時はスキップ */ }
     try {   // クルー業務 = スケジューラーの「クルー週次タスク」（本人指定2026-08-17
