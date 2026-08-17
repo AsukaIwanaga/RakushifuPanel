@@ -4345,8 +4345,10 @@
     let crewHtml = '';
     try {
       const r2 = await draftApi('/api/crew-weekly');
+      const nth2 = Math.ceil(targetDate.getDate() / 7);
       const items = ((r2 && r2.ok && r2.data && r2.data.items) || [])
-        .filter((x) => (x.wd || []).includes(targetDate.getDay()));
+        .filter((x) => (x.wd || []).includes(targetDate.getDay()) &&
+                       (!Array.isArray(x.nth) || !x.nth.length || x.nth.includes(nth2)));
       crewHtml = items.map((x) =>
         `<div class="task"><span class="tid" style="color:#92600a;border-color:#e8c877">クルー</span>` +
         `<span class="ttext">${esc(x.label)}<div class="tnote">${esc(x.time || '')} / 週次（👷クルー週次で設定）</div></span></div>`).join('') ||
@@ -4375,18 +4377,8 @@
         `font:12.5px/1.5 'Hiragino Sans','Yu Gothic',sans-serif;white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis">` +
         `<b style="flex:none;font-size:10px;color:${col};border:1px solid ${bd};background:${bg};padding:0 4px;border-radius:3px">${lbl}</b>` +
         `<span style="overflow:hidden;text-overflow:ellipsis">${esc(text)}</span></span>`);
-    // 月次/週次(Googleシート定義)はストリップに出さない（本人指定2026-08-17「量が想定外」）。
-    // 要請タスクだけは「表示日が予定日もしくは期限のもの＋期限超過」を表示（本人指定2026-08-17
-    // 「その日以前を実施日/期限としているものだけでよい」。期限なしの要請は出さない）
-    try {
-      const { reqRows } = await fetchTaskRows();
-      for (const t of reqRows) {
-        if (!t.due || t.due > iso) continue;
-        const od = t.due < iso;
-        chip('要請', `${od ? '⚠' : ''}${t.task}`, '#b02a2a', '#fdecec', '#e8b4b4',
-          `${t.task} / 期限 ${t.due}${od ? '（期限超過・未消化）' : ''}${t.source ? ` / ${t.source}` : ''}`);
-      }
-    } catch { /* シート不達時はMGR/クルーだけ出す */ }
+    // 月次/週次/要請(Googleシート)はストリップに出さない
+    // （本人指定2026-08-17「量が想定外」→「要請タスクは不要・表示しない」で完全撤去）
     try {   // MGR業務（スケジューラーMGR予定）
       const tKey = (t) => String(t.plan_time || '99').replace(/^(\d):/, '0$1:');
       const tasks = (await fetchMgtTasks()).filter((t) => (t.scheduled || '') === iso)
@@ -4400,10 +4392,13 @@
       const r = await draftApi('/api/crew-weekly');
       const items = (r && r.ok && r.data && r.data.items) || [];
       const wd = targetDate.getDay();
+      const nthOfMonth = Math.ceil(targetDate.getDate() / 7);   // その月の第n曜日（1〜5）
       for (const x of items) {
         if (!(x.wd || []).includes(wd)) continue;
+        if (Array.isArray(x.nth) && x.nth.length && !x.nth.includes(nthOfMonth)) continue;   // 第n週指定
+        const nthTxt = Array.isArray(x.nth) && x.nth.length ? `（第${x.nth.join('・')}）` : '';
         chip('クルー', `${x.time ? x.time + ' ' : ''}${x.label}`, '#92600a', '#fdf3e3', '#e8c877',
-          `クルー週次タスク: ${x.label}${x.time ? ` ${x.time}` : ''}（設定=スケジューラーMGR予定の「👷クルー週次」）`);
+          `クルー週次タスク: ${x.label}${x.time ? ` ${x.time}` : ''}${nthTxt}（設定=スケジューラーMGR予定の「👷クルー週次」）`);
       }
     } catch { /* 8790不達時はスキップ */ }
     if (seq !== taskStripSeq) return;   // 古い非同期結果で二重挿入しない
