@@ -4221,6 +4221,7 @@
     try { updateWsSummary(hasActual ? actual : null, hourly['LE']); }
     catch (e) { console.warn('[rf] wsSummary', e); }
     try { renderWsLanes(); } catch (e) { console.warn('[rf] wsLanes', e); }
+    updateTaskStrip().catch((e) => console.warn('[rf] taskStrip', e));
     try { updateDateChip(); } catch (e) { console.warn('[rf] dateChip', e); }
     updateWeatherChip().catch(() => {});
     updateLERows(hourly['LE'],
@@ -4366,6 +4367,65 @@
     if (seq !== bizSeq) return;   // 古い非同期結果で上書きしない
     el.classList.remove('muted');
     el.innerHTML = mgrHtml + crewHtml;
+  }
+
+  // ===== 日付ヘッダー下のタスクストリップ（本人要望2026-08-17「ここにタスクを載せて」）=====
+  // フロア/キッチン見出しの上に、この日のタスク（月次/週次/要請＋MGR業務＋クルー業務）を1帯で出す
+  let taskStripSeq = 0;
+  async function updateTaskStrip() {
+    const seq = ++taskStripSeq;
+    document.querySelectorAll('.rf-task-strip').forEach((e) => e.remove());
+    if (!onOneDayTarget()) return;
+    const iso = ymd(targetDate);
+    const chips = [];
+    const chip = (lbl, text, col, bg, bd, title) =>
+      chips.push(`<span title="${esc(title || text)}" style="display:inline-flex;align-items:center;gap:5px;` +
+        `font:12.5px/1.5 'Hiragino Sans','Yu Gothic',sans-serif;white-space:nowrap;max-width:340px;overflow:hidden;text-overflow:ellipsis">` +
+        `<b style="flex:none;font-size:10px;color:${col};border:1px solid ${bd};background:${bg};padding:0 4px;border-radius:3px">${lbl}</b>` +
+        `<span style="overflow:hidden;text-overflow:ellipsis">${esc(text)}</span></span>`);
+    try {   // 月次/週次/要請（Googleシート・パネルのタスク欄と同じ源）
+      const { defRows, reqRows } = await fetchTaskRows();
+      for (const t of defRows.filter((x) => taskMatches(x, targetDate)))
+        chip(t.id, t.task, '#474743', '#f4f2ee', '#d9d8d2', `${t.id} ${t.task}${t.note ? ' / ' + t.note : ''}`);
+      const today = ymd(new Date());
+      for (const t of reqRows)
+        chip('要請', t.task, '#b02a2a', '#fdecec', '#e8b4b4',
+          `${t.task}${t.due ? ` / 期限 ${t.due}` : ''}${t.due && t.due < today ? '（⚠期限超過）' : ''}`);
+    } catch { /* シート不達時はMGR/クルーだけ出す */ }
+    try {   // MGR業務（スケジューラーMGR予定）
+      const tKey = (t) => String(t.plan_time || '99').replace(/^(\d):/, '0$1:');
+      const tasks = (await fetchMgtTasks()).filter((t) => (t.scheduled || '') === iso)
+        .sort((a, b) => tKey(a).localeCompare(tKey(b)));
+      for (const t of tasks)
+        chip('MGR', `${t.plan_time ? t.plan_time + ' ' : ''}${t.title}`, '#1d4ed8', '#e8effd', '#b6c8f5',
+          `MGR予定: ${t.title}${t.plan_time ? ` (${t.plan_time})` : ''}`);
+    } catch { /* 8790不達時はスキップ */ }
+    try {   // クルー業務（適用モデルWS型の非生産タスク）
+      const params = leMakerCache && leMakerCache.params;
+      if (params && params.ws) {
+        const le = lastWsSum && lastWsSum.le;
+        const leSum = le && le.total ? (parseFloat(String(le.total).replace(/,/g, '')) || 0) : 0;
+        const tpl = wsTplFor(params, iso, leSum);
+        for (const x of wsNpItems(params, tpl))
+          chip('クルー', `${x.time} ${x.label}${x.n > 1 ? ` ×${x.n}` : ''}`, '#92600a', '#fdf3e3', '#e8c877',
+            `モデルWS(${tpl ? tpl.name : ''}型)の非生産タスク: ${x.label} ${x.time}`);
+      }
+    } catch { /* params未読込時はスキップ */ }
+    if (seq !== taskStripSeq) return;   // 古い非同期結果で二重挿入しない
+    document.querySelectorAll('.rf-task-strip').forEach((e) => e.remove());
+    const tt = [...document.querySelectorAll('.table-title')].find((t) =>
+      (t.textContent || '').trim().startsWith('フロア') || (t.textContent || '').trim().startsWith('キッチン'));
+    if (!tt || !tt.parentElement) return;
+    const strip = document.createElement('div');
+    strip.className = 'rf-task-strip';
+    strip.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;' +
+      'margin:4px 0 6px;padding:6px 14px;background:#fff;border:1px solid #d9d8d2;';
+    strip.innerHTML =
+      `<b style="flex:none;font:700 12.5px/1.4 'Hiragino Sans',sans-serif;color:#161616;` +
+      `box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">タスク</b>` +
+      (chips.length ? chips.join('') :
+        `<span style="font-size:12px;color:#8c8c88">この日のタスクなし</span>`);
+    tt.parentElement.insertBefore(strip, tt);
   }
 
   async function renderUnconfirmed() {
@@ -5738,6 +5798,7 @@
     guarded('reqButtons', updateReqButtons);
     // Vueの再描画でバッジ/バー/LE行/依頼マークが消えた場合の張り直し（軽量）
     guarded('weekBadges', () => { if (lastWeekStats) updateWeekBadges(lastWeekStats); });
+    guarded('taskStrip', () => { if (!document.querySelector('.rf-task-strip')) updateTaskStrip().catch(() => {}); });
     guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip); });
     guarded('leRows', () => { if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); });
     guarded('wsSum', () => { if (lastWsSum && !document.querySelector('.rf-ws-sum')) updateWsSummary(lastWsSum.actual, lastWsSum.le); });
