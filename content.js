@@ -3313,7 +3313,8 @@
       let n = 0;
       for (const b of bars) {
         n++;
-        const lb = `<b>${sec}${n}</b>&nbsp;<span style="color:#6d6d69">${b.range}${b.h ? `・${b.h}h` : ''}</span>`;
+        const who = b.rw && b.rw.who ? ` <span style="color:#166534;font-weight:700">${esc2(b.rw.who)}</span>` : '';
+        const lb = `<b>${sec}${n}</b>${who}&nbsp;<span style="color:#6d6d69">${b.range}${b.h ? `・${b.h}h` : ''}</span>`;
         chart += laneRow(lb, b.segs, b.h);
       }
       for (const id of fixIds) {
