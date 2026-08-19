@@ -1853,6 +1853,41 @@
       title: `新人（初回出勤 ${first.slice(5).replace('-', '/')}・この日${today ? `で勤務${workN}回目` : `までの勤務${workN}回`}・初回から${cal}日目。1か月まで表示）`,
     };
   }
+  // ===== 店舗イベントマーカー（期間限定・候補日×対象クルー）=====
+  // 定義はスケジューラー側 data/events.json（/api/events）。個人名を含むため
+  // 公開リポのこのファイルには置かない（CLAUDE.md機密ルール・2026-08-19）
+  let rfEvents = null;
+  const loadRfEvents = () => rfEvents ? Promise.resolve(rfEvents)
+    : draftApi('/api/events').then((r) => {
+        rfEvents = (r && r.ok && r.data && Array.isArray(r.data.items)) ? r.data.items : [];
+        return rfEvents;
+      });
+  const eventsOn = (iso) => (rfEvents || []).filter((e2) => (e2.dates || []).includes(iso));
+  function updateEventMarks() {
+    if (isPrintPage || !onOneDayTarget()) return;
+    if (!rfEvents) { loadRfEvents().then(() => updateEventMarks()).catch(() => {}); return; }
+    document.querySelectorAll('.rf-event-mark').forEach((e2) => e2.remove());
+    const evs = eventsOn(ymd(targetDate));
+    if (!evs.length) return;
+    for (const nameEl of document.querySelectorAll('.user-cell .name')) {
+      const nm = normName(cellName(nameEl));
+      if (!nm) continue;
+      for (const e2 of evs) {
+        if (!(e2.targets || []).some((t) => normName(t) === nm)) continue;
+        const box = badgeBox(nameEl);
+        if (!box || box.querySelector('.rf-event-mark')) continue;
+        const b = document.createElement('span');
+        b.className = 'rf-event-mark';
+        b.textContent = `📚${e2.label}候補`;
+        b.title = `${e2.label} の開催候補日（この人は参加対象）。${e2.note}`;
+        b.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+          'color:#6d28d9;background:#f1ebfd;border:1px solid #d5c8f5;border-radius:4px;' +
+          'padding:1px 4px;white-space:nowrap;flex:none;';
+        box.appendChild(b);
+      }
+    }
+  }
+
   async function updateNewbieMarks() {
     if (!onOneDayTarget()) return;
     const hist = await loadNewbieHist();
@@ -3746,6 +3781,7 @@
     // ページ塊の再描画で行と一緒に依頼帯も消えるため、行の張り直しに合わせて引き直す
     if (scState) { try { updateReqLines(); } catch { /* noop */ } }
     updateNewbieMarks().catch(() => {});
+    try { updateEventMarks(); } catch { /* noop */ }
   }
 
   // 印刷ページの行注入の入口。表示中の日(targetDate)は引数のデータで即時注入し、
@@ -3789,6 +3825,7 @@
     }
     if (scState) { try { updateReqLines(); } catch { /* noop */ } }
     updateNewbieMarks().catch(() => {});
+    try { updateEventMarks(); } catch { /* noop */ }
   }
 
   // 注入アンカー: セクション表ごとに 修正客数 → 客数実績 → 客数計画 の優先順でthを1つ選ぶ。
@@ -4564,6 +4601,11 @@
         `<span style="overflow:hidden;text-overflow:ellipsis">${esc(text)}</span></span>`);
     // 月次/週次/要請(Googleシート)はストリップに出さない
     // （本人指定2026-08-17「量が想定外」→「要請タスクは不要・表示しない」で完全撤去）
+    try { await loadRfEvents(); } catch { /* 8790不達時はスキップ */ }
+    for (const e2 of eventsOn(iso)) {   // 店舗イベント（感じよい勉強会など・期間限定）
+      chip('イベント', `${e2.label} 候補日（対象: ${(e2.targets || []).map((t) => t.slice(0, 2)).join('・')}）`,
+        '#6d28d9', '#f1ebfd', '#d5c8f5', `${e2.label}: ${e2.note}`);
+    }
     try {   // MGR業務（スケジューラーMGR予定）
       const tKey = (t) => String(t.plan_time || '99').replace(/^(\d):/, '0$1:');
       const tasks = (await fetchMgtTasks()).filter((t) => (t.scheduled || '') === iso)
@@ -5985,6 +6027,7 @@
     guarded('kpiChip', () => { if (!document.querySelector('.rf-kpi-chip')) updateKpiChip().catch(() => {}); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
+    guarded('eventMarks', () => { if (!document.querySelector('.rf-event-mark')) updateEventMarks(); });
     guarded('newbie', () => {
       if (document.querySelector('.rf-newbie')) return;
       (isPrintPage ? updatePrintNewbie() : updateNewbieMarks()).catch(() => {});
