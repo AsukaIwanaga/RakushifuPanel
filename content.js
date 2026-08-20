@@ -386,7 +386,6 @@
     for (const sh of shifts) {
       const g = sh.attending_genre_id;
       const grp = GENRES_F.includes(g) ? 'F' : GENRES_K.includes(g) ? 'K' : null;
-      if (!grp) continue; // 社員(REGULAR)のgenre等はクルーREQ比較の対象外
 
       // 振替タスク区間（シフト範囲にクリップ・開始順で先勝ち）
       const isReg = regularIds.has(sh.user_id);
@@ -397,6 +396,33 @@
                        e: Math.min(t.end_time_as_min, sh.end_as_min) }))
         .filter((t) => t.grp && t.e > t.s)
         .sort((a, b) => a.s - b.s || a.id - b.id);
+
+      if (!grp) {
+        // 正社員セクション等（genreがF/K以外）: ベース時間はOP頭数に入れないが、
+        // ラインに引いたF/K/FKの区間タスクだけはその区分の実人数に数える
+        // （本人指摘2026-08-19「正社員ラインに引いたF/Kが入っていない」）
+        const opMoves = moves.filter((mv) => ['F', 'K', 'FK'].includes(mv.grp));
+        if (!opMoves.length) continue;
+        const accumSeg = (actT, uhStore, nSlots, netFn) => {
+          const uh = (uhStore[sh.user_id] ||= Array.from({ length: nSlots }, () => 0));
+          for (let i = 0; i < nSlots; i++) {
+            let cap = Math.max(0, 1 - uh[i]);
+            if (!cap) continue;
+            for (const mv of opMoves) {
+              const m = Math.min(netFn(sh, mv.s, mv.e, i), cap);
+              if (m <= 0) continue;
+              actT[mv.grp][i] += m;
+              actT.total[i] += m;
+              uh[i] += m;
+              cap -= m;
+              if (!cap) break;
+            }
+          }
+        };
+        accumSeg(act, userHour, HOURS.length, (sh2, a1, a2, i) => net(sh2, a1, a2, HOURS[i]));
+        accumSeg(act30, userHour30, N30, net30);
+        continue;
+      }
 
       // MGT / TRer / TRee は、オペレーションの頭数ではないので実F/実K/実計から抜く。
       // ただし抜くのは「そのタスクが入っている区間」だけ。ラインの一部にMGTを入れた
@@ -4605,7 +4631,8 @@
     // 店舗イベントはタスクと別の「イベント」セクションに出す（本人指定2026-08-19）
     const evChips = [];
     for (const e2 of eventsOn(iso)) {
-      const times = Array.isArray(e2.times) && e2.times.length ? ` ${e2.times.join(' / ')}` : '';
+      const tArr = (e2.timesByDate && e2.timesByDate[iso]) || e2.times;
+      const times = Array.isArray(tArr) && tArr.length ? ` ${tArr.join(' / ')}` : '';
       evChips.push(`<span title="${esc(`${e2.label}: ${e2.note}`)}" style="display:inline-flex;align-items:center;gap:5px;` +
         `font:12.5px/1.5 'Hiragino Sans','Yu Gothic',sans-serif;white-space:nowrap;max-width:420px;overflow:hidden;text-overflow:ellipsis;color:#6d28d9;font-weight:600">` +
         `${esc(e2.label)}${esc(times)}<span style="font-weight:400;color:#8c8c88">（対象: ${esc((e2.targets || []).map((t) => t.slice(0, 2)).join('・'))}）</span></span>`);
