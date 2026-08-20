@@ -3590,9 +3590,11 @@
     chip.style.cssText = 'display:inline-block;font-size:12.5px;font-weight:600;margin-right:14px;' +
       'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;white-space:nowrap;';
     anchor.after(chip);
-    // 天気はKPIの後ろへ並べ直す（順序: 日付 → INITIAL/LE → 天気）
+    // 天気はKPIの後ろへ並べ直す（順序: 日付 → INITIAL/LE → 天気 → 月計）
     const wx = document.querySelector('.rf-wx-chip');
     if (wx) chip.after(wx);
+    const mo = document.querySelector('.rf-month-chip');
+    if (mo) (wx || chip).after(mo);
   }
   const WX_EMOJI = [[/雷/, '⛈'], [/大雨|激しい/, '☔'], [/雨|霧雨/, '🌧'], [/霧/, '🌫'],
     [/快晴|^晴$/, '☀'], [/晴/, '🌤'], [/曇/, '☁']];
@@ -3668,6 +3670,82 @@
         'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;';
       el.parentElement.insertBefore(warn, chip);
     }
+  }
+
+  // ===== 月間シフト合計チップ（本人要望2026-08-20「月で今何時間分入っているのか」）=====
+  // らくしふ自身の「月次合計H」は名前に反して当日分しか出ない（labor_calculations=当日
+  // シフト合計・7/26検算）ため、表示中の月の全シフトを取得して休憩控除後で合計する。
+  const monthHCache = {}; // ym -> {at, totMins, byG, days, lastDay, monthDays}
+  async function fetchMonthHours(ym, force) {
+    const c = monthHCache[ym];
+    if (!force && c && Date.now() - c.at < 5 * 60 * 1000) return c;
+    const p = new URLSearchParams(location.search);
+    const storeId = p.get('s');
+    if (!storeId) return null;
+    const [y, m] = ym.split('-').map(Number);
+    const monthDays = new Date(y, m, 0).getDate();
+    const q = new URLSearchParams();
+    q.set('page_ctx_name', 'admin');
+    q.set('store_id', storeId);
+    for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    q.set('start_date', `${ym}-01`);
+    q.set('end_date', `${ym}-${String(monthDays).padStart(2, '0')}`);
+    q.set('is_staff_print_page', 'false');
+    const r = await fetch('/ajax/admin/v2/schedules?' + q, {
+      credentials: 'include',
+      headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    const byG = { F: 0, K: 0, REG: 0, OTH: 0 };
+    const days = new Set();
+    let lastDay = '';
+    for (const sh of j.instructed || []) {
+      if (sh.off || sh.is_deleted || !String(sh.date || '').startsWith(ym)) continue;
+      let mins = sh.end_as_min - sh.start_as_min;
+      for (const rt of sh.rest_times || []) {
+        mins -= Math.max(0, (rt.end_hour * 60 + rt.end_minute) - (rt.start_hour * 60 + rt.start_minute));
+      }
+      if (mins <= 0) continue;
+      const g = sh.attending_genre_id;
+      const key = GENRES_F.includes(g) ? 'F' : GENRES_K.includes(g) ? 'K' : g === 17 ? 'REG' : 'OTH';
+      byG[key] += mins;
+      days.add(sh.date);
+      if (sh.date > lastDay) lastDay = sh.date;
+    }
+    const out = {
+      at: Date.now(), totMins: byG.F + byG.K + byG.REG + byG.OTH,
+      byG, days: days.size, lastDay, monthDays,
+    };
+    monthHCache[ym] = out;
+    return out;
+  }
+  const minsH = (mins) => (Math.round(mins / 6) / 10).toLocaleString('ja-JP');
+  async function updateMonthChip(force) {
+    document.querySelectorAll('.rf-month-chip').forEach((e) => e.remove());
+    if (!onOneDayTarget()) return;
+    const ym = ymd(targetDate).slice(0, 7);
+    const s = await fetchMonthHours(ym, force);
+    const anchor = document.querySelector('.rf-wx-chip') ||
+      document.querySelector('.rf-kpi-chip') || document.querySelector('.rf-date-chip');
+    if (!s || !s.totMins || !anchor) return;
+    const chip = document.createElement('span');
+    chip.className = 'rf-month-chip';
+    chip.innerHTML = `<span style="color:#8c8c88">${Number(ym.slice(5))}月計</span> ` +
+      `<b style="color:#474743">${minsH(s.totMins)}h</b>`;
+    chip.title = `${Number(ym.slice(5))}月にシフト入力済みの合計時間（休憩控除後・全区分）\n` +
+      `F ${minsH(s.byG.F)}h / K ${minsH(s.byG.K)}h` +
+      (s.byG.REG ? ` / 正社員 ${minsH(s.byG.REG)}h` : '') +
+      (s.byG.OTH ? ` / その他 ${minsH(s.byG.OTH)}h` : '') +
+      `\n入力あり ${s.days}/${s.monthDays}日（最終 ${s.lastDay ? `${Number(s.lastDay.slice(5, 7))}/${Number(s.lastDay.slice(8))}` : '-'}）` +
+      '\nクリックで再集計';
+    chip.style.cssText = 'display:inline-block;font-size:12.5px;font-weight:600;margin-right:14px;' +
+      'cursor:pointer;font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;white-space:nowrap;';
+    chip.addEventListener('click', () => {
+      chip.style.opacity = '.4';
+      updateMonthChip(true).catch(() => { chip.style.opacity = ''; });
+    });
+    anchor.after(chip);
   }
 
   // ===== 印刷画面(パターン1)へ LE客数 行と 必要人数(REQ計) 行を注入 =====
@@ -4470,6 +4548,7 @@
     updateTaskStrip().catch((e) => console.warn('[rf] taskStrip', e));
     try { updateDateChip(); } catch (e) { console.warn('[rf] dateChip', e); }
     updateWeatherChip().catch(() => {});
+    updateMonthChip().catch((e) => console.warn('[rf] monthChip', e));
     updateLERows(hourly['LE'],
       { sum: req, f: reqF, k: reqK, fk: reqFK, sub: secondary, basisName, subName },
       hasActual ? actual : null);
@@ -6059,6 +6138,7 @@
     guarded('dateChip', () => { if (!document.querySelector('.rf-date-chip')) updateDateChip(); });
     guarded('wxChip', () => { if (!document.querySelector('.rf-wx-chip')) updateWeatherChip().catch(() => {}); });
     guarded('kpiChip', () => { if (!document.querySelector('.rf-kpi-chip')) updateKpiChip().catch(() => {}); });
+    guarded('monthChip', () => { if (!document.querySelector('.rf-month-chip')) updateMonthChip().catch(() => {}); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
     guarded('eventMarks', () => { if (!document.querySelector('.rf-event-mark')) updateEventMarks(); });
