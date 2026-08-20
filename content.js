@@ -4602,9 +4602,13 @@
     // 月次/週次/要請(Googleシート)はストリップに出さない
     // （本人指定2026-08-17「量が想定外」→「要請タスクは不要・表示しない」で完全撤去）
     try { await loadRfEvents(); } catch { /* 8790不達時はスキップ */ }
-    for (const e2 of eventsOn(iso)) {   // 店舗イベント（感じよい勉強会など・期間限定）
-      chip('イベント', `${e2.label} 候補日（対象: ${(e2.targets || []).map((t) => t.slice(0, 2)).join('・')}）`,
-        '#6d28d9', '#f1ebfd', '#d5c8f5', `${e2.label}: ${e2.note}`);
+    // 店舗イベントはタスクと別の「イベント」セクションに出す（本人指定2026-08-19）
+    const evChips = [];
+    for (const e2 of eventsOn(iso)) {
+      const times = Array.isArray(e2.times) && e2.times.length ? ` ${e2.times.join(' / ')}` : '';
+      evChips.push(`<span title="${esc(`${e2.label}: ${e2.note}`)}" style="display:inline-flex;align-items:center;gap:5px;` +
+        `font:12.5px/1.5 'Hiragino Sans','Yu Gothic',sans-serif;white-space:nowrap;max-width:420px;overflow:hidden;text-overflow:ellipsis;color:#6d28d9;font-weight:600">` +
+        `${esc(e2.label)}${esc(times)}<span style="font-weight:400;color:#8c8c88">（対象: ${esc((e2.targets || []).map((t) => t.slice(0, 2)).join('・'))}）</span></span>`);
     }
     try {   // MGR業務（スケジューラーMGR予定）
       const tKey = (t) => String(t.plan_time || '99').replace(/^(\d):/, '0$1:');
@@ -4640,11 +4644,14 @@
     strip.className = 'rf-task-strip';
     strip.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;' +
       'margin:4px 0 6px;padding:6px 14px;background:#fff;border:1px solid #d9d8d2;';
+    const lbl = (t) => `<b style="flex:none;font:700 12.5px/1.4 'Hiragino Sans',sans-serif;color:#161616;` +
+      `box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">${t}</b>`;
     strip.innerHTML =
-      `<b style="flex:none;font:700 12.5px/1.4 'Hiragino Sans',sans-serif;color:#161616;` +
-      `box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">タスク</b>` +
+      lbl('タスク') +
       (chips.length ? chips.join('') :
-        `<span style="font-size:12px;color:#8c8c88">この日のタスクなし</span>`);
+        `<span style="font-size:12px;color:#8c8c88">この日のタスクなし</span>`) +
+      (evChips.length ? `<span style="flex:none;width:1px;height:16px;background:#d9d8d2;margin:0 4px"></span>` +
+        lbl('イベント') + evChips.join('') : '');
     tt.parentElement.insertBefore(strip, tt);
   }
 
