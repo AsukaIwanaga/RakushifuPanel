@@ -3726,9 +3726,7 @@
     if (!onOneDayTarget()) return;
     const ym = ymd(targetDate).slice(0, 7);
     const s = await fetchMonthHours(ym, force);
-    const anchor = document.querySelector('.rf-wx-chip') ||
-      document.querySelector('.rf-kpi-chip') || document.querySelector('.rf-date-chip');
-    if (!s || !s.totMins || !anchor) return;
+    if (!s || !s.totMins) return;
     const chip = document.createElement('span');
     chip.className = 'rf-month-chip';
     chip.innerHTML = `<span style="color:#8c8c88">${Number(ym.slice(5))}月計</span> ` +
@@ -3745,7 +3743,15 @@
       chip.style.opacity = '.4';
       updateMonthChip(true).catch(() => { chip.style.opacity = ''; });
     });
-    anchor.after(chip);
+    // 順序: 日付 → INITIAL/LE → 天気 → 月計。日付チップの土台（月次合計H行）が
+    // 無い画面では労務サマリの「人時売上高」ブロック(.metrics.sales-per-hours・
+    // headless実測2026-08-20)の前へフォールバック。
+    const prev = document.querySelector('.rf-wx-chip') ||
+      document.querySelector('.rf-kpi-chip') || document.querySelector('.rf-date-chip');
+    if (prev) { prev.after(chip); return; }
+    const el = document.querySelector('.metrics.sales-per-hours');
+    if (!el || !el.parentElement) { chip.remove(); return; }
+    el.parentElement.insertBefore(chip, el);
   }
 
   // ===== 印刷画面(パターン1)へ LE客数 行と 必要人数(REQ計) 行を注入 =====
