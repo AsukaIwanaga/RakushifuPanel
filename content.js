@@ -2775,7 +2775,8 @@
   }
 
   // ===== 名前横バッジ→月間カレンダー（勤務日/希望日）ポップアップ（本人要望2026-08-17）=====
-  const mcalCache = {};   // 'YYYY-MM' -> {perName: {名前: {asg:Set, wish:Set}}}
+  const mcalCache = {};   // 'YYYY-MM' -> {perName: {名前: {asg:Set, wish:Set, mins, minsD, byG}}}
+  const mcH = (mins) => Math.round((mins || 0) / 6) / 10;   // 分→時間(小数1桁)
   async function mcalMonth(ym) {
     if (mcalCache[ym]) return mcalCache[ym];
     const p = new URLSearchParams(location.search);
@@ -2797,7 +2798,8 @@
     const j = await r.json();
     const um = Object.fromEntries((j.users || []).map((u) => [u.id, normName(u.name)]));
     const perName = {};
-    const ent = (nm) => (perName[nm] ||= { asg: new Set(), wish: new Set(), asgT: {} });
+    const ent = (nm) => (perName[nm] ||= { asg: new Set(), wish: new Set(), asgT: {},
+      mins: 0, minsD: {}, byG: { F: 0, K: 0, REG: 0, OTH: 0 } });
     for (const sh of j.instructed || []) {
       if (sh.off || sh.is_deleted || !String(sh.date || '').startsWith(ym)) continue;
       const nm = um[sh.user_id];
@@ -2806,6 +2808,18 @@
       e2.asg.add(sh.date);
       const hm2 = (x) => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, '0')}`;
       e2.asgT[sh.date] = `${hm2(sh.start_as_min)}-${hm2(sh.end_as_min)}`;
+      // 人別の月間労働時間（休憩控除後）。店舗計の月チップ(fetchMonthHours)と同じ数え方。
+      let mn = sh.end_as_min - sh.start_as_min;
+      for (const rt of sh.rest_times || []) {
+        mn -= Math.max(0, (rt.end_hour * 60 + rt.end_minute) - (rt.start_hour * 60 + rt.start_minute));
+      }
+      mn = Math.max(0, mn);
+      e2.mins += mn;
+      e2.minsD[sh.date] = (e2.minsD[sh.date] || 0) + mn;
+      const gk = GENRES_F.includes(sh.attending_genre_id) ? 'F'
+        : GENRES_K.includes(sh.attending_genre_id) ? 'K'
+        : sh.attending_genre_id === 17 ? 'REG' : 'OTH';
+      e2.byG[gk] += mn;
     }
     for (const w of j.desired || []) {
       if (w.off || w.is_deleted || !String(w.date || '').startsWith(ym)) continue;
@@ -2834,6 +2848,7 @@
       <button class="mc-next" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">▶</button>
       <span style="flex:1"></span>
       <button class="mc-x" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">✕</button></div>
+      <div class="mc-sum" style="display:flex;align-items:baseline;gap:8px;margin:0 0 6px;font-size:12px;color:#8c8c88">月計 <span style="color:#c9c8c2">…</span></div>
       <div class="mc-body" style="min-height:230px;color:#8c8c88">読込中…</div>
       <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒=勤務(アサイン済み・時間はマウスで)・下線=希望のみ（らくしふ提出＋台帳）</div>`;
     document.body.appendChild(box);
@@ -2845,7 +2860,8 @@
     box.querySelector('.mc-next').addEventListener('click', () => { close(); openMonthCal(name, ev, addYm(ym, 1)); });
     try {
       const perName = await mcalMonth(ym);
-      const st = perName[normName(name)] || { asg: new Set(), wish: new Set(), asgT: {} };
+      const st = perName[normName(name)] ||
+        { asg: new Set(), wish: new Set(), asgT: {}, mins: 0, minsD: {}, byG: { F: 0, K: 0, REG: 0, OTH: 0 } };
       // 台帳の出勤可希望も合流
       const avail = ((scState && scState.cases) || []).filter((c) =>
         !scClosed(c) && !c.is_rejected && c.target !== '全員' && scAvailCase(c) &&
@@ -2865,7 +2881,20 @@
         if (asg) s2 += 'background:#161616;color:#fff;font-weight:600;';
         else if (wish) s2 += `color:${wdCol};text-decoration:underline;text-underline-offset:3px;font-weight:600;`;
         else s2 += 'color:#c9c8c2;';
-        cells.push(`<span title="${iso}${asg ? ` 勤務 ${st.asgT[iso] || ''}` : wish ? ' 希望' : ''}" style="${s2}">${d}</span>`);
+        const dh = (st.minsD && st.minsD[iso]) ? ` ${Math.round(st.minsD[iso] / 6) / 10}h` : '';
+        cells.push(`<span title="${iso}${asg ? ` 勤務 ${st.asgT[iso] || ''}${dh}` : wish ? ' 希望' : ''}" style="${s2}">${d}</span>`);
+      }
+      // 月のトータル時間数（休憩控除後）＋区分内訳（本人要望2026-08-28）
+      {
+        const g = st.byG || { F: 0, K: 0, REG: 0, OTH: 0 };
+        const parts = [['F', g.F], ['K', g.K], ['正社員', g.REG], ['その他', g.OTH]]
+          .filter(([, v]) => v > 0).map(([k, v]) => `${k} ${mcH(v)}h`);
+        box.querySelector('.mc-sum').innerHTML =
+          `<span>${Number(m)}月計</span>` +
+          `<b style="font-size:15px;color:#161616">${mcH(st.mins || 0)}h</b>` +
+          `<span>${st.asg.size}日</span>` +
+          (parts.length ? `<span style="margin-left:auto;font-size:11px">${parts.join(' / ')}</span>` : '');
+        box.querySelector('.mc-sum').title = '表示中の月にらくしふへ入力済みのアサイン合計（休憩控除後・ヘルプ含む）';
       }
       box.querySelector('.mc-body').innerHTML =
         `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:2px">` +
@@ -2873,13 +2902,58 @@
           `<span style="text-align:center;font-size:10px;color:${i === 6 ? '#c33' : i === 5 ? '#26c' : '#8c8c88'}">${w}</span>`).join('') + '</div>' +
         `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">${cells.join('')}</div>`;
     } catch (e2) {
+      box.querySelector('.mc-sum').innerHTML = '<span style="color:#b02a2a">月計 —</span>';
       box.querySelector('.mc-body').innerHTML = `<span style="color:#b02a2a">取得失敗: ${esc(String(e2.message || e2))}</span>`;
     }
   }
-  // 週バッジクリック→月間カレンダー（委譲・capture。直付けだとVue再描画のノード複製で
+  // ===== 名前横「月n日/XXh」バッジ（月のトータル時間数・本人要望2026-08-28）=====
+  // 週バッジ(この週)だけでは月間の入り具合が分からない、が発端。データ元は月間カレンダーと
+  // 同じ mcalMonth（1回の /ajax/admin/v2/schedules で月全体・キャッシュ共用）。
+  let lastMonthPer = null;   // { ym, per }
+  async function updateMonthBadges() {
+    if (isPrintPage) return;               // 紙には出さない（週バッジと同じ方針）
+    const ym = ymd(targetDate).slice(0, 7);
+    if (!lastMonthPer || lastMonthPer.ym !== ym) {
+      lastMonthPer = { ym, per: await mcalMonth(ym) };
+    }
+    paintMonthBadges();
+  }
+  function paintMonthBadges() {
+    if (!lastMonthPer || isPrintPage) return;
+    const { ym, per } = lastMonthPer;
+    const mLbl = Number(ym.slice(5));
+    for (const nameEl of document.querySelectorAll('.user-cell .name')) {
+      const box = badgeBox(nameEl);
+      if (!box) continue;
+      // 月データに居ない人＝その月のアサインゼロ。週バッジと同様「0日/0h」を出す
+      const st = per[normName(cellName(nameEl))] ||
+        { asg: new Set(), mins: 0, byG: { F: 0, K: 0, REG: 0, OTH: 0 } };
+      let b = box.querySelector('.rf-month-badge');
+      if (!b) {
+        b = document.createElement('span');
+        b.className = 'rf-month-badge';
+        b.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
+          'border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;cursor:pointer;';
+        box.appendChild(b);
+      }
+      const days = st.asg ? st.asg.size : 0;
+      b.textContent = `${mLbl}月${days}日/${mcH(st.mins)}h`;
+      const g = st.byG || { F: 0, K: 0, REG: 0, OTH: 0 };
+      const parts = [['F', g.F], ['K', g.K], ['正社員', g.REG], ['その他', g.OTH]]
+        .filter(([, v]) => v > 0).map(([k, v]) => `${k} ${mcH(v)}h`);
+      b.title = `${mLbl}月にらくしふへ入力済みのアサイン合計（休憩控除後・ヘルプ含む）` +
+        (parts.length ? `\n${parts.join(' / ')}` : '') + '\nクリックで月間カレンダー';
+      // 出勤ありは琥珀（週=緑と区別）、0はグレー
+      b.style.color = days ? '#8a5a10' : '#8c8c88';
+      b.style.background = days ? '#fbf3e3' : '#f3f3f1';
+    }
+  }
+
+  // 週バッジ/月バッジクリック→月間カレンダー（委譲・capture。直付けだとVue再描画のノード複製で
   // リスナーが剥がれて「クリックしても出ない」事象になる: 本人報告2026-08-18）
   document.addEventListener('click', (ev) => {
-    const b = ev.target && ev.target.closest && ev.target.closest('.rf-week-badge');
+    const b = ev.target && ev.target.closest &&
+      (ev.target.closest('.rf-week-badge') || ev.target.closest('.rf-month-badge'));
     if (!b) return;
     const tr = b.closest('tr');
     const nameEl = tr && tr.querySelector('.user-cell .name');
@@ -4569,6 +4643,7 @@
     fetchWeekStats(targetDate)
       .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
       .catch(() => {});
+    updateMonthBadges().catch(() => {});
     renderTasks();
     renderBiz().catch(() => {});
     renderDraft().catch(() => {});
@@ -6137,6 +6212,7 @@
     guarded('reqButtons', updateReqButtons);
     // Vueの再描画でバッジ/バー/LE行/依頼マークが消えた場合の張り直し（軽量）
     guarded('weekBadges', () => { if (lastWeekStats) updateWeekBadges(lastWeekStats); });
+    guarded('monthBadges', () => { if (lastMonthPer) paintMonthBadges(); });
     guarded('taskStrip', () => { if (!document.querySelector('.rf-task-strip')) updateTaskStrip().catch(() => {}); });
     guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip); });
     guarded('leRows', () => { if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); });
