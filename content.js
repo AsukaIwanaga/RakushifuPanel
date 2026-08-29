@@ -3795,7 +3795,7 @@
     html += srow('非生産計', `${sumH(npTot)}h`, npTot.map((v, i) => hcell(fmtN(v), i)).join(''),
       { bg: '#fdf3e3', tc: '#92600a' });
     // 非生産の中身（正社員ライン/TR/固定/非生産業務/不明）は入っている区分だけ出す
-    for (const k of ['MGT', 'cMGT', 'TR', 'FIX', 'NPM', 'UNK']) {
+    for (const k of ['MGT', 'cMGT', 'TR', 'NPM', 'FIX', 'UNK']) {
       const a = new Array(18).fill(0);
       for (const r of (rows || [])) (r.slots || []).forEach((v, i) => { if (v === k) a[i >> 1] += 0.5; });
       if (!a.some((v) => v)) continue;
@@ -3862,11 +3862,12 @@
   // 流れは 希望シフト取込 → 仮WSを組む → 実WS（らくしふ）へ反映。ここで見るのは
   // 「モデルWS（計画の型）」と「仮WS（:8790 /api/actws）」のズレ。別ウィンドウなので
   // らくしふの画面を潰さずに横へ置ける。★らくしふ本体には一切書かない（読むだけ）。
+  // 旧「固定(FIX)」は2026-08-29に非生産へ統合。古い仮WSに残っていても非生産として見せる
   const AWS_LAB = { F: 'F', K: 'K', FK: 'FK', MGT: '正社員ライン', cMGT: 'MGT(クルー)',
-                    TR: 'TR', FIX: '固定', NPM: '非生産', UNK: '不明' };
+                    TR: 'TR', FIX: '非生産', NPM: '非生産', UNK: '不明' };
   // 色はスケジューラーの仮WSグリッド（table.awsg td.awsc.k-*）と揃える
   const AWS_COL = { F: '#3b82f6', K: '#10b981', FK: '#8b5cf6', MGT: '#374151', cMGT: '#9ca3af',
-                    TR: '#f59e0b', FIX: '#0f766e', NPM: '#be123c', UNK: '#d1d5db' };
+                    TR: '#f59e0b', FIX: '#be123c', NPM: '#be123c', UNK: '#d1d5db' };
   const AWS_ORD = { F: 0, FK: 1, K: 2, TR: 3, FIX: 4, NPM: 5, cMGT: 6, MGT: 7, UNK: 8 };
   const AWS_PROD = { F: 1, K: 1, FK: 1 };
 
