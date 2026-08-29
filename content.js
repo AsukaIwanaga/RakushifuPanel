@@ -976,6 +976,14 @@
   // 「三つ目のアイコンにして、そこにラインを見せて」→「ポップアップではなく右の表示の切り替えで」）
   $('#wsLanesToggle').addEventListener('click', (ev) => clickTogglePanel('#wsLanesToggle', ev));
   if (localStorage.getItem('rfWsLanesOpen') === '1') { wsLanesPanel.classList.add('open'); syncToggle('#wsLanesToggle', true); }
+  // ⇄ 仮WSと比較（別ウィンドウ）。ウィンドウはクリック直後に同期で開く（awaitを挟むとブロックされる）
+  $('#wsLanesBody').addEventListener('click', (ev) => {
+    const b = ev.target && ev.target.closest && ev.target.closest('.rf-wscmp');
+    if (!b) return;
+    const iso = b.dataset.iso;
+    const w = openWsCompareWindow(iso);
+    if (w) fillWsCompare(w, iso);
+  });
 
   // 🔀 海賊版→らくしふ反映パネル（右寄せ・他パネルと重ならない）
   $('#reflectToggle').addEventListener('click', (ev) => clickTogglePanel('#reflectToggle', ev));
@@ -3304,26 +3312,12 @@
     }
   }
 
-  // ===== モデルWSレーン表ビューア（本人要望2026-08-15「スケジューラーのモデルWSを拡張からも見たい」）=====
-  // スケジューラーのライン表と同じバー描画（時間帯サマリ＋レーンのバー＋トップ/ラスト斜線＋
-  // タスク区間＋右端計）を読み取り専用で再現する（本人要望2026-08-15「これが拡張からも見たい」）。
-  // データは leMakerCache.params（=params.json・スケジューラーと同一SoT）なので取得は増えない。
-  function wsLaneHtml(params, tpl, iso, le) {
-    if (!tpl) return '<div class="muted" style="padding:10px 0">この日に適用されるモデルWS型がありません</div>';
+  // モデルWS型の時間帯別集計（スケジューラー wseRecount と同一規則: タスクコマ=作業のsecへ計上・
+  // トップ/ラスト=生産）。レーン表と「仮WSと比較」ウィンドウの両方がこれを使う。
+  function wsModelAgg(params, tpl) {
     const ftMap = {};
     for (const ft of ((params.ws && params.ws.fixedTasks) || [])) ftMap[ft.id] = ft;
     const prodIds = wsProdFixSec(params);
-    const SLOTW = 16, LABW = 190, KEIW = 52;
-    const GRIDW = SLOTW * 36;
-    const BARC = { F: '#4f8df7', K: '#27ae7e', FK: '#8b74f0' };
-    const ROWBG = { F: '#eef4ff', K: '#eafaf3', FK: '#f3efff' };
-    const TASKC = '#e8a33d';   // 非生産タスク=黄(琥珀)。FK切替の紫(BARC.FK)とは別
-    const hatch = (c) => `repeating-linear-gradient(45deg, ${c} 0 6px, #ffffff 6px 10px)`;
-    const tmOf = (k) => `${Math.floor(6 + k / 2)}:${k % 2 ? '30' : '00'}`;
-    const fmtN = (v) => !v ? '' : (v % 1 ? v.toFixed(1) : String(v));
-    const esc2 = esc;
-
-    // --- 集計（スケジューラーwseRecountと同一規則: タスクコマ=作業のsecへ計上・トップ/ラスト=生産） ---
     const laneTot = new Array(18).fill(0);
     const secTot = { F: new Array(18).fill(0), K: new Array(18).fill(0), FK: new Array(18).fill(0) };
     const prodTot = new Array(18).fill(0), npTot = new Array(18).fill(0);
@@ -3356,6 +3350,28 @@
         if (v) addSlot(k, ft.sec, !prodIds[id], v);
       }
     }
+    return { ftMap, prodIds, laneTot, secTot, prodTot, npTot, slotInfo, lanes, fixIdsAll, fix30 };
+  }
+
+  // ===== モデルWSレーン表ビューア（本人要望2026-08-15「スケジューラーのモデルWSを拡張からも見たい」）=====
+  // スケジューラーのライン表と同じバー描画（時間帯サマリ＋レーンのバー＋トップ/ラスト斜線＋
+  // タスク区間＋右端計）を読み取り専用で再現する（本人要望2026-08-15「これが拡張からも見たい」）。
+  // データは leMakerCache.params（=params.json・スケジューラーと同一SoT）なので取得は増えない。
+  function wsLaneHtml(params, tpl, iso, le, opts = {}) {
+    if (!tpl) return '<div class="muted" style="padding:10px 0">この日に適用されるモデルWS型がありません</div>';
+    const SLOTW = 16, LABW = 190, KEIW = 52;
+    const GRIDW = SLOTW * 36;
+    const BARC = { F: '#4f8df7', K: '#27ae7e', FK: '#8b74f0' };
+    const ROWBG = { F: '#eef4ff', K: '#eafaf3', FK: '#f3efff' };
+    const TASKC = '#e8a33d';   // 非生産タスク=黄(琥珀)。FK切替の紫(BARC.FK)とは別
+    const hatch = (c) => `repeating-linear-gradient(45deg, ${c} 0 6px, #ffffff 6px 10px)`;
+    const tmOf = (k) => `${Math.floor(6 + k / 2)}:${k % 2 ? '30' : '00'}`;
+    const fmtN = (v) => !v ? '' : (v % 1 ? v.toFixed(1) : String(v));
+    const esc2 = esc;
+
+    // 集計は wsModelAgg（レーン表と差異ウィンドウで共通）
+    const { ftMap, prodIds, laneTot, secTot, prodTot, npTot, slotInfo, lanes, fixIdsAll, fix30 } =
+      wsModelAgg(params, tpl);
     const sumH = (a) => Math.round(a.reduce((x, y) => x + y, 0) * 10) / 10;
 
     // --- 上段サマリ表（客数/合計人数/F/K/FK/生産計/非生産計 × 時間帯18列） ---
@@ -3475,13 +3491,17 @@
     }
     function rw2k(rw) { const i = (rw.h30 || []).findIndex((v) => Number(v)); return i < 0 ? 999 : i; }
 
-    return `<div style="width:fit-content;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616">
+    // ヘッダ（型名・適用日・比較ボタン）。差異ウィンドウは自前の見出しを持つので noHead で省く
+    const headHtml = opts.noHead ? '' : `
       <div style="display:flex;align-items:center;gap:12px;margin:2px 0 8px">
         <b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">モデルWS ${esc2(tpl.name)}型</b>
         <span style="font-size:12px;color:#6d6d69">${esc2(iso)} に適用${tpl.tc ? `・TC ${esc2(String(tpl.tc))}` : ''}${le && le.total ? `・LE ${esc2(String(le.total))}` : ''}</span>
         <span style="flex:1"></span>
+        ${opts.cmp ? `<button class="rf-wscmp" data-iso="${esc2(iso)}" title="スケジューラーで組んだ仮WSとモデルWSの差異を別ウィンドウで開く" style="font-size:12px;color:#161616;background:#fff;border:1px solid #c9c7c1;border-radius:4px;padding:2px 8px;cursor:pointer;white-space:nowrap">⇄ 仮WSと比較</button>` : ''}
         <a href="http://mac-mini.tail1f88ff.ts.net:8790/#ws" target="_blank" rel="noopener" style="font-size:12px;color:#1a5fb4;text-decoration:none;white-space:nowrap">⚙編集はスケジューラーで↗</a>
-      </div>
+      </div>`;
+    return `<div style="width:fit-content;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616">
+      ${headHtml}
       <table style="border-collapse:collapse;margin-bottom:0">${hourHdr}${sumHtml}</table>
       <div style="border-top:0">${chart}</div>
       <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラー・客数(時間帯)はこの日のLE）。斜線＋チップ=トップ/ラスト作業（生産）・黄=非生産タスクの30分上書き/固定作業・紫=FK切替。バーにマウスで詳細。</div>
@@ -3501,7 +3521,203 @@
     const le = lastWsSum && lastWsSum.le;
     const leSum = le && le.total ? (parseFloat(String(le.total).replace(/,/g, '')) || 0) : 0;
     const tpl = wsTplFor(params, iso, leSum);
-    el.innerHTML = wsLaneHtml(params, tpl, iso, le);
+    el.innerHTML = wsLaneHtml(params, tpl, iso, le, { cmp: true });
+  }
+
+  // ===== 仮WS ⇄ モデルWS 差異ウィンドウ（本人要望2026-08-29）=====
+  // 用語（本人定義2026-08-29）: 実WS=らくしふに入っている本物 / 仮WS=スケジューラーで組む日毎の案。
+  // 流れは 希望シフト取込 → 仮WSを組む → 実WS（らくしふ）へ反映。ここで見るのは
+  // 「モデルWS（計画の型）」と「仮WS（:8790 /api/actws）」のズレ。別ウィンドウなので
+  // らくしふの画面を潰さずに横へ置ける。★らくしふ本体には一切書かない（読むだけ）。
+  const AWS_LAB = { F: 'F', K: 'K', FK: 'FK', MGT: '正社員ライン', cMGT: 'MGT(クルー)',
+                    TR: 'TR', FIX: '固定', NPM: '非生産', UNK: '不明' };
+  // 色はスケジューラーの仮WSグリッド（table.awsg td.awsc.k-*）と揃える
+  const AWS_COL = { F: '#3b82f6', K: '#10b981', FK: '#8b5cf6', MGT: '#374151', cMGT: '#9ca3af',
+                    TR: '#f59e0b', FIX: '#0f766e', NPM: '#be123c', UNK: '#d1d5db' };
+  const AWS_ORD = { F: 0, FK: 1, K: 2, TR: 3, FIX: 4, NPM: 5, cMGT: 6, MGT: 7, UNK: 8 };
+  const AWS_PROD = { F: 1, K: 1, FK: 1 };
+
+  // 仮WSの行（slots[36]）→ 時間帯18コマの人時。生産=F/K/FK・それ以外は非生産へ寄せる
+  function awsAgg(rows) {
+    const laneTot = new Array(18).fill(0);
+    const secTot = { F: new Array(18).fill(0), K: new Array(18).fill(0), FK: new Array(18).fill(0) };
+    const prodTot = new Array(18).fill(0), npTot = new Array(18).fill(0);
+    for (const r of (rows || [])) {
+      const sl = r.slots || [];
+      for (let k = 0; k < 36; k++) {
+        const v = sl[k];
+        if (!v) continue;
+        laneTot[k >> 1] += 0.5;
+        if (AWS_PROD[v]) { secTot[v][k >> 1] += 0.5; prodTot[k >> 1] += 0.5; }
+        else npTot[k >> 1] += 0.5;
+      }
+    }
+    return { laneTot, secTot, prodTot, npTot };
+  }
+
+  // 仮WSのレーン表（モデルWSレーン表と同じ寸法・同じ見た目で並べて比べられるように）
+  function awsLaneChartHtml(rows) {
+    const SLOTW = 16, LABW = 190, KEIW = 52, GRIDW = SLOTW * 36;
+    const tmOf = (k) => `${Math.floor(6 + k / 2)}:${k % 2 ? '30' : '00'}`;
+    const domi = (r) => {
+      const c = {};
+      for (const v of (r.slots || [])) if (v) c[v] = (c[v] || 0) + 1;
+      const t = Object.entries(c).sort((p, q) => q[1] - p[1])[0];
+      return t ? t[0] : 'UNK';
+    };
+    const first = (r) => { const i = (r.slots || []).findIndex((v) => v); return i < 0 ? 99 : i; };
+    const ls = (rows || []).slice().sort((x, y) =>
+      (AWS_ORD[domi(x)] ?? 9) - (AWS_ORD[domi(y)] ?? 9) || first(x) - first(y) ||
+      String(x.name).localeCompare(String(y.name), 'ja'));
+    if (!ls.length) return '<div style="font-size:12px;color:#8c8c88;padding:8px 0">この日の仮WSはまだありません</div>';
+    const gridBg = 'background:' +
+      `repeating-linear-gradient(90deg, transparent 0 ${SLOTW * 2 - 1}px, #eceae5 ${SLOTW * 2 - 1}px ${SLOTW * 2}px);`;
+    const qLines = [10, 14, 18, 22].map((h) =>
+      `<i style="position:absolute;top:0;bottom:0;left:${(h - 6) * SLOTW * 2 - 1}px;width:2px;background:#d6d4ce"></i>`).join('');
+    let out = '';
+    for (const r of ls) {
+      const sl = r.slots || [];
+      let segs = '', h = 0, k = 0;
+      while (k < 36) {
+        const v = sl[k];
+        if (!v) { k++; continue; }
+        let j = k + 1;
+        while (j < 36 && sl[j] === v) j++;
+        h += (j - k) * 0.5;
+        const rl = sl[k - 1] === v ? '0' : '13px', rr = sl[j] === v ? '0' : '13px';
+        const lbl = (j - k) * SLOTW >= 40 && !AWS_PROD[v]
+          ? `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;white-space:nowrap;overflow:hidden;padding:0 3px">${esc(AWS_LAB[v] || v)}</span>` : '';
+        segs += `<div title="${esc(`${tmOf(k)}〜${tmOf(j)} ${AWS_LAB[v] || v}`)}" ` +
+          `style="position:absolute;top:3px;height:20px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
+          `border-radius:${rl} ${rr} ${rr} ${rl};background:${AWS_COL[v] || '#d1d5db'};">${lbl}</div>`;
+        k = j;
+      }
+      out += `<div style="display:flex;border:1px solid #e3e2dc;border-top:0;background:#fff">` +
+        `<div style="width:${LABW}px;min-width:${LABW}px;font-size:11px;padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name || '')}</div>` +
+        `<div style="position:relative;width:${GRIDW}px;min-width:${GRIDW}px;height:26px;${gridBg}">${qLines}${segs}</div>` +
+        `<div style="width:${KEIW}px;min-width:${KEIW}px;text-align:right;font-size:10.5px;font-weight:700;color:#7c2d12;padding:5px 6px">${h ? h + 'h' : ''}</div></div>`;
+    }
+    return `<div style="border-top:1px solid #e3e2dc">${out}</div>`;
+  }
+
+  // 差分サマリ（時間帯18列 × 指標6種 × モデルWS/仮WS/差 の3段）
+  function wsCmpSummaryHtml(m, a, le) {
+    const SLOTW = 16, LABW = 190, KEIW = 52;
+    const fmtN = (v) => !v ? '' : (v % 1 ? v.toFixed(1) : String(v));
+    const sumH = (arr) => Math.round(arr.reduce((x, y) => x + y, 0) * 10) / 10;
+    const fmtD = (v) => Math.abs(v) < 0.001 ? '' : (v > 0 ? '+' : '') + (v % 1 ? v.toFixed(1) : String(v));
+    const dCol = (v) => Math.abs(v) < 0.001 ? '#c9c7c1' : (v > 0 ? '#1a5fb4' : '#c0392b');
+    const td = (v, i, style) =>
+      `<td style="width:${SLOTW * 2}px;min-width:${SLOTW * 2}px;text-align:center;font-size:11px;padding:2px 0;` +
+      `border:1px solid #e3e2dc;${i > 0 && (i + 6) % 4 === 2 ? 'border-left:2px solid #c9c7c1;' : ''}${style || ''}">${v}</td>`;
+    const tr = (label, tot, cells, opt = {}) =>
+      `<tr><td style="width:${LABW}px;min-width:${LABW}px;font-size:11.5px;padding:2px 8px;border:1px solid #e3e2dc;` +
+      `white-space:nowrap;${opt.bg ? `background:${opt.bg};` : ''}${opt.top ? 'border-top:2px solid #c9c7c1;' : ''}">${label}</td>${cells}` +
+      `<td style="width:${KEIW}px;min-width:${KEIW}px;text-align:right;font-size:11px;font-weight:700;padding:2px 6px;` +
+      `border:1px solid #e3e2dc;${opt.bg ? `background:${opt.bg};` : ''}${opt.tc ? `color:${opt.tc};` : ''}` +
+      `${opt.top ? 'border-top:2px solid #c9c7c1;' : ''}">${tot}</td></tr>`;
+    const hdr = `<tr><td style="font-size:10.5px;padding:2px 8px;border:1px solid #d9d8d2;background:#f4f2ee">＼時</td>` +
+      Array.from({ length: 18 }, (_, i) => td(`<b>${i + 6}</b>`, i, 'background:#f4f2ee')).join('') +
+      `<td style="text-align:center;font-size:10.5px;border:1px solid #d9d8d2;background:#f4f2ee"><b>計</b></td></tr>`;
+    let html = '';
+    if (le && Array.isArray(le.hours)) {
+      html += tr('<span style="color:#1a5fb4;font-weight:700">客数(時間帯)</span>',
+        `<span style="color:#1a5fb4">${le.total || ''}</span>`,
+        le.hours.map((v, i) => td(v === '0' ? '' : v, i, 'color:#1a5fb4')).join(''), { top: true });
+    }
+    const metrics = [
+      ['合計人数', m.laneTot, a.laneTot, '#f4f2ee'],
+      ['　F', m.secTot.F, a.secTot.F, '#eef4ff'],
+      ['　K', m.secTot.K, a.secTot.K, '#eafaf3'],
+      ['　FK', m.secTot.FK, a.secTot.FK, '#f3efff'],
+      ['生産計', m.prodTot, a.prodTot, ''],
+      ['非生産計', m.npTot, a.npTot, '#fdf3e3'],
+    ];
+    for (const [name, mv, av, bg] of metrics) {
+      const dv = mv.map((v, i) => Math.round((av[i] - v) * 10) / 10);
+      html += tr(`<b>${name}</b>　<span style="color:#a97016;font-size:11px">モデルWS</span>`,
+        `<span style="color:#a97016">${sumH(mv)}h</span>`,
+        mv.map((v, i) => td(fmtN(v), i, 'color:#a97016')).join(''), { bg, top: true });
+      html += tr(`<span style="color:#6d6d69">　　</span><span style="color:#5b21b6;font-size:11px;font-weight:700">仮WS</span>`,
+        `<span style="color:#5b21b6">${sumH(av)}h</span>`,
+        av.map((v, i) => td(fmtN(v), i, 'color:#5b21b6;font-weight:700')).join(''), { bg });
+      const dt = Math.round((sumH(av) - sumH(mv)) * 10) / 10;
+      html += tr(`<span style="color:#6d6d69">　　</span><span style="font-size:11px;font-weight:700">差（仮WS − モデル）</span>`,
+        `<span style="color:${dCol(dt)};font-weight:700">${fmtD(dt) || '±0'}</span>`,
+        dv.map((v, i) => td(`<b>${fmtD(v)}</b>`, i,
+          `color:${dCol(v)};${Math.abs(v) >= 0.001 ? 'background:#fbfaf7;' : ''}`)).join(''), { bg });
+    }
+    return `<table style="border-collapse:collapse">${hdr}${html}</table>`;
+  }
+
+  // 別ウィンドウの中身を組む。仮WSが無い日でもモデルWSは出す（何と比べるかが分かるように）
+  function wsCompareHtml(params, tpl, iso, le, day) {
+    const wd = '日月火水木金土'[new Date(`${iso}T00:00:00`).getDay()];
+    const rows = (day && day.rows) || [];
+    const m = wsModelAgg(params, tpl);
+    const a = awsAgg(rows);
+    const sumH = (arr) => Math.round(arr.reduce((x, y) => x + y, 0) * 10) / 10;
+    const mh = sumH(m.laneTot), ah = sumH(a.laneTot), d = Math.round((ah - mh) * 10) / 10;
+    const dCol = Math.abs(d) < 0.001 ? '#6d6d69' : (d > 0 ? '#1a5fb4' : '#c0392b');
+    const note = rows.length
+      ? `仮WS 計 <b style="color:#5b21b6">${ah}h</b>　モデルWS 計 <b style="color:#a97016">${mh}h</b>　` +
+        `差 <b style="color:${dCol}">${d > 0 ? '+' : ''}${d}h</b>` +
+        (day && day.updated_at ? `　<span style="color:#8c8c88">（仮WS 更新 ${esc(String(day.updated_at).replace('T', ' '))}）</span>` : '')
+      : `<b style="color:#c0392b">この日の仮WSはまだありません。</b>` +
+        ` スケジューラーの「🗓 仮WS」タブで ${esc(iso)} を開いて組んでください。`;
+    return `<div style="font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616">
+      <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px">
+        <b style="font-size:16px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">仮WS ⇄ モデルWS 差異</b>
+        <span style="font-size:13px">${esc(iso)}（${wd}）</span>
+        <span style="font-size:12px;color:#6d6d69">モデルWS ${esc(tpl.name)}型${tpl.tc ? `・TC ${esc(String(tpl.tc))}` : ''}${le && le.total ? `・LE ${esc(String(le.total))}` : ''}</span>
+        <span style="flex:1"></span>
+        <a href="http://mac-mini.tail1f88ff.ts.net:8790/#act" target="_blank" rel="noopener" style="font-size:12px;color:#1a5fb4;text-decoration:none">🗓 仮WSを編集↗</a>
+      </div>
+      <div style="font-size:12px;margin-bottom:10px">${note}</div>
+      ${wsCmpSummaryHtml(m, a, le)}
+      <div style="margin:16px 0 4px;font-size:13px;font-weight:700;color:#5b21b6">仮WS（スケジューラーで組んだこの日のスケジュール）</div>
+      ${awsLaneChartHtml(rows)}
+      <div style="margin:18px 0 4px;font-size:13px;font-weight:700;color:#a97016">モデルWS（計画の型）</div>
+      ${wsLaneHtml(params, tpl, iso, le, { noHead: true })}
+      <div style="font-size:11px;color:#8c8c88;margin:10px 0 24px">
+        読み取り専用。差は「仮WS − モデルWS」で、＋は仮WSが多い（青）・−は足りない（赤）。
+        非生産計は モデル=固定作業／仮WS=正社員ライン・MGT(クルー)・TR・固定・非生産・不明 の合計。
+      </div>
+    </div>`;
+  }
+
+  // クリック直後に同期で開く（awaitを挟むとポップアップブロックに掛かるため）
+  function openWsCompareWindow(iso) {
+    let w = null;
+    try { w = window.open('', 'rfWsCompare', 'width=1320,height=940,scrollbars=yes,resizable=yes'); } catch { w = null; }
+    if (!w) { alert('ポップアップがブロックされました。このサイトのポップアップを許可してください'); return null; }
+    try {
+      w.document.open();
+      w.document.write('<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>仮WS ⇄ モデルWS ' +
+        esc(iso) + '</title></head><body style="margin:0;padding:16px;background:#fff;' +
+        "font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616\">" +
+        '<div style="font-size:13px;color:#6d6d69">読み込み中…</div></body></html>');
+      w.document.close();
+    } catch { /* about:blank への書き込みが弾かれても下の innerHTML で復帰する */ }
+    return w;
+  }
+
+  async function fillWsCompare(w, iso) {
+    const say = (html) => { try { w.document.body.innerHTML = html; } catch { /* 閉じられた */ } };
+    const params = leMakerCache && leMakerCache.params;
+    if (!params || !params.ws) return say('<div style="font-size:13px;color:#c0392b">モデルWSが読めていません。パネルの「更新」を押してから開き直してください。</div>');
+    const le = lastWsSum && lastWsSum.le;
+    const leSum = le && le.total ? (parseFloat(String(le.total).replace(/,/g, '')) || 0) : 0;
+    const tpl = wsTplFor(params, iso, leSum);
+    if (!tpl) return say(`<div style="font-size:13px;color:#c0392b">${esc(iso)} に適用されるモデルWS型がありません。</div>`);
+    const r = await draftApi(`/api/actws?month=${iso.slice(0, 7)}`);
+    if (!r || !r.ok) {
+      const msg = (r && r.data && r.data.msg) || (r && r.error) || '通信エラー';
+      return say(`<div style="font-size:13px;color:#c0392b">仮WSを取得できませんでした（スケジューラー :8790）: ${esc(msg)}</div>`);
+    }
+    const day = ((r.data && r.data.days) || {})[iso] || null;
+    say(wsCompareHtml(params, tpl, iso, le, day));
+    try { w.document.title = `仮WS ⇄ モデルWS ${iso}`; w.focus(); } catch { /* noop */ }
   }
 
   // ===== セクション見出しに モデルWS選択＋F/K/FK/非生産の時間数 PLAN/SCH を注入 =====
