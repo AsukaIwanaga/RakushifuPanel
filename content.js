@@ -2864,9 +2864,12 @@
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     const um = Object.fromEntries((j.users || []).map((u) => [u.id, normName(u.name)]));
+    // 年齢・年少者フラグはらくしふのusersにそのまま入っている（右パネルのアラート判定用）
+    const uinfo = Object.fromEntries((j.users || []).map((u) => [normName(u.name),
+      { id: u.id, age: u.age, underage: !!u.underage }]));
     const perName = {};
     const ent = (nm) => (perName[nm] ||= { asg: new Set(), wish: new Set(), asgT: {},
-      mins: 0, minsD: {}, byG: { F: 0, K: 0, REG: 0, OTH: 0 }, other: new Set() });
+      mins: 0, minsD: {}, byG: { F: 0, K: 0, REG: 0, OTH: 0 }, other: new Set(), spans: {} });
     // 週バッジと同じ扱い: 他店あて（兼任の本籍店・他店応援）は当店の出勤ではない＝非出勤日
     const mine = (x) => x.attending_store_id == null ||
       String(x.attending_store_id) === String(storeId);
@@ -2879,6 +2882,8 @@
       e2.asg.add(sh.date);
       const hm2 = (x) => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, '0')}`;
       e2.asgT[sh.date] = `${hm2(sh.start_as_min)}-${hm2(sh.end_as_min)}`;
+      // 同じ日に複数本あることがあるので日ごとに全部ためる（12時間インターバル判定用）
+      (e2.spans[sh.date] ||= []).push([sh.start_as_min, sh.end_as_min]);
       // 人別の月間労働時間（休憩控除後）。店舗計の月チップ(fetchMonthHours)と同じ数え方。
       let mn = sh.end_as_min - sh.start_as_min;
       for (const rt of sh.rest_times || []) {
@@ -2897,6 +2902,7 @@
       const nm = um[w.user_id];
       if (nm) ent(nm).wish.add(w.date);
     }
+    Object.defineProperty(perName, '_users', { value: uinfo, enumerable: false });
     mcalCache[ym] = perName;
     return perName;
   }
@@ -2983,6 +2989,127 @@
       box.querySelector('.mc-body').innerHTML = `<span style="color:#b02a2a">取得失敗: ${esc(String(e2.message || e2))}</span>`;
     }
   }
+  // ===== シフト表の右の空きスペースに出す「月の労働時間＋アラート」パネル =====
+  // 本人要望2026-08-29「シフトの右側が広大に余っている。月の総労働時間と、
+  // 12時間インターバルが取れていない・高校生なのに21:30以降まで引いている等のアラートを出したい」。
+  // データは月間カレンダーと同じ mcalMonth（1回のfetchで月全体）を使う＝追加の取得なし。
+  const IV_MIN = 12 * 60;          // 勤務終了後にあけるインターバル（原則12時間）
+  const HS_END = 21 * 60 + 30;     // 高校生は21:30まで（店舗ルール）
+  const MINOR_END = 22 * 60;       // 18歳未満は22:00まで（法定）
+  // 12時間インターバル違反を拾う。同じ日に複数本ある人は「その日の最初〜最後」を1勤務とみなす
+  // （分割シフトの隙間を違反にしないため）。日をまたぐ前後関係だけを見る。
+  function ivViolations(per) {
+    const out = [];
+    for (const [nm, st] of Object.entries(per)) {
+      const days = Object.keys(st.spans || {}).sort();
+      const day = days.map((d) => {
+        const ss = st.spans[d];
+        return { d, s: Math.min(...ss.map((x) => x[0])), e: Math.max(...ss.map((x) => x[1])) };
+      });
+      for (let i = 0; i + 1 < day.length; i++) {
+        const a = day[i], b = day[i + 1];
+        const nd = Math.round((parseYmd(b.d) - parseYmd(a.d)) / 86400000);
+        const gap = (b.s + nd * 1440) - a.e;
+        if (gap < IV_MIN) out.push({ kind: 'iv', name: nm, date: b.d, prev: a.d, gap, endPrev: a.e, start: b.s });
+      }
+    }
+    return out.sort((x, y) => x.gap - y.gap);
+  }
+  // 高校生（＝18歳未満をこう扱う。らくしふに区分は無いので年齢で判定）の遅番
+  function ageViolations(per) {
+    const users = per._users || {};
+    const out = [];
+    for (const [nm, st] of Object.entries(per)) {
+      const u = users[nm];
+      if (!u || !(u.underage || (u.age != null && u.age < 18))) continue;
+      for (const [d, ss] of Object.entries(st.spans || {})) {
+        for (const [, e] of ss) {
+          if (e > MINOR_END) out.push({ kind: 'minor', name: nm, date: d, end: e, age: u.age });
+          else if (e > HS_END) out.push({ kind: 'hs', name: nm, date: d, end: e, age: u.age });
+        }
+      }
+    }
+    return out.sort((x, y) => (y.end - x.end) || x.date.localeCompare(y.date));
+  }
+  const hhmm = (m) => `${Math.floor(m / 60)}:${pad2(m % 60)}`;
+  const mdw = (iso) => { const d = parseYmd(iso); return `${d.getMonth() + 1}/${d.getDate()}(${WEEKDAYS[d.getDay()]})`; };
+  // 別の日へ飛ぶリンク（らくしふの日ビューのURLを組み直すだけ・書き込みはしない）
+  const dayHref = (iso) => {
+    const p2 = new URLSearchParams(location.search);
+    p2.set('from', iso); p2.set('to', iso); p2.set('u', 'OneDay');
+    return `${location.pathname}?${p2}`;
+  };
+
+  let sideBusy = false;
+  async function renderSidePanel() {
+    if (isPrintPage || !onOneDayTarget()) { document.getElementById('rf-side')?.remove(); return; }
+    // 置き場所＝時間軸ヘッダを持つ表の右横。幅が取れないビューでは出さない
+    const tbl = (document.querySelector('th.timeline-sticky') || document.querySelector('.table-title'))?.closest('table');
+    if (!tbl) { document.getElementById('rf-side')?.remove(); return; }
+    const r = tbl.getBoundingClientRect();
+    const left = r.right + scrollX + 16;
+    const width = Math.min(430, document.documentElement.clientWidth + scrollX - left - 16);
+    if (width < 260) { document.getElementById('rf-side')?.remove(); return; }
+
+    let box = document.getElementById('rf-side');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'rf-side';
+      box.style.cssText = "position:absolute;z-index:900;background:#fff;border:1px solid #d9d8d2;" +
+        "font-family:'Hiragino Sans','Yu Gothic',sans-serif;font-size:12px;color:#161616;padding:10px 12px;";
+      document.body.appendChild(box);
+    }
+    box.style.left = `${left}px`;
+    box.style.top = `${r.top + scrollY}px`;
+    box.style.width = `${width}px`;
+
+    const ym = ymd(targetDate).slice(0, 7);
+    if (sideBusy) return;
+    sideBusy = true;
+    try {
+      const per = await mcalMonth(ym);
+      const tot = { F: 0, K: 0, REG: 0, OTH: 0 }; let mins = 0; const days = new Set();
+      for (const st of Object.values(per)) {
+        mins += st.mins || 0;
+        for (const k of ['F', 'K', 'REG', 'OTH']) tot[k] += (st.byG || {})[k] || 0;
+        for (const d of Object.keys(st.spans || {})) days.add(d);
+      }
+      const iv = ivViolations(per), ag = ageViolations(per);
+      const h = (m) => (Math.round(m / 6) / 10).toLocaleString('ja-JP');
+      const line = (l, v, c) => `<div style="display:flex;justify-content:space-between;font-size:11.5px;` +
+        `padding:1px 0"><span style="color:#6d6d69">${l}</span><b style="color:${c || '#474743'}">${v}</b></div>`;
+      const alertRow = (col, head, body, iso) =>
+        `<a href="${dayHref(iso)}" style="display:block;text-decoration:none;color:inherit;border-left:3px solid ${col};` +
+        `background:#fbfaf8;padding:3px 7px;margin-bottom:3px">` +
+        `<div style="font-size:11px;font-weight:700;color:${col}">${head}</div>` +
+        `<div style="font-size:11.5px">${body}</div></a>`;
+      const ivHtml = iv.map((v) => alertRow('#b02a2a', `⏱ 12時間インターバル ${Math.floor(v.gap / 60)}時間${pad2(v.gap % 60)}分`,
+        `<b>${esc(v.name)}</b>　${mdw(v.prev)} 〜${hhmm(v.endPrev)} → ${mdw(v.date)} ${hhmm(v.start)}〜`, v.date)).join('');
+      const agHtml = ag.map((v) => alertRow(v.kind === 'minor' ? '#b02a2a' : '#b45309',
+        v.kind === 'minor' ? `⛔ 18歳未満が22:00超（法定）` : `⚠ 高校生が21:30超（店舗ルール）`,
+        `<b>${esc(v.name)}</b>（${v.age != null ? `${v.age}歳` : '年少者'}）　${mdw(v.date)} 〜${hhmm(v.end)}`, v.date)).join('');
+      const n = iv.length + ag.length;
+      box.innerHTML =
+        `<div style="font-weight:700;font-size:13px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px;` +
+        `display:inline-block;margin-bottom:7px">📊 ${Number(ym.slice(5))}月の労働時間</div>` +
+        `<div style="font-size:26px;font-weight:800;line-height:1.1">${h(mins)}<span style="font-size:13px">h</span></div>` +
+        `<div style="margin:5px 0 9px">${line('フロア', `${h(tot.F)}h`, '#1d4ed8')}${line('キッチン', `${h(tot.K)}h`, '#157347')}` +
+        `${tot.REG ? line('正社員', `${h(tot.REG)}h`, '#7c3aed') : ''}${tot.OTH ? line('その他', `${h(tot.OTH)}h`) : ''}` +
+        `${line('入力のある日', `${days.size}日`)}</div>` +
+        `<div style="font-weight:700;font-size:12.5px;margin-bottom:4px">` +
+        `${n ? `⚠ アラート <span style="color:#b02a2a">${n}件</span>` : '✅ アラートなし'}</div>` +
+        (n ? agHtml + ivHtml
+           : `<div style="font-size:11.5px;color:#8c8c88">12時間インターバル・年少者の遅番ともに違反はありません。</div>`) +
+        `<div style="font-size:10px;color:#8c8c88;margin-top:7px;line-height:1.5">` +
+        `この月のらくしふ入力ぶん全体を見ています（休憩控除後）。<br>` +
+        `12時間＝前の勤務の終業から次の勤務の始業まで。同じ日の複数本は1勤務として数えます。<br>` +
+        `年少者判定はらくしふの年齢（18歳未満）。クリックでその日へ移動。</div>`;
+    } catch (e) {
+      box.innerHTML = `<div style="color:#b02a2a;font-size:11.5px">月データを取得できませんでした<br>` +
+        `<span style="color:#8c8c88;font-size:10px">${esc(String(e && e.message || e))}</span></div>`;
+    } finally { sideBusy = false; }
+  }
+
   // ===== 名前横「月n日/XXh」バッジ（月のトータル時間数・本人要望2026-08-28）=====
   // 週バッジ(この週)だけでは月間の入り具合が分からない、が発端。データ元は月間カレンダーと
   // 同じ mcalMonth（1回の /ajax/admin/v2/schedules で月全体・キャッシュ共用）。
@@ -5063,6 +5190,7 @@
       .then((per) => { lastWeekStats = per; updateWeekBadges(per); })
       .catch(() => {});
     updateMonthBadges().catch(() => {});
+    renderSidePanel().catch(() => {});   // 右の空きスペース: 月の労働時間＋アラート
     renderTasks();
     renderBiz().catch(() => {});
     renderDraft().catch(() => {});
@@ -6632,6 +6760,7 @@
     // Vueの再描画でバッジ/バー/LE行/依頼マークが消えた場合の張り直し（軽量）
     guarded('weekBadges', () => { if (lastWeekStats) updateWeekBadges(lastWeekStats); });
     guarded('monthBadges', () => { if (lastMonthPer) paintMonthBadges(); });
+    guarded('sidePanel', () => { renderSidePanel().catch(() => {}); });
     guarded('taskStrip', () => { if (!document.querySelector('.rf-task-strip')) updateTaskStrip().catch(() => {}); });
     guarded('strips', () => { if (lastStrip && !stripsIntact()) updateStrips(lastStrip); });
     guarded('leRows', () => { if (lastLE && !leRowsIntact()) updateLERows(lastLE.le, lastLE.reqPack, lastLE.act); });
