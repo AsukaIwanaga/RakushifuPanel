@@ -2258,20 +2258,32 @@
       return `お疲れ様です。${dateLabel}${span ? ` ${span}` : ''}の休み希望の件、承知しました。` +
         'シフトを調整しますので、反映されたらまたご連絡します。';
     }
-    const parts = String(change || '').split(/\s*(?:=>|→|->|⇒)\s*/);
+    const raw = String(change || '').trim();
+    // 時刻の「17:30-21:00」は読みにくいので「17:30〜21:00」に整える（本人指摘2026-08-29）
+    const tildify = (t) => t.replace(/(\d{1,2}:\d{2})\s*[-–ー]\s*(\d{1,2}:\d{2})/g, '$1〜$2');
+    // すでに1文として完成している変更内容（「…のところ、…に変更できませんか？」など・
+    // ❗依頼作成の新旧比較プリセットがこの形）に定型を足すと
+    // 「…変更できませんか？に変更願えませんでしょうか。」になる（本人指摘2026-08-29）。
+    const done = /(？|\?|。|ください|下さい|ませんか|ましょうか|でしょうか|お願いします|お願いいたします)$/;
+    const parts = raw.split(/\s*(?:=>|→|->|⇒)\s*/);
     let body;
     if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
       body = `現在${fmtTimeToken(parts[0])}のところ、${fmtTimeToken(parts[1])}に変更願えませんでしょうか。`;
+    } else if (done.test(raw)) {
+      body = tildify(raw);
     } else {
       // freeformは末尾の「に変更/へ変更」を落として二重表現を防ぐ（例「14時入りに変更」→「14時入り」）
-      const after = String(change || '').trim().replace(/[にへ]変更$/, '').trim() || String(change || '').trim();
+      const after = tildify(raw.replace(/[にへ]変更$/, '').trim() || raw);
       // 変更内容が空なら「〜に変更」だけが残って文が壊れるので、汎用文にする。
       // 「〜延長/短縮」で終わる文は「延長に変更」と二重になるため「願えませんか？」で結ぶ（本人指定2026-08-06）
       body = !after ? '変更をお願いできませんでしょうか。'
         : /(延長|短縮)$/.test(after) ? `${after}願えませんか？`
           : `${after}に変更願えませんでしょうか。`;
     }
-    return `お疲れ様です。${urgent}${dateLabel}${span ? ` ${span}` : ''}のシフトについて、${body}`;
+    // 変更内容の中に時刻が入っているなら、見出しの対象時間は出さない
+    // （「16:30〜21:00のシフトについて、17:30〜21:00のところ、16:30〜21:00に…」と3回出るため）
+    const span2 = /\d{1,2}[:：]\d{2}|\d{1,2}\s*時/.test(raw) ? '' : span;
+    return `お疲れ様です。${urgent}${dateLabel}${span2 ? ` ${span2}` : ''}のシフトについて、${body}`;
   }
   // ②本人向け（反映完了）文言。person=本人（通常は対象者/全員なら発信者）
   function wowtalkDoneMessage(person, targetDateStr, reqTime) {
