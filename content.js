@@ -3573,6 +3573,19 @@
     awsPanelCache[ym] = out;
     return out;
   }
+  // 実WS(/api/shift-actual の rows)→ 仮WSと同じ「1人1レーン(slots[36])」へ畳む。
+  // スケジューラーは日を開いただけでは保存しない（＝編集して初めて仮WSができる）ので、
+  // 未編集の日はこれで実WSをそのまま見せる（本人指摘2026-08-29「一致しているために無い？」）
+  function awsRowsFromActual(rows) {
+    const by = new Map();
+    for (const r of (rows || [])) {
+      let e = by.get(r.user_id);
+      if (!e) { e = { user_id: r.user_id, name: r.name, slots: new Array(36).fill(null) }; by.set(r.user_id, e); }
+      (r.slots || []).forEach((v, i) => { if (v && !e.slots[i]) e.slots[i] = v; });
+    }
+    return [...by.values()];
+  }
+
   // 上段サマリ（モデルWSレーン表の表と同じ列・同じ寸法で並べて読めるように）
   function awsSummaryHtml(rows, le) {
     const SLOTW = 16, LABW = 190, KEIW = 52;
@@ -3615,12 +3628,16 @@
       `<td style="text-align:center;font-size:10.5px;border:1px solid #d9d8d2;background:#f4f2ee"><b>計</b></td></tr>`;
     return `<table style="border-collapse:collapse;margin-bottom:0">${hourHdr}${html}</table>`;
   }
-  function awsPanelHtml(rows, iso, le, updatedAt) {
+  function awsPanelHtml(rows, iso, le, updatedAt, asIs) {
     const n = (rows || []).length;
     const tot = (rows || []).reduce((x, r) => x + (r.slots || []).filter(Boolean).length * 0.5, 0);
+    const tag = asIs
+      ? `<span title="この日はスケジューラーでまだ編集していないので、実WS（らくしふ）そのままです" style="font-size:11px;font-weight:700;color:#6d6d69;background:#f4f2ee;border:1px solid #e3e2dc;border-radius:4px;padding:1px 6px;white-space:nowrap">実WSのまま（未編集）</span>`
+      : `<span title="スケジューラーで引き直した案です" style="font-size:11px;font-weight:700;color:#92600a;background:#fdf3e3;border:1px solid #f0dfbb;border-radius:4px;padding:1px 6px;white-space:nowrap">編集済み</span>`;
     return `<div style="width:fit-content;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616">
       <div style="display:flex;align-items:center;gap:12px;margin:2px 0 8px">
         <b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">仮WS</b>
+        ${tag}
         <span style="font-size:12px;color:#6d6d69">${esc(iso)}・${n}人・計 ${Math.round(tot * 10) / 10}h` +
       `${updatedAt ? `・${esc(String(updatedAt).replace('T', ' ').slice(5, 16))} 保存` : ''}` +
       `${le && le.total ? `・LE ${esc(String(le.total))}` : ''}</span>
@@ -3642,13 +3659,20 @@
       const m = await awsFetchMonth(iso.slice(0, 7), force);
       const day = (m.days || {})[iso] || null;
       const le = lastWsSum && lastWsSum.le;
-      if (!day || !(day.rows || []).length) {
-        el.innerHTML = `<div style="font-size:12.5px;color:#6d6d69">${esc(iso)} の仮WSはまだありません。` +
-          `<a href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener" style="color:#1a5fb4;text-decoration:none">スケジューラーの「実WS」タブ↗</a>` +
-          `でこの日を開くと、実WSを元にした仮WSを引けます。</div>`;
+      let rows = (day && (day.rows || []).length) ? day.rows : null;
+      let asIs = false;
+      if (!rows) {
+        // 未編集の日＝仮WSのレコードが無い。実WS（らくしふ）をそのまま出す
+        const r2 = await draftApi(`/api/shift-actual?month=${iso.slice(0, 7)}&date=${iso}`);
+        const d2 = r2 && r2.ok && r2.data;
+        if (d2 && d2.ok && (d2.rows || []).length) { rows = awsRowsFromActual(d2.rows); asIs = true; }
+      }
+      if (!rows) {
+        el.innerHTML = `<div style="font-size:12.5px;color:#6d6d69">${esc(iso)} は実WS（らくしふのシフト）も仮WSもありません。` +
+          `<a href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener" style="color:#1a5fb4;text-decoration:none">スケジューラーの「実WS」タブ↗</a></div>`;
         return;
       }
-      el.innerHTML = awsPanelHtml(day.rows, iso, le, day.updated_at);
+      el.innerHTML = awsPanelHtml(rows, iso, le, day && day.updated_at, asIs);
     } catch (e) {
       el.innerHTML = `<div style="font-size:12.5px;color:#c0392b">仮WSを取得できませんでした（スケジューラー :8790）: ${esc(String(e.message || e))}</div>`;
     }
