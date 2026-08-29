@@ -3145,7 +3145,7 @@
       const g = st.byG || { F: 0, K: 0, REG: 0, OTH: 0 };
       const parts = [['F', g.F], ['K', g.K], ['正社員', g.REG], ['その他', g.OTH]]
         .filter(([, v]) => v > 0).map(([k, v]) => `${k} ${mcH(v)}h`);
-      b.title = `${mLbl}月に当店へ入力済みのアサイン合計（休憩控除後・ヘルプ含む）` +
+      b.title = `${mLbl}月に当店へ入力済みのアサイン合計＝出勤日数と実働時間（休憩控除後）。日付ではありません` +
         (parts.length ? `\n${parts.join(' / ')}` : '') +
         (st.other && st.other.size ? `\n他店の勤務${st.other.size}日は非出勤日として除外` : '') +
         '\nクリックで月間カレンダー';
