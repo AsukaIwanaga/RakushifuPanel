@@ -2732,6 +2732,9 @@
     }
   });
   shiftPanel.addEventListener('keydown', (ev) => {
+    // 日本語入力の変換確定のEnterで実行してしまうのを防ぐ（本人指摘2026-08-29）。
+    // 変換中のkeydownは isComposing=true（古い実装では keyCode 229）になる。
+    if (ev.isComposing || ev.keyCode === 229) return;
     if (ev.key === 'Enter' && ev.target.matches('.sc-note-input input')) {
       ev.target.parentElement.querySelector('button').click();
     }
