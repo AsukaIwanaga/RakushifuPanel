@@ -2796,13 +2796,19 @@
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     const um = Object.fromEntries((j.users || []).map((u) => [u.id, (u.name || '').replace(/\s+/g, '')]));
-    const per = {}; // 名前 -> {days:Set, mins, wish:Set}
-    const ent = (nm) => (per[nm] ||= { days: new Set(), mins: 0, wish: new Set() });
+    const per = {}; // 名前 -> {days:Set, mins, wish:Set, other:Set}
+    const ent = (nm) => (per[nm] ||= { days: new Set(), mins: 0, wish: new Set(), other: new Set() });
+    // 他店あて（兼任クルーの本籍店・他店への応援）は当店の出勤ではないので非出勤日として扱う。
+    // このAPIは store_id を指定しても兼任者の他店シフトまで返す（本人指摘2026-08-29・実測:
+    // シリザナさんの2026-09は instructed 14日のうち8日が他店833＝下北沢だった）。
+    const mine = (x) => x.attending_store_id == null ||
+      String(x.attending_store_id) === String(storeId);
     for (const sh of j.instructed || []) {
       if (sh.off || sh.is_deleted) continue;
       if (sh.date < ymd(mon) || sh.date > ymd(sun)) continue; // APIの前後日パディング除去
       const nm = um[sh.user_id];
       if (!nm) continue;
+      if (!mine(sh)) { ent(nm).other.add(sh.date); continue; }
       let mins = sh.end_as_min - sh.start_as_min;
       for (const rt of sh.rest_times || []) {
         mins -= Math.max(0, (rt.end_hour * 60 + rt.end_minute) - (rt.start_hour * 60 + rt.start_minute));
@@ -2813,7 +2819,7 @@
     }
     // らくしふ提出の希望シフト(desired・勤務系のみ)＝希望日（本人確認2026-08-17「希望が出ている日は下線」）
     for (const w of j.desired || []) {
-      if (w.off || w.is_deleted) continue;
+      if (w.off || w.is_deleted || !mine(w)) continue;   // 他店あての希望も当店では出さない
       if (w.date < ymd(mon) || w.date > ymd(sun)) continue;
       const nm = um[w.user_id];
       if (nm) ent(nm).wish.add(w.date);
@@ -2860,11 +2866,15 @@
     const um = Object.fromEntries((j.users || []).map((u) => [u.id, normName(u.name)]));
     const perName = {};
     const ent = (nm) => (perName[nm] ||= { asg: new Set(), wish: new Set(), asgT: {},
-      mins: 0, minsD: {}, byG: { F: 0, K: 0, REG: 0, OTH: 0 } });
+      mins: 0, minsD: {}, byG: { F: 0, K: 0, REG: 0, OTH: 0 }, other: new Set() });
+    // 週バッジと同じ扱い: 他店あて（兼任の本籍店・他店応援）は当店の出勤ではない＝非出勤日
+    const mine = (x) => x.attending_store_id == null ||
+      String(x.attending_store_id) === String(storeId);
     for (const sh of j.instructed || []) {
       if (sh.off || sh.is_deleted || !String(sh.date || '').startsWith(ym)) continue;
       const nm = um[sh.user_id];
       if (!nm) continue;
+      if (!mine(sh)) { ent(nm).other.add(sh.date); continue; }
       const e2 = ent(nm);
       e2.asg.add(sh.date);
       const hm2 = (x) => `${Math.floor(x / 60)}:${String(x % 60).padStart(2, '0')}`;
@@ -2883,7 +2893,7 @@
       e2.byG[gk] += mn;
     }
     for (const w of j.desired || []) {
-      if (w.off || w.is_deleted || !String(w.date || '').startsWith(ym)) continue;
+      if (w.off || w.is_deleted || !mine(w) || !String(w.date || '').startsWith(ym)) continue;
       const nm = um[w.user_id];
       if (nm) ent(nm).wish.add(w.date);
     }
@@ -2911,7 +2921,7 @@
       <button class="mc-x" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">✕</button></div>
       <div class="mc-sum" style="display:flex;align-items:baseline;gap:8px;margin:0 0 6px;font-size:12px;color:#8c8c88">月計 <span style="color:#c9c8c2">…</span></div>
       <div class="mc-body" style="min-height:230px;color:#8c8c88">読込中…</div>
-      <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒=勤務(アサイン済み・時間はマウスで)・下線=希望のみ（らくしふ提出＋台帳）</div>`;
+      <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒=勤務(アサイン済み・時間はマウスで)・下線=希望のみ（らくしふ提出＋台帳）・他店の勤務は非出勤日</div>`;
     document.body.appendChild(box);
     const close = () => { box.remove(); document.removeEventListener('mousedown', out); };
     const out = (e2) => { if (!box.contains(e2.target)) close(); };
@@ -2922,7 +2932,8 @@
     try {
       const perName = await mcalMonth(ym);
       const st = perName[normName(name)] ||
-        { asg: new Set(), wish: new Set(), asgT: {}, mins: 0, minsD: {}, byG: { F: 0, K: 0, REG: 0, OTH: 0 } };
+        { asg: new Set(), wish: new Set(), asgT: {}, mins: 0, minsD: {},
+          byG: { F: 0, K: 0, REG: 0, OTH: 0 }, other: new Set() };
       // 台帳の出勤可希望も合流
       const avail = ((scState && scState.cases) || []).filter((c) =>
         !scClosed(c) && !c.is_rejected && c.target !== '全員' && scAvailCase(c) &&
@@ -2943,7 +2954,11 @@
         else if (wish) s2 += `color:${wdCol};text-decoration:underline;text-underline-offset:3px;font-weight:600;`;
         else s2 += 'color:#c9c8c2;';
         const dh = (st.minsD && st.minsD[iso]) ? ` ${Math.round(st.minsD[iso] / 6) / 10}h` : '';
-        cells.push(`<span title="${iso}${asg ? ` 勤務 ${st.asgT[iso] || ''}${dh}` : wish ? ' 希望' : ''}" style="${s2}">${d}</span>`);
+        // 他店勤務の日は当店では非出勤（灰色のまま）。理由だけツールチップに出す
+        const tt = asg ? ` 勤務 ${st.asgT[iso] || ''}${dh}`
+          : wish ? ' 希望'
+          : (st.other && st.other.has(iso)) ? ' 他店勤務（当店は非出勤）' : '';
+        cells.push(`<span title="${iso}${tt}" style="${s2}">${d}</span>`);
       }
       // 月のトータル時間数（休憩控除後）＋区分内訳（本人要望2026-08-28）
       {
@@ -2955,7 +2970,8 @@
           `<b style="font-size:15px;color:#161616">${mcH(st.mins || 0)}h</b>` +
           `<span>${st.asg.size}日</span>` +
           (parts.length ? `<span style="margin-left:auto;font-size:11px">${parts.join(' / ')}</span>` : '');
-        box.querySelector('.mc-sum').title = '表示中の月にらくしふへ入力済みのアサイン合計（休憩控除後・ヘルプ含む）';
+        box.querySelector('.mc-sum').title = '表示中の月に当店へ入力済みのアサイン合計（休憩控除後・ヘルプ含む）' +
+          (st.other && st.other.size ? `\n他店の勤務${st.other.size}日は非出勤日として除外` : '');
       }
       box.querySelector('.mc-body').innerHTML =
         `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:2px">` +
@@ -2988,7 +3004,7 @@
       if (!box) continue;
       // 月データに居ない人＝その月のアサインゼロ。週バッジと同様「0日/0h」を出す
       const st = per[normName(cellName(nameEl))] ||
-        { asg: new Set(), mins: 0, byG: { F: 0, K: 0, REG: 0, OTH: 0 } };
+        { asg: new Set(), mins: 0, byG: { F: 0, K: 0, REG: 0, OTH: 0 }, other: new Set() };
       let b = box.querySelector('.rf-month-badge');
       if (!b) {
         b = document.createElement('span');
@@ -3002,8 +3018,10 @@
       const g = st.byG || { F: 0, K: 0, REG: 0, OTH: 0 };
       const parts = [['F', g.F], ['K', g.K], ['正社員', g.REG], ['その他', g.OTH]]
         .filter(([, v]) => v > 0).map(([k, v]) => `${k} ${mcH(v)}h`);
-      b.title = `${mLbl}月にらくしふへ入力済みのアサイン合計（休憩控除後・ヘルプ含む）` +
-        (parts.length ? `\n${parts.join(' / ')}` : '') + '\nクリックで月間カレンダー';
+      b.title = `${mLbl}月に当店へ入力済みのアサイン合計（休憩控除後・ヘルプ含む）` +
+        (parts.length ? `\n${parts.join(' / ')}` : '') +
+        (st.other && st.other.size ? `\n他店の勤務${st.other.size}日は非出勤日として除外` : '') +
+        '\nクリックで月間カレンダー';
       // 出勤ありは琥珀（週=緑と区別）、0はグレー
       b.style.color = days ? '#8a5a10' : '#8c8c88';
       b.style.background = days ? '#fbf3e3' : '#f3f3f1';
@@ -3045,7 +3063,7 @@
       const nm = cellName(nameEl).replace(/\s+/g, '');
       // 週データに居ない人＝この週の出勤ゼロ(全休)。以前はバッジを消していたが、
       // 全休でも「週0日/0h」を出す（本人指定2026-08-08「全部休みでも出してほしい」）
-      const st = per[nm] || { days: new Set(), mins: 0, wish: new Set() };
+      const st = per[nm] || { days: new Set(), mins: 0, wish: new Set(), other: new Set() };
       const box = badgeBox(nameEl);
       if (!box) continue;
       let b = box.querySelector('.rf-week-badge');
@@ -3058,13 +3076,18 @@
       }
       // 台帳の出勤可希望日（アサイン済みの日は除く）
       const myAvail = availByName[normName(cellName(nameEl))] || [];
+      // 他店で勤務が入っている日は当店では働けないので希望日にも数えない
       const wishDates = weekDates.filter((d) => !st.days.has(ymd(d)) &&
+        !(st.other && st.other.has(ymd(d))) &&
         ((st.wish && st.wish.has(ymd(d))) || myAvail.some((c) => scMatchesDay(c, d))));
+      const otherN = st.other ? st.other.size : 0;
+      const otherNote = otherN ? `。他店の勤務${otherN}日は非出勤日として除外` : '';
       b.style.cursor = 'pointer';   // クリックで月間カレンダー（委譲ハンドラが拾う）
       b.textContent = `週${st.days.size}日/${Math.round(st.mins / 6) / 10}h` +
         (wishDates.length ? `＋希望${wishDates.length}日` : '');
-      b.title = `この週(月〜日)のアサイン合計（休憩控除後・ヘルプ含む）。クリックで月間カレンダー` +
-        (wishDates.length ? `。＋希望${wishDates.length}日（青点線下線・未アサイン。らくしふ提出＋WowTalk台帳）` : '');
+      b.title = `この週(月〜日)の当店アサイン合計（休憩控除後・ヘルプ含む）。クリックで月間カレンダー` +
+        (wishDates.length ? `。＋希望${wishDates.length}日（青点線下線・未アサイン。らくしふ提出＋WowTalk台帳）` : '') +
+        otherNote;
       // 週0(全休)はグレー、出勤ありは緑、希望のみは青
       b.style.color = st.days.size ? '#2c6e49' : (wishDates.length ? '#1d4ed8' : '#8c8c88');
       b.style.background = st.days.size ? '#eef4f0' : (wishDates.length ? '#e8effd' : '#f3f3f1');
@@ -3087,7 +3110,8 @@
           ? 'text-decoration:underline;text-underline-offset:2px;' : '';
         return `<span style="color:${col};${deco}">${WEEKDAYS[dow]}</span>`;
       }).join('');
-      wd.title = '出勤曜日（この週）。濃色=アサイン済み・下線=希望あり未アサイン（らくしふ提出＋WowTalk台帳）';
+      wd.title = '出勤曜日（この週・当店のみ）。濃色=アサイン済み・下線=希望あり未アサイン' +
+        '（らくしふ提出＋WowTalk台帳）' + otherNote;
     }
   }
 
@@ -4161,6 +4185,11 @@
     const byG = { F: 0, K: 0, REG: 0, OTH: 0 };
     const days = new Set();
     let lastDay = '';
+    let otherMins = 0;   // 他店あて（当店の人時ではない）。除外した量をツールチップに出す
+    // 週/月バッジと同じ扱い（本人指定2026-08-29「他店は除く」）。このAPIは store_id を
+    // 指定しても兼任クルーの他店あてシフトまで返す
+    const mine = (x) => x.attending_store_id == null ||
+      String(x.attending_store_id) === String(storeId);
     for (const sh of j.instructed || []) {
       if (sh.off || sh.is_deleted || !String(sh.date || '').startsWith(ym)) continue;
       let mins = sh.end_as_min - sh.start_as_min;
@@ -4168,6 +4197,7 @@
         mins -= Math.max(0, (rt.end_hour * 60 + rt.end_minute) - (rt.start_hour * 60 + rt.start_minute));
       }
       if (mins <= 0) continue;
+      if (!mine(sh)) { otherMins += mins; continue; }
       const g = sh.attending_genre_id;
       const key = GENRES_F.includes(g) ? 'F' : GENRES_K.includes(g) ? 'K' : g === 17 ? 'REG' : 'OTH';
       byG[key] += mins;
@@ -4176,7 +4206,7 @@
     }
     const out = {
       at: Date.now(), totMins: byG.F + byG.K + byG.REG + byG.OTH,
-      byG, days: days.size, lastDay, monthDays,
+      byG, days: days.size, lastDay, monthDays, otherMins,
     };
     monthHCache[ym] = out;
     return out;
@@ -4192,11 +4222,12 @@
     chip.className = 'rf-month-chip';
     chip.innerHTML = `<span style="color:#8c8c88">${Number(ym.slice(5))}月計</span> ` +
       `<b style="color:#474743">${minsH(s.totMins)}h</b>`;
-    chip.title = `${Number(ym.slice(5))}月にシフト入力済みの合計時間（休憩控除後・全区分）\n` +
+    chip.title = `${Number(ym.slice(5))}月に当店へシフト入力済みの合計時間（休憩控除後・全区分）\n` +
       `F ${minsH(s.byG.F)}h / K ${minsH(s.byG.K)}h` +
       (s.byG.REG ? ` / 正社員 ${minsH(s.byG.REG)}h` : '') +
       (s.byG.OTH ? ` / その他 ${minsH(s.byG.OTH)}h` : '') +
       `\n入力あり ${s.days}/${s.monthDays}日（最終 ${s.lastDay ? `${Number(s.lastDay.slice(5, 7))}/${Number(s.lastDay.slice(8))}` : '-'}）` +
+      (s.otherMins ? `\n他店あて ${minsH(s.otherMins)}h は除外（兼任クルーの本籍店・他店応援）` : '') +
       '\nクリックで再集計';
     chip.style.cssText = 'display:inline-block;font-size:12.5px;font-weight:600;margin-right:14px;' +
       'cursor:pointer;font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;white-space:nowrap;';
