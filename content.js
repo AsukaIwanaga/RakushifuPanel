@@ -584,19 +584,22 @@
         font-family: "Hiragino Sans", "Helvetica Neue", "Yu Gothic", "YuGothic", -apple-system, sans-serif;
         font-weight: 400; letter-spacing: .004em; }
       .num, .num * { font-variant-numeric: tabular-nums; }
-      @media print { #toggle, #panel, #wsLanesToggle { display: none !important; } }
+      @media print { #toggle, #panel, #wsLanesToggle, #awsToggle { display: none !important; } }
       /* ---- トグル（四角・角丸なし・SVGアイコン・選択中は赤下線）---- */
-      #toggle, #shiftToggle, #reflectToggle, #wsLanesToggle {
+      #toggle, #shiftToggle, #reflectToggle, #wsLanesToggle, #awsToggle {
         position: fixed; top: 12px; z-index: 2147483646;
         width: 42px; height: 42px; border-radius: 0; cursor: pointer;
         border: 1px solid var(--line2); background: var(--panel); color: var(--ink2);
         display: grid; place-items: center; padding: 0;
       }
-      #toggle { right: 12px; } #shiftToggle { right: 60px; } #wsLanesToggle { right: 108px; } #reflectToggle { right: 156px; }
-      #toggle:hover, #shiftToggle:hover, #reflectToggle:hover, #wsLanesToggle:hover { color: var(--ink); border-color: var(--ink); }
-      #toggle.on, #shiftToggle.on, #reflectToggle.on, #wsLanesToggle.on { color: var(--ink); border-color: var(--ink);
+      /* 4つ目=仮WS（本人要望2026-08-29「モデルWSとは別に仮WSのボタンで四つ目」）。
+         反映パネル(#reflectToggle)は非表示なので 156px を仮WSが使う。 */
+      #toggle { right: 12px; } #shiftToggle { right: 60px; } #wsLanesToggle { right: 108px; }
+      #awsToggle { right: 156px; } #reflectToggle { right: 204px; }
+      #toggle:hover, #shiftToggle:hover, #reflectToggle:hover, #wsLanesToggle:hover, #awsToggle:hover { color: var(--ink); border-color: var(--ink); }
+      #toggle.on, #shiftToggle.on, #reflectToggle.on, #wsLanesToggle.on, #awsToggle.on { color: var(--ink); border-color: var(--ink);
         box-shadow: inset 0 -2px 0 var(--accent); }
-      #toggle svg, #shiftToggle svg, #reflectToggle svg, #wsLanesToggle svg {
+      #toggle svg, #shiftToggle svg, #reflectToggle svg, #wsLanesToggle svg, #awsToggle svg {
         width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.4;
         stroke-linecap: round; stroke-linejoin: round; }
       #toggle .badge, #shiftToggle .badge {
@@ -639,6 +642,16 @@
       }
       #wsLanesPanel.open { display: block; }
       @media print { #wsLanesPanel { display: none !important; } }
+      #awsPanel {
+        position: fixed; right: 12px; top: 62px; z-index: 2147483646;
+        width: 872px; max-width: calc(100vw - 24px);
+        max-height: calc(100vh - 78px); overflow: auto;
+        background: var(--panel); border: 1px solid var(--line2); border-radius: 0;
+        box-shadow: 0 8px 30px rgba(20,20,18,.12); padding: 10px 14px 12px; display: none;
+        font-size: 13px; color: var(--ink);
+      }
+      #awsPanel.open { display: block; }
+      @media print { #awsPanel { display: none !important; } }
       #shiftPanel {
         position: fixed; right: 60px; top: 62px; z-index: 2147483647;
         width: 490px; max-width: calc(100vw - 24px);
@@ -842,6 +855,7 @@
     <button id="toggle" title="客数予測パネル（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="badge" id="badge"></span></button>
     <button id="shiftToggle" title="シフト変更依頼（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span class="badge" id="shiftBadge"></span></button>
     <button id="wsLanesToggle" title="モデルWSレーン表（この日に適用される型）"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="11" height="3.6" rx="1.8"/><rect x="8" y="10.2" width="13" height="3.6" rx="1.8"/><rect x="5" y="15.4" width="9" height="3.6" rx="1.8"/></svg></button>
+    <button id="awsToggle" title="仮WS（スケジューラーで組んだこの日の案。Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="9" height="3.6" rx="1.8" stroke-dasharray="3 2"/><rect x="8" y="10.2" width="12" height="3.6" rx="1.8" stroke-dasharray="3 2"/><path d="M14.5 19.6l5.2-5.2 1.7 1.7-5.2 5.2H14.5z"/></svg></button>
     <!-- 反映パネルは2026-08-08撤去（本人「もう多分これいらない」・原案→反映ワークフロー廃止済み）。
          コードは温存し入口だけ非表示。復活はこの display:none を外すだけ。 -->
     <button id="reflectToggle" style="display:none" title="海賊版らくしふ → らくしふへ反映（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M3 6h13M3 6l3-3M3 6l3 3M21 18H8M21 18l-3-3M21 18l-3 3"/></svg></button>
@@ -882,6 +896,9 @@
     </div>
     <div id="wsLanesPanel">
       <div id="wsLanesBody" class="muted">モデルWS読込中…</div>
+    </div>
+    <div id="awsPanel">
+      <div id="awsBody" class="muted">仮WS読込中…</div>
     </div>
     <div id="reflectPanel">
       <div class="rp-head"><b>海賊版らくしふ → 反映</b>
@@ -926,6 +943,7 @@
   const $ = (sel) => shadow.querySelector(sel);
   const panel = $('#panel'), badge = $('#badge');
   const wsLanesPanel = $('#wsLanesPanel');
+  const awsPanel = $('#awsPanel');
 
   let targetDate = parseYmd(urlParams().from || '') || new Date();
   let lastHref = location.href;
@@ -940,22 +958,26 @@
     if (panel.classList.contains('open')) { panel.style.right = `${right}px`; right += panel.offsetWidth + gap; }
     if (shiftPanel.classList.contains('open')) { shiftPanel.style.right = `${right}px`; right += shiftPanel.offsetWidth + gap; }
     else shiftPanel.style.right = `${right}px`;   // 閉じていても次回開く位置を用意
+    if (awsPanel.classList.contains('open')) { awsPanel.style.right = `${right}px`; right += awsPanel.offsetWidth + gap; }
     if (reflectPanel.classList.contains('open')) { reflectPanel.style.right = `${right}px`; }
   }
 
   // トグルボタンの選択中スタイル(.on)をパネルの開閉に同期する
   const syncToggle = (btnSel, isOpen) => $(btnSel).classList.toggle('on', isOpen);
   // 3パネルは既定で「どれか1つだけ表示」。Shift+クリックのときだけ他を閉じず複数表示。
-  const PANELS = { '#toggle': () => panel, '#shiftToggle': () => shiftPanel, '#reflectToggle': () => reflectPanel, '#wsLanesToggle': () => wsLanesPanel };
+  const PANELS = { '#toggle': () => panel, '#shiftToggle': () => shiftPanel, '#reflectToggle': () => reflectPanel,
+                   '#wsLanesToggle': () => wsLanesPanel, '#awsToggle': () => awsPanel };
   const persistPanels = () => {
     localStorage.setItem('rfPanelOpen', panel.classList.contains('open') ? '1' : '0');
     localStorage.setItem('rfShiftOpen', shiftPanel.classList.contains('open') ? '1' : '0');
     localStorage.setItem('rfReflectOpen', reflectPanel.classList.contains('open') ? '1' : '0');
     localStorage.setItem('rfWsLanesOpen', wsLanesPanel.classList.contains('open') ? '1' : '0');
+    localStorage.setItem('rfAwsOpen', awsPanel.classList.contains('open') ? '1' : '0');
     syncToggle('#toggle', panel.classList.contains('open'));
     syncToggle('#shiftToggle', shiftPanel.classList.contains('open'));
     syncToggle('#reflectToggle', reflectPanel.classList.contains('open'));
     syncToggle('#wsLanesToggle', wsLanesPanel.classList.contains('open'));
+    syncToggle('#awsToggle', awsPanel.classList.contains('open'));
   };
   function clickTogglePanel(sel, ev) {
     const p = PANELS[sel]();
@@ -968,6 +990,7 @@
     repositionShiftPanel();
     if (sel === '#shiftToggle' && shiftPanel.classList.contains('open')) scRefresh();
     if (sel === '#wsLanesToggle' && wsLanesPanel.classList.contains('open')) renderWsLanes();
+    if (sel === '#awsToggle' && awsPanel.classList.contains('open')) renderAwsPanel();
   }
   $('#toggle').addEventListener('click', (ev) => clickTogglePanel('#toggle', ev));
   if (localStorage.getItem('rfPanelOpen') === '1') { panel.classList.add('open'); syncToggle('#toggle', true); }
@@ -976,6 +999,18 @@
   // 「三つ目のアイコンにして、そこにラインを見せて」→「ポップアップではなく右の表示の切り替えで」）
   $('#wsLanesToggle').addEventListener('click', (ev) => clickTogglePanel('#wsLanesToggle', ev));
   if (localStorage.getItem('rfWsLanesOpen') === '1') { wsLanesPanel.classList.add('open'); syncToggle('#wsLanesToggle', true); }
+  // 📝 4つ目のアイコン: 仮WSパネル（本人要望2026-08-29「モデルWSとは別に仮WSのボタンで四つ目」）
+  $('#awsToggle').addEventListener('click', (ev) => clickTogglePanel('#awsToggle', ev));
+  if (localStorage.getItem('rfAwsOpen') === '1') { awsPanel.classList.add('open'); syncToggle('#awsToggle', true); }
+  // 仮WSパネル内の「⇄ モデルWSと比較」も同じ差異ウィンドウを開く
+  $('#awsBody').addEventListener('click', (ev) => {
+    const b = ev.target && ev.target.closest && ev.target.closest('.rf-wscmp');
+    if (!b) return;
+    const iso = b.dataset.iso;
+    const w = openWsCompareWindow(iso);
+    if (w) fillWsCompare(w, iso);
+  });
+
   // ⇄ 仮WSと比較（別ウィンドウ）。ウィンドウはクリック直後に同期で開く（awaitを挟むとブロックされる）
   $('#wsLanesBody').addEventListener('click', (ev) => {
     const b = ev.target && ev.target.closest && ev.target.closest('.rf-wscmp');
@@ -995,6 +1030,7 @@
     leMakerCache = null;    // LE Maker のdata/paramsも取り直す
     storeTaskMapCache = null;
     lastDraftDay = null;    // ShiftDraft原案も取り直す
+    for (const k in awsPanelCache) delete awsPanelCache[k];   // 仮WSも取り直す
     renderSheet();
   });
   // REQの基準を LE ⇔ モデルWS で切り替える（記憶して次回も同じ基準で開く）
@@ -3524,6 +3560,100 @@
     el.innerHTML = wsLaneHtml(params, tpl, iso, le, { cmp: true });
   }
 
+  // ===== 仮WSパネル（4つ目のアイコン・本人要望2026-08-29）=====
+  // モデルWSレーン表と同じ寸法・同じ読み方で、スケジューラー(:8790 /api/actws)で組んだ
+  // 「この日の仮WS」を出す。★読み取り専用。らくしふ本体にも仮WSにもここからは書かない。
+  const awsPanelCache = {};   // 'YYYY-MM' -> {at, days}
+  async function awsFetchMonth(ym, force) {
+    const c = awsPanelCache[ym];
+    if (!force && c && Date.now() - c.at < 60 * 1000) return c;
+    const r = await draftApi(`/api/actws?month=${ym}`);
+    if (!r || !r.ok) throw new Error((r && r.data && r.data.msg) || (r && r.error) || '通信エラー');
+    const out = { at: Date.now(), days: (r.data && r.data.days) || {} };
+    awsPanelCache[ym] = out;
+    return out;
+  }
+  // 上段サマリ（モデルWSレーン表の表と同じ列・同じ寸法で並べて読めるように）
+  function awsSummaryHtml(rows, le) {
+    const SLOTW = 16, LABW = 190, KEIW = 52;
+    const { laneTot, secTot, prodTot, npTot } = awsAgg(rows);
+    const sumH = (a) => Math.round(a.reduce((x, y) => x + y, 0) * 10) / 10;
+    const fmtN = (v) => !v ? '' : (v % 1 ? v.toFixed(1) : String(v));
+    const ROWBG = { F: '#eef4fd', K: '#eaf6ee', FK: '#f3eefb' };
+    const hcell = (v, i, color, bg) =>
+      `<td style="width:${SLOTW * 2}px;min-width:${SLOTW * 2}px;text-align:center;font-size:11px;padding:2px 0;` +
+      `border:1px solid #e3e2dc;${i > 0 && (i + 6) % 4 === 2 ? 'border-left:2px solid #c9c7c1;' : ''}` +
+      `${bg ? `background:${bg};` : ''}${color ? `color:${color};` : ''}">${v}</td>`;
+    const srow = (label, tot, cells, opt = {}) =>
+      `<tr><td style="width:${LABW}px;min-width:${LABW}px;font-size:11.5px;padding:2px 8px;border:1px solid #e3e2dc;` +
+      `white-space:nowrap;${opt.bg ? `background:${opt.bg};` : ''}font-weight:700">` +
+      `${label}&nbsp;&nbsp;<span style="color:${opt.tc || '#b3562c'}">${tot}</span></td>${cells}` +
+      `<td style="width:${KEIW}px;min-width:${KEIW}px;text-align:right;font-size:11px;font-weight:700;padding:2px 6px;` +
+      `border:1px solid #e3e2dc;${opt.bg ? `background:${opt.bg};` : ''}color:${opt.tc || '#b3562c'}">${tot}</td></tr>`;
+    let html = '';
+    if (le && Array.isArray(le.hours)) {
+      html += srow('<span style="color:#1a5fb4">客数(時間帯)</span>', le.total || '',
+        le.hours.map((v, i) => hcell(v === '0' ? '' : v, i, '#1a5fb4')).join(''), { tc: '#1a5fb4' });
+    }
+    html += srow('合計人数', `${sumH(laneTot)}h`, laneTot.map((v, i) => hcell(fmtN(v), i)).join(''), { bg: '#f4f2ee' });
+    for (const k of ['F', 'K', 'FK']) {
+      html += srow(`　${k}`, `${sumH(secTot[k])}h`, secTot[k].map((v, i) => hcell(fmtN(v), i)).join(''), { bg: ROWBG[k] });
+    }
+    html += srow('生産計', `${sumH(prodTot)}h`, prodTot.map((v, i) => hcell(fmtN(v), i)).join(''), {});
+    html += srow('非生産計', `${sumH(npTot)}h`, npTot.map((v, i) => hcell(fmtN(v), i)).join(''),
+      { bg: '#fdf3e3', tc: '#92600a' });
+    // 非生産の中身（正社員ライン/TR/固定/非生産業務/不明）は入っている区分だけ出す
+    for (const k of ['MGT', 'cMGT', 'TR', 'FIX', 'NPM', 'UNK']) {
+      const a = new Array(18).fill(0);
+      for (const r of (rows || [])) (r.slots || []).forEach((v, i) => { if (v === k) a[i >> 1] += 0.5; });
+      if (!a.some((v) => v)) continue;
+      html += srow(`　${AWS_LAB[k]}`, `${sumH(a)}h`, a.map((v, i) => hcell(fmtN(v), i)).join(''),
+        { bg: '#fdf9ee', tc: '#92600a' });
+    }
+    const hourHdr = `<tr><td style="font-size:10.5px;padding:2px 8px;border:1px solid #d9d8d2;background:#f4f2ee">＼時</td>` +
+      Array.from({ length: 18 }, (_, i) => hcell(`<b>${i + 6}</b>`, i, null, '#f4f2ee')).join('') +
+      `<td style="text-align:center;font-size:10.5px;border:1px solid #d9d8d2;background:#f4f2ee"><b>計</b></td></tr>`;
+    return `<table style="border-collapse:collapse;margin-bottom:0">${hourHdr}${html}</table>`;
+  }
+  function awsPanelHtml(rows, iso, le, updatedAt) {
+    const n = (rows || []).length;
+    const tot = (rows || []).reduce((x, r) => x + (r.slots || []).filter(Boolean).length * 0.5, 0);
+    return `<div style="width:fit-content;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616">
+      <div style="display:flex;align-items:center;gap:12px;margin:2px 0 8px">
+        <b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">仮WS</b>
+        <span style="font-size:12px;color:#6d6d69">${esc(iso)}・${n}人・計 ${Math.round(tot * 10) / 10}h` +
+      `${updatedAt ? `・${esc(String(updatedAt).replace('T', ' ').slice(5, 16))} 保存` : ''}` +
+      `${le && le.total ? `・LE ${esc(String(le.total))}` : ''}</span>
+        <span style="flex:1"></span>
+        <button class="rf-wscmp" data-iso="${esc(iso)}" title="モデルWSとの差異を別ウィンドウで開く" style="font-size:12px;color:#161616;background:#fff;border:1px solid #c9c7c1;border-radius:4px;padding:2px 8px;cursor:pointer;white-space:nowrap">⇄ モデルWSと比較</button>
+        <a href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener" style="font-size:12px;color:#1a5fb4;text-decoration:none;white-space:nowrap">✏編集はスケジューラーで↗</a>
+      </div>
+      ${awsSummaryHtml(rows, le)}
+      ${awsLaneChartHtml(rows)}
+      <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラーの「実WS」タブ）。仮WS＝実WS（らくしふ）を元に組み直した案。色: F=青・K=緑・FK=紫・正社員ライン=黒・TR=橙・固定=ティール・非生産=赤・不明=灰。</div>
+    </div>`;
+  }
+  // 仮WSパネルの再描画（開いている時だけ・日付/データに追従）
+  async function renderAwsPanel(force) {
+    const el = $('#awsBody');
+    if (!el || !awsPanel.classList.contains('open')) return;
+    const iso = ymd(targetDate);
+    try {
+      const m = await awsFetchMonth(iso.slice(0, 7), force);
+      const day = (m.days || {})[iso] || null;
+      const le = lastWsSum && lastWsSum.le;
+      if (!day || !(day.rows || []).length) {
+        el.innerHTML = `<div style="font-size:12.5px;color:#6d6d69">${esc(iso)} の仮WSはまだありません。` +
+          `<a href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener" style="color:#1a5fb4;text-decoration:none">スケジューラーの「実WS」タブ↗</a>` +
+          `でこの日を開くと、実WSを元にした仮WSを引けます。</div>`;
+        return;
+      }
+      el.innerHTML = awsPanelHtml(day.rows, iso, le, day.updated_at);
+    } catch (e) {
+      el.innerHTML = `<div style="font-size:12.5px;color:#c0392b">仮WSを取得できませんでした（スケジューラー :8790）: ${esc(String(e.message || e))}</div>`;
+    }
+  }
+
   // ===== 仮WS ⇄ モデルWS 差異ウィンドウ（本人要望2026-08-29）=====
   // 用語（本人定義2026-08-29）: 実WS=らくしふに入っている本物 / 仮WS=スケジューラーで組む日毎の案。
   // 流れは 希望シフト取込 → 仮WSを組む → 実WS（らくしふ）へ反映。ここで見るのは
@@ -4841,6 +4971,7 @@
     try { updateWsSummary(hasActual ? actual : null, hourly['LE']); }
     catch (e) { console.warn('[rf] wsSummary', e); }
     try { renderWsLanes(); } catch (e) { console.warn('[rf] wsLanes', e); }
+    renderAwsPanel().catch(() => {});   // 仮WSパネル（開いている時だけ中身を出す）
     updateTaskStrip().catch((e) => console.warn('[rf] taskStrip', e));
     try { updateDateChip(); } catch (e) { console.warn('[rf] dateChip', e); }
     updateWeatherChip().catch(() => {});
