@@ -687,6 +687,8 @@
       .sc-card { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 11px 0; margin-bottom: 0; }
       /* 完了カードは薄表示のまま、うっすら緑の枠で「完了」が一目で分かるように（本人指定2026-08-13） */
       .sc-card.done { opacity: .55; border: 1.5px solid rgba(22, 163, 74, .4); border-radius: 4px; padding: 9px 8px; margin: 4px 0; background: rgba(22, 163, 74, .04); }
+      .sc-card.late { background: #f5f8ff; border-left: 3px solid #2563eb; }
+      .sc-late { color: #1d4ed8; font-weight: 700; }
       .sc-card.rej { border-color: rgba(220, 38, 38, .35); background: rgba(220, 38, 38, .04); }
       .sc-title { font-weight: 600; font-size: 14px; }
       .sc-title .undone { color: var(--neg); font-weight: 600; }
@@ -1356,8 +1358,11 @@
     // （本人指摘2026-08-11「休み希望でこのチェックボックスはおかしい」）。
     // → その2項目は起票時に自動チェック（対象外扱い）・カードには出さない＝実質4項目。
     const offCrew = scOffCrew(c);
-    const useChecks = offCrew
-      ? SC_CHECKS.filter(([k]) => k !== 'pre_sh_done' && k !== 'confirmed_done') : SC_CHECKS;
+    // 希望の後出し（締切後の「この日入れます」）は依頼と別カテゴリ。承認も反映確認も無く
+    // 「受け取るだけ」（本人指定2026-08-29）。どう線を引くかは仮WS側の仕事なので工程を出さない。
+    const lateWish = scAvailOnly(c);
+    const useChecks = lateWish ? []
+      : offCrew ? SC_CHECKS.filter(([k]) => k !== 'pre_sh_done' && k !== 'confirmed_done') : SC_CHECKS;
     const checks = useChecks.map(([k, lbl]) =>
       `<label><input type="checkbox" data-p="${esc(c.path)}" data-k="${k}" ${c[k] ? 'checked' : ''}>` +
       `${offCrew && k === 'sh_done' ? '本人へ連絡' : lbl}</label>`
@@ -1380,11 +1385,12 @@
     // 出さない=チェックを外せば戻る可逆運用・vaultの「可視+可逆」原則）
     const allDoneBtn = scClosed(c) ? ''
       : `<button class="sc-all-done" data-p="${esc(c.path)}" title="残りのチェックを全部付けて完了にする（外せば戻せます）">✅全部完了</button>`;
-    return `<div class="sc-card${scClosed(c) ? ' done' : ''}${c.is_rejected ? ' rej' : ''}" data-p="${esc(c.path)}">
-      <div class="sc-title">${head} ${esc(title)} ${multi} ${noDate}
-        <span class="sc-meta">${checkedShown}/${useChecks.length}</span>
-        ${allDoneBtn}
-        ${rejBtn}
+    return `<div class="sc-card${scClosed(c) ? ' done' : ''}${c.is_rejected ? ' rej' : ''}${lateWish ? ' late' : ''}" data-p="${esc(c.path)}">
+      <div class="sc-title">${lateWish ? '<span class="sc-late">🙋 後出し希望</span>' : head} ${esc(title)} ${multi} ${noDate}
+        <span class="sc-meta"${lateWish ? ' title="希望を受け取るだけの記録です。承認・依頼・反映のチェックはありません"' : ''}>` +
+        `${lateWish ? '受け取り済み' : `${checkedShown}/${useChecks.length}`}</span>
+        ${lateWish ? '' : allDoneBtn}
+        ${lateWish ? '' : rejBtn}
         <button class="sc-edit-btn" data-p="${esc(c.path)}" title="この依頼を編集（対象者/日/変更内容/対象時間）">✏️</button>
         <button class="sc-del-btn" data-p="${esc(c.path)}" title="この依頼を削除（理由必須・archivedへ退避）">🗑</button></div>
       <div class="sc-meta">${esc(c.source)}・${esc(c.requester)}　${esc(c.received_at)}</div>
