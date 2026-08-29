@@ -2432,6 +2432,7 @@
         //  終業だけ変更 → 「{元}あがりのところ、{新}までに変更できませんか？」
         //  始業だけ変更 → 「{元}INのところ、{新}INに変更できませんか？」
         //  両方変更   → 「{元s}-{元e}のところ、{新s}-{新e}に変更できませんか？」
+        //    ただし新旧が重ならない場合は既定枠誤爆とみなし前置きだけ(2026-08-29)
         // 対象時間(帯)は変わった側の区間（延長なら旧終業〜新終業）。未編集なら現シフト全体。
         let change = '';
         let reqTime = t;
@@ -2443,9 +2444,16 @@
           } else if (dS && !dE) {
             change = `${hmTok(orig[0])}INのところ、${hmStr(mins[0])}INに変更できませんか？`;
             reqTime = `${hmStr(Math.min(orig[0], mins[0]))}-${hmStr(Math.max(orig[0], mins[0]))}`;
-          } else {
+          } else if (Math.min(orig[1], mins[1]) > Math.max(orig[0], mins[0])) {
             change = `${hmStr(orig[0])}-${hmStr(orig[1])}のところ、${hmStr(mins[0])}-${hmStr(mins[1])}に変更できませんか？`;
             reqTime = `${hmStr(Math.min(orig[0], mins[0]))}-${hmStr(Math.max(orig[1], mins[1]))}`;
+          } else {
+            // 両方違うのに新旧が重ならない＝既存バーの編集ではなく、空き枠クリックで出た
+            // 新規入力モーダルの既定30分枠を拾った可能性が高い（本人指摘2026-08-29:
+            // 「12:00-15:00のところ、11:30-12:00に変更できませんか？」）。
+            // 全文は組まず前置きだけ入れて残りは手入力に任せる
+            change = `${hmStr(orig[0])}-${hmStr(orig[1])}のところ、`;
+            reqTime = `${hmStr(orig[0])}-${hmStr(orig[1])}`;
           }
         } else {
           const endMin = orig ? orig[1] : (mins ? mins[1] : null);
