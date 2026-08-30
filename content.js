@@ -1515,8 +1515,10 @@
   // 出勤可系(途中希望・勤務可)の依頼か（休み系は除外）。週バッジ合流とチップ判定で共用
   const scAvailCase = (c) => {
     const b = `${c.change || ''} ${c.title || ''}`;
-    const aw = /勤務可|出勤でき|出勤可能|出れます|入れます|途中希望|追加希望|再提出|出勤希望/.test(b);
-    return aw && !(/休み|休暇/.test(b) && !/勤務可|出勤でき|出勤可能|出れます|入れます/.test(b));
+    // 「出勤可」で「朝出勤可」「出勤可能」の両方を拾う（旧「出勤可能」のみだと
+    // 起票タイトル「朝出勤可（後半WSに反映）」がマッチせず週バッジ/月間カレンダーに出なかった: 2026-08-31）
+    const aw = /勤務可|出勤でき|出勤可|出れます|入れます|途中希望|追加希望|再提出|出勤希望/.test(b);
+    return aw && !(/休み|休暇/.test(b) && !/勤務可|出勤でき|出勤可|出れます|入れます/.test(b));
   };
 
   // ===== シフト表の名前横に変更依頼マーク（状態語=赤 / 変更済=緑）。印刷画面には出さない =====
@@ -2917,15 +2919,29 @@
     mcalCache[ym] = perName;
     return perName;
   }
+  // ===== V（ベテランズ）契約: 65歳以上・週20時間未満（雇用契約マニュアルA020・本人指示2026-08-31）=====
+  // 該当者はスケジューラーの個人ルール data/constraints.json の kind:"veteran"（/api/constraints）。
+  // 個人名を含むため公開リポのこのファイルには置かない（CLAUDE.md機密ルール・events.jsonと同じ扱い）
+  let vetSet = null;                 // Set<正規化名>。null=未取得（:8790不達時は空のまま＝表示だけ出ない）
+  const loadVeterans = () => vetSet ? Promise.resolve(vetSet)
+    : draftApi('/api/constraints').then((r) => {
+        const cons = (r && r.ok && r.data && r.data.constraints) || {};
+        vetSet = new Set(Object.values(cons)
+          .filter((c) => c && c.kind === 'veteran').map((c) => normName(c.name)));
+        return vetSet;
+      });
+  const isVeteran = (nm) => !!(vetSet && vetSet.has(String(nm || '').replace(/\s+/g, '')));
+  const V_WEEK_MAX = 20 * 60;    // 契約は「週20H未満」＝この分数以上はNG
+  const V_WEEK_WARN = 18 * 60;   // 残り2hを切ったら注意表示
   async function openMonthCal(name, ev, ymOpt) {
     document.getElementById('rf-mcal')?.remove();
     const ym = ymOpt || ymd(targetDate).slice(0, 7);
     const box = document.createElement('div');
     box.id = 'rf-mcal';
     box.style.cssText = 'position:fixed;z-index:2147483200;background:#fff;border:1px solid #d9d8d2;' +
-      'box-shadow:0 8px 30px rgba(20,20,18,.18);padding:10px 12px;width:308px;' +
+      'box-shadow:0 8px 30px rgba(20,20,18,.18);padding:10px 12px;width:352px;' +
       "font-family:'Hiragino Sans','Yu Gothic',sans-serif;font-size:12px;color:#161616;";
-    const x = Math.min((ev && ev.clientX) || 200, innerWidth - 330);
+    const x = Math.min((ev && ev.clientX) || 200, innerWidth - 374);
     const y = Math.min((ev && ev.clientY) || 120, innerHeight - 340);
     box.style.left = `${Math.max(8, x)}px`;
     box.style.top = `${Math.max(8, y)}px`;
@@ -2938,7 +2954,7 @@
       <button class="mc-x" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">✕</button></div>
       <div class="mc-sum" style="display:flex;align-items:baseline;gap:8px;margin:0 0 6px;font-size:12px;color:#8c8c88">月計 <span style="color:#c9c8c2">…</span></div>
       <div class="mc-body" style="min-height:230px;color:#8c8c88">読込中…</div>
-      <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒=勤務(アサイン済み・時間はマウスで)・下線=希望のみ（らくしふ提出＋台帳）・他店の勤務は非出勤日</div>`;
+      <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒=勤務(アサイン済み・時間はマウスで)・下線=希望のみ（らくしふ提出＋台帳）・他店の勤務は非出勤日・右端=週計(月〜日)</div>`;
     document.body.appendChild(box);
     const close = () => { box.remove(); document.removeEventListener('mousedown', out); };
     const out = (e2) => { if (!box.contains(e2.target)) close(); };
@@ -2948,6 +2964,10 @@
     box.querySelector('.mc-next').addEventListener('click', () => { close(); openMonthCal(name, ev, addYm(ym, 1)); });
     try {
       const perName = await mcalMonth(ym);
+      // 週計(月〜日)用: 月をまたぐ週は前後月のデータも合算する（失敗したら月内分のみ）
+      const perPrev = await mcalMonth(addYm(ym, -1)).catch(() => null);
+      const perNext = await mcalMonth(addYm(ym, 1)).catch(() => null);
+      await loadVeterans().catch(() => {});
       const st = perName[normName(name)] ||
         { asg: new Set(), wish: new Set(), asgT: {}, mins: 0, minsD: {},
           byG: { F: 0, K: 0, REG: 0, OTH: 0 }, other: new Set() };
@@ -2990,11 +3010,42 @@
         box.querySelector('.mc-sum').title = '表示中の月に当店へ入力済みのアサイン合計（休憩控除後・ヘルプ含む）' +
           (st.other && st.other.size ? `\n他店の勤務${st.other.size}日は非出勤日として除外` : '');
       }
+      // 週計(月〜日)列（本人要望2026-08-31: V契約の週20h未満を月表示で追えるように）
+      while (cells.length % 7) cells.push('<span></span>');
+      const nmKey = normName(name);
+      const vet = isVeteran(nmKey);
+      const monday0 = new Date(y, m - 1, 1 - ((first.getDay() + 6) % 7));
+      const rows7 = [];
+      for (let r = 0; r * 7 < cells.length; r++) {
+        let wMin = 0, partial = false;
+        const monD2 = new Date(monday0); monD2.setDate(monday0.getDate() + r * 7);
+        for (let j = 0; j < 7; j++) {
+          const dd = new Date(monD2); dd.setDate(monD2.getDate() + j);
+          const iso = ymd(dd);
+          if (iso.startsWith(ym)) { wMin += (st.minsD && st.minsD[iso]) || 0; continue; }
+          const perX = iso < ym ? perPrev : perNext;
+          if (!perX) { partial = true; continue; }
+          const stX = perX[nmKey];
+          wMin += (stX && stX.minsD && stX.minsD[iso]) || 0;
+        }
+        const sunD2 = new Date(monD2); sunD2.setDate(monD2.getDate() + 6);
+        const col = vet && wMin >= V_WEEK_MAX ? '#b02a2a'
+          : vet && wMin >= V_WEEK_WARN ? '#b45309'
+          : wMin > 0 ? '#6d6d69' : '#c9c8c2';
+        const tt2 = `${monD2.getMonth() + 1}/${monD2.getDate()}(月)〜${sunD2.getMonth() + 1}/${sunD2.getDate()}(日)の当店合計` +
+          (vet ? `\nV契約(65歳〜)は週20時間未満（雇用契約A020）` : '') +
+          (partial ? '\n※隣月分を取得できず月内のみの合計' : '');
+        rows7.push(...cells.slice(r * 7, r * 7 + 7),
+          `<span title="${tt2}" style="display:flex;align-items:center;justify-content:flex-end;height:30px;` +
+          `font-size:10.5px;font-weight:${vet && wMin >= V_WEEK_WARN ? 700 : 400};color:${col};` +
+          `border-left:1px solid #eeeeec;padding-left:3px">${mcH(wMin)}${partial ? '±' : ''}h</span>`);
+      }
       box.querySelector('.mc-body').innerHTML =
-        `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:2px">` +
+        `<div style="display:grid;grid-template-columns:repeat(7,1fr) 42px;gap:2px;margin-bottom:2px">` +
         ['月', '火', '水', '木', '金', '土', '日'].map((w, i) =>
-          `<span style="text-align:center;font-size:10px;color:${i === 6 ? '#c33' : i === 5 ? '#26c' : '#8c8c88'}">${w}</span>`).join('') + '</div>' +
-        `<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">${cells.join('')}</div>`;
+          `<span style="text-align:center;font-size:10px;color:${i === 6 ? '#c33' : i === 5 ? '#26c' : '#8c8c88'}">${w}</span>`).join('') +
+        `<span style="text-align:right;font-size:10px;color:#8c8c88" title="その週(月〜日)の当店アサイン合計（休憩控除後・月またぎ分も合算）">週計</span></div>` +
+        `<div style="display:grid;grid-template-columns:repeat(7,1fr) 42px;gap:2px">${rows7.join('')}</div>`;
     } catch (e2) {
       box.querySelector('.mc-sum').innerHTML = '<span style="color:#b02a2a">月計 —</span>';
       box.querySelector('.mc-body').innerHTML = `<span style="color:#b02a2a">取得失敗: ${esc(String(e2.message || e2))}</span>`;
@@ -3042,6 +3093,32 @@
     }
     return out.sort((x, y) => (y.end - x.end) || x.date.localeCompare(y.date));
   }
+  // V契約(65歳〜・週20時間未満)の週合計チェック（月〜日。月またぎ週は前後月データがあれば合算）
+  function vWeekChecks(ym, per, perPrev, perNext) {
+    const out = [];
+    const [y, m] = ym.split('-').map(Number);
+    const first = new Date(y, m - 1, 1);
+    const lastD = new Date(y, m, 0);
+    for (const nm of Object.keys(per)) {
+      if (!isVeteran(nm)) continue;
+      const mon = new Date(y, m - 1, 1 - ((first.getDay() + 6) % 7));
+      for (; mon <= lastD; mon.setDate(mon.getDate() + 7)) {
+        let wMin = 0;
+        for (let j = 0; j < 7; j++) {
+          const dd = new Date(mon); dd.setDate(mon.getDate() + j);
+          const iso = ymd(dd);
+          const perX = iso.startsWith(ym) ? per : (iso < ym ? perPrev : perNext);
+          const stX = perX && perX[nm];
+          wMin += (stX && stX.minsD && stX.minsD[iso]) || 0;
+        }
+        if (wMin >= V_WEEK_WARN) {
+          const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+          out.push({ name: nm, mon: ymd(mon), sun: ymd(sun), mins: wMin });
+        }
+      }
+    }
+    return out.sort((a, b2) => b2.mins - a.mins);
+  }
   const hhmm = (m) => `${Math.floor(m / 60)}:${pad2(m % 60)}`;
   const mdw = (iso) => { const d = parseYmd(iso); return `${d.getMonth() + 1}/${d.getDate()}(${WEEKDAYS[d.getDay()]})`; };
   // 別の日へ飛ぶリンク（らくしふの日ビューのURLを組み直すだけ・書き込みはしない）
@@ -3086,6 +3163,11 @@
         for (const d of Object.keys(st.spans || {})) days.add(d);
       }
       const iv = ivViolations(per), ag = ageViolations(per);
+      // V契約の週20h未満チェック（本人指示2026-08-31）。月またぎ週のため前後月も引く（キャッシュ済みなら追加取得なし）
+      const perPrevV = await mcalMonth(addYm(ym, -1)).catch(() => null);
+      const perNextV = await mcalMonth(addYm(ym, 1)).catch(() => null);
+      await loadVeterans().catch(() => {});
+      const vw = vWeekChecks(ym, per, perPrevV, perNextV);
       const h = (m) => (Math.round(m / 6) / 10).toLocaleString('ja-JP');
       const line = (l, v, c) => `<div style="display:flex;justify-content:space-between;font-size:11.5px;` +
         `padding:1px 0"><span style="color:#6d6d69">${l}</span><b style="color:${c || '#474743'}">${v}</b></div>`;
@@ -3099,7 +3181,10 @@
       const agHtml = ag.map((v) => alertRow(v.kind === 'minor' ? '#b02a2a' : '#b45309',
         v.kind === 'minor' ? `⛔ 18歳未満が22:00超（法定）` : `⚠ 高校生が21:30超（店舗ルール）`,
         `<b>${esc(v.name)}</b>（${v.age != null ? `${v.age}歳` : '年少者'}）　${mdw(v.date)} 〜${hhmm(v.end)}`, v.date)).join('');
-      const n = iv.length + ag.length;
+      const vwHtml = vw.map((v) => alertRow(v.mins >= V_WEEK_MAX ? '#b02a2a' : '#b45309',
+        v.mins >= V_WEEK_MAX ? `⛔ V契約が週20h以上（契約は週20h未満）` : `⚠ V契約の週が20hに接近`,
+        `<b>${esc(v.name)}</b>　${mdw(v.mon)}〜${mdw(v.sun)} <b>${h(v.mins)}h</b>`, v.mon)).join('');
+      const n = iv.length + ag.length + vw.length;
       box.innerHTML =
         `<div style="font-weight:700;font-size:13px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px;` +
         `display:inline-block;margin-bottom:7px">📊 ${Number(ym.slice(5))}月の労働時間</div>` +
@@ -3109,12 +3194,13 @@
         `${line('入力のある日', `${days.size}日`)}</div>` +
         `<div style="font-weight:700;font-size:12.5px;margin-bottom:4px">` +
         `${n ? `⚠ アラート <span style="color:#b02a2a">${n}件</span>` : '✅ アラートなし'}</div>` +
-        (n ? agHtml + ivHtml
-           : `<div style="font-size:11.5px;color:#8c8c88">12時間インターバル・年少者の遅番ともに違反はありません。</div>`) +
+        (n ? vwHtml + agHtml + ivHtml
+           : `<div style="font-size:11.5px;color:#8c8c88">12時間インターバル・年少者の遅番・V契約の週20hともに違反はありません。</div>`) +
         `<div style="font-size:10px;color:#8c8c88;margin-top:7px;line-height:1.5">` +
         `この月のらくしふ入力ぶん全体を見ています（休憩控除後）。<br>` +
         `12時間＝前の勤務の終業から次の勤務の始業まで。同じ日の複数本は1勤務として数えます。<br>` +
-        `年少者判定はらくしふの年齢（18歳未満）。クリックでその日へ移動。</div>`;
+        `年少者判定はらくしふの年齢（18歳未満）。V契約(65歳〜)は週20時間未満（月〜日・雇用契約A020）。<br>` +
+        `クリックでその日へ移動。</div>`;
     } catch (e) {
       box.innerHTML = `<div style="color:#b02a2a;font-size:11.5px">月データを取得できませんでした<br>` +
         `<span style="color:#8c8c88;font-size:10px">${esc(String(e && e.message || e))}</span></div>`;
@@ -3188,6 +3274,7 @@
 
   function updateWeekBadges(per) {
     if (!per || isPrintPage) return; // 印刷画面にはバッジを出さない（紙に載せない）
+    if (!vetSet) loadVeterans().catch(() => {});   // V契約者名の初回取得（次回の描画から色が付く）
     // 台帳(WowTalk発)の出勤可依頼を「この週の希望日」として合流（本人指摘2026-08-17
     // 「wowtalkから取得した希望変更依頼が反映されていない」= らくしふ提出が無い新人等は週0に見えていた）
     const monD = (() => { const d = new Date(targetDate); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; })();
@@ -3229,6 +3316,12 @@
       // 週0(全休)はグレー、出勤ありは緑、希望のみは青
       b.style.color = st.days.size ? '#2c6e49' : (wishDates.length ? '#1d4ed8' : '#8c8c88');
       b.style.background = st.days.size ? '#eef4f0' : (wishDates.length ? '#e8effd' : '#f3f3f1');
+      // V契約(65歳〜)は週20h未満（雇用契約A020・本人指示2026-08-31）。超過=赤・18h以上=琥珀で上書き
+      if (isVeteran(nm)) {
+        if (st.mins >= V_WEEK_MAX) { b.style.color = '#b02a2a'; b.style.background = '#fdecea'; }
+        else if (st.mins >= V_WEEK_WARN) { b.style.color = '#8a5a10'; b.style.background = '#fbf3e3'; }
+        b.title += `\nV契約(65歳〜)のため週20時間未満が上限（現在 ${Math.round(st.mins / 6) / 10}h）`;
+      }
 
       // 出勤曜日の表示（月〜日、出勤日を濃く）
       let wd = box.querySelector('.rf-week-days');
