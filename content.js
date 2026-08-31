@@ -1947,6 +1947,25 @@
     document.querySelectorAll('.rf-event-mark').forEach((e2) => e2.remove());
     const evs = eventsOn(ymd(targetDate));
     if (!evs.length) return;
+    // 店舗ぜんぶに関わるイベント（対象クルーを持たないもの＝近隣店の閉店・改装など）は、
+    // 名前の横ではなく日付チップの隣に1つだけ出す（本人要望2026-08-31）
+    const storeEvs = evs.filter((e2) => !(e2.targets || []).length);
+    if (storeEvs.length) {
+      const anchor = document.querySelector('.rf-month-chip') || document.querySelector('.rf-wx-chip') ||
+        document.querySelector('.rf-kpi-chip') || document.querySelector('.rf-date-chip');
+      const el0 = anchor || document.querySelector('.metrics.sales-per-hours');
+      if (el0 && !document.querySelector('.rf-event-store')) {
+        const c = document.createElement('span');
+        c.className = 'rf-event-mark rf-event-store';
+        c.textContent = `📌${storeEvs.map((e2) => e2.label).join(' / ')}`;
+        c.title = storeEvs.map((e2) => `${e2.label}\n${e2.note || ''}`).join('\n\n');
+        c.style.cssText = 'display:inline-block;font:700 12px/1.4 "Hiragino Sans",sans-serif;' +
+          'color:#6d28d9;background:#f1ebfd;border:1px solid #d5c8f5;border-radius:4px;' +
+          'padding:1px 7px;margin-right:14px;white-space:nowrap;cursor:help;';
+        if (anchor) anchor.after(c);
+        else el0.parentElement.insertBefore(c, el0);
+      }
+    }
     for (const nameEl of document.querySelectorAll('.user-cell .name')) {
       const nm = normName(cellName(nameEl));
       if (!nm) continue;
@@ -6876,7 +6895,12 @@
     guarded('monthChip', () => { if (!document.querySelector('.rf-month-chip')) updateMonthChip().catch(() => {}); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
-    guarded('eventMarks', () => { if (!document.querySelector('.rf-event-mark')) updateEventMarks(); });
+    guarded('eventMarks', () => {
+      const needStore = rfEvents &&
+        eventsOn(ymd(targetDate)).some((e2) => !(e2.targets || []).length);
+      if (!document.querySelector('.rf-event-mark') ||
+          (needStore && !document.querySelector('.rf-event-store'))) updateEventMarks();
+    });
     guarded('newbie', () => {
       if (document.querySelector('.rf-newbie')) return;
       (isPrintPage ? updatePrintNewbie() : updateNewbieMarks()).catch(() => {});
