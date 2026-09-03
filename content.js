@@ -1799,7 +1799,9 @@
           // 逆方向（休み→勤務可）は休み扱いにしない（編集画面と同ルール・2026-08-13）
           const availWordP = /勤務可|出勤でき|出勤可能|出れます|入れます/.test(blob);
           const isOff = /休み|休暇/.test(blob) && !availWordP;
-          const isLate = !isOff && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWordP);
+          // 店舗発（先打ち/打診）はクルーの途中希望ではない＝黄のまま（編集画面と同ルール・2026-09-03）
+          const storeInitP = /先打ち|打診/.test(blob);
+          const isLate = !isOff && !storeInitP && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWordP);
           // 承諾済みの出勤依頼(黄)は緑の枠（編集画面と同ルール・本人指定2026-08-09）
           const okd = !rejected && c.target !== '全員' && !isOff && !isLate && c.accepted_done;
           const bg = (rejected || isOff) ? '#dc2626' : isLate ? '#2563eb' : (okd ? '#16a34a' : '#f5b301');
@@ -2058,7 +2060,10 @@
         // （本人指摘2026-08-13: 鉄平さん8/24がグレーになっていた→青が正しい）
         const availWord = /勤務可|出勤でき|出勤可能|出れます|入れます/.test(blob);
         const isOff = /休み|休暇/.test(blob) && !availWord;
-        const isLate = !isOff && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWord);
+        // 店舗発（先打ち/打診）はクルーの途中希望ではない＝黄のまま（本人指摘2026-09-03:
+        // 山中9/24「未提出だが…出勤可能時間のため先打ち」が『出勤可能』に引っかかり青になっていた）
+        const storeInit = /先打ち|打診/.test(blob);
+        const isLate = !isOff && !storeInit && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWord);
         // 店舗発の出勤依頼(黄)が承諾されたら緑の枠で囲う（本人指定2026-08-09）。
         // 休み/途中希望はクルー発=起票時点で承諾済みが常なので対象外（赤/青の意味を保つ）。
         const okd = !rejected && !zenin && !isOff && !isLate && c.accepted_done;
