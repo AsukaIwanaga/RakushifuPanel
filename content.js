@@ -3048,6 +3048,38 @@
     u.searchParams.set('u', 'OneDay');
     location.href = u.toString();
   }
+  // 月内の各日について「仮WSとらくしふが違う人数」を出す。取得は月まとめの2本だけ
+  // （/api/actws?month= と mcalMonth）なので、日ごとに問い合わせない。
+  const awsDiffMonthCache = {};
+  async function awsDiffMonth(ym) {
+    if (ym in awsDiffMonthCache) return awsDiffMonthCache[ym];
+    let out = {};
+    try {
+      const r = await draftApi(`/api/actws?month=${ym}`);
+      const days = (r && r.ok && r.data && r.data.days) || {};
+      const per = await mcalMonth(ym);
+      for (const iso in days) {
+        const rows = (days[iso] && days[iso].rows) || [];
+        if (!rows.length) continue;
+        let n = 0;
+        const seen = new Set();
+        for (const row of rows) {
+          const nm = normName(row.name);
+          seen.add(nm);
+          const dr = (row.slots || []).map((v) => !!v);
+          const rk = rkSlotsOf(per[nm], iso);
+          if (dr.some((v, i) => v !== rk[i])) n++;
+        }
+        for (const nm in per) {
+          if (seen.has(nm) || !(per[nm].asg && per[nm].asg.has(iso))) continue;
+          if (rkSlotsOf(per[nm], iso).some(Boolean)) n++;
+        }
+        if (n) out[iso] = n;
+      }
+    } catch { out = {}; }
+    awsDiffMonthCache[ym] = out;
+    return out;
+  }
   // ===== 日付チップ→月間カレンダー（店舗の月・本人要望2026-09-03）=====
   // 人ごとの月間カレンダーと同じ見た目。日をクリックするとその日のらくしふへ飛ぶ。
   function openStoreMonthCal(ev, ymOpt) {
@@ -3095,7 +3127,7 @@
       ['月', '火', '水', '木', '金', '土', '日'].map((w, i) =>
         `<span style="text-align:center;font-size:10px;color:${i === 6 ? '#c33' : i === 5 ? '#26c' : '#8c8c88'}">${w}</span>`).join('') +
       `</div><div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">${cells.join('')}</div>
-      <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒地=表示中の日・赤枠=今日・右上の赤点=未確定<br>日付をクリックするとその日のらくしふを開きます</div>`;
+      <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒地=表示中の日・赤枠=今日・右上の赤点=未確定<br>下のオレンジ線=仮WSと違う日・日付をクリックするとその日のらくしふを開きます</div>`;
     document.body.appendChild(box);
     const close = () => { box.remove(); document.removeEventListener('mousedown', out); };
     const out = (e2) => { if (!box.contains(e2.target)) close(); };
@@ -3109,6 +3141,19 @@
       close();
       gotoRkDay(c.dataset.smd);
     });
+    // 仮WSと違う日は下にオレンジの線（:8790への問い合わせが要るので後追いで足す）
+    awsDiffMonth(ym).then((dm) => {
+      if (!document.body.contains(box)) return;
+      for (const c of box.querySelectorAll('[data-smd]')) {
+        const n = dm[c.dataset.smd];
+        if (!n) continue;
+        const bar = document.createElement('i');
+        bar.style.cssText = 'position:absolute;left:3px;right:3px;bottom:2px;height:3px;' +
+          `background:${RF_DIFF_COL};`;
+        c.appendChild(bar);
+        c.title = `${c.title.split('\n')[0]}・仮WSと違う（${n}人）\nクリックでこの日のらくしふを開く`;
+      }
+    }).catch(() => {});
   }
   async function openMonthCal(name, ev, ymOpt) {
     document.getElementById('rf-mcal')?.remove();
