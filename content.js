@@ -1030,6 +1030,7 @@
   $('#reload').addEventListener('click', () => {
     taskRowsCache = null;   // タスクシートも再取得
     for (const k in awsDiffCache) delete awsDiffCache[k];   // 仮WSとの食い違いも取り直す
+    document.querySelectorAll('.rf-aws-diff').forEach((e) => e.remove());   // 本体側の枠も引き直す
     leMakerCache = null;    // LE Maker のdata/paramsも取り直す
     storeTaskMapCache = null;
     lastDraftDay = null;    // ShiftDraft原案も取り直す
@@ -2015,6 +2016,9 @@
   // ===== 勤務間インターバル（12時間）の薄いグレーアウト（本人指定2026-09-03）=====
   // 前日の上がりから12時間は入れられない。その時間帯をラインの上に薄いグレーで敷くだけ
   // （斜線や警告は出さない）。前日にシフトが無い人には何も出さない。
+  // 仮WSとの差分の色（本人指定2026-09-03「オレンジで」）。パネルとらくしふ本体で共用。
+  const RF_DIFF_COL = '#ea580c';
+  const RF_DIFF_HATCH = 'repeating-linear-gradient(45deg,rgba(234,88,12,.28) 0 4px,rgba(234,88,12,.06) 4px 8px)';
   const RF_IV_MIN = 12 * 60;
   let ivShadeSeq = 0;
   async function updateIvShade() {
@@ -2044,6 +2048,37 @@
       el.style.cssText = `position:absolute;left:0;width:${until - 360}px;top:0;bottom:0;` +
         'z-index:2;pointer-events:none;background:rgba(120,113,108,.13);';
       track.appendChild(el);
+    }
+  }
+  // ===== らくしふ本体のラインにも仮WSとの差分をオレンジ枠で出す（本人指定2026-09-03）=====
+  // パネルと同じ判定（awsDiffOf・30分コマ単位）。バー(z=200)より前に出すので枠が隠れない。
+  let awsDiffLineSeq = 0;
+  async function updateAwsDiffLines() {
+    const seq = ++awsDiffLineSeq;
+    document.querySelectorAll('.rf-aws-diff').forEach((e) => e.remove());
+    if (!onOneDayTarget()) return;
+    const iso = ymd(targetDate);
+    const diff = await awsDiffOf(iso).catch(() => null);
+    if (!diff || seq !== awsDiffLineSeq) return;
+    for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
+      const nameEl = tr.querySelector('.user-cell .name');
+      if (!nameEl) continue;
+      const d = diff.byName[normName(cellName(nameEl))];
+      if (!d) continue;
+      const track = tr.querySelector('.schedule-row');
+      if (!track) continue;
+      const box = (k, j, del) => {
+        const el = document.createElement('div');
+        el.className = 'rf-aws-diff';
+        el.title = `${rfTm(k)}〜${rfTm(j)} ` +
+          (del ? 'らくしふにあって仮WSに無い（＝外す区間）' : '仮WSにあってらくしふに無い（＝足す区間）');
+        el.style.cssText = `position:absolute;left:${k * 30}px;width:${(j - k) * 30}px;top:1px;bottom:1px;` +
+          `z-index:260;pointer-events:none;box-sizing:border-box;border:2px solid ${RF_DIFF_COL};` +
+          `border-radius:5px;${del ? `background:${RF_DIFF_HATCH};` : ''}`;
+        track.appendChild(el);
+      };
+      for (const [k, j] of rfRuns(d.del)) box(k, j, true);
+      for (const [k, j] of rfRuns(d.add)) box(k, j, false);
     }
   }
   function updateReqLines() {
@@ -4004,9 +4039,9 @@
       ${awsSummaryHtml(rows, le)}
       ${awsLaneChartHtml(rows, diff)}
       ${diff ? `<div style="display:flex;align-items:center;gap:10px;font-size:11px;color:#6d6d69;margin-top:6px">
-        <span style="font-weight:700;color:#c0392b">らくしふと違う行 ${diff.lines.length}人</span>
-        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid #c0392b;border-radius:3px"></i>赤枠＝らくしふと違う区間</span>
-        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid #c0392b;background:repeating-linear-gradient(45deg,rgba(192,57,43,.30) 0 4px,rgba(192,57,43,.06) 4px 8px)"></i>斜線つき＝らくしふから外す区間</span>
+        <span style="font-weight:700;color:${RF_DIFF_COL}">らくしふと違う行 ${diff.lines.length}人</span>
+        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid ${RF_DIFF_COL};border-radius:3px"></i>オレンジ枠＝らくしふと違う区間</span>
+        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid ${RF_DIFF_COL};background:${RF_DIFF_HATCH}"></i>斜線つき＝らくしふから外す区間</span>
       </div>` : ''}
       <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラーの「実WS」タブ）。仮WS＝実WS（らくしふ）を元に組み直した案。色: F=青・K=緑・FK=紫・正社員ライン=黒・TR=黄・非生産=黄の斜線・不明=灰。</div>
     </div>`;
@@ -4091,9 +4126,9 @@
       (AWS_ORD[domi(x)] ?? 9) - (AWS_ORD[domi(y)] ?? 9) || first(x) - first(y) ||
       String(x.name).localeCompare(String(y.name), 'ja'));
     if (!ls.length) return '<div style="font-size:12px;color:#8c8c88;padding:8px 0">この日の仮WSはまだありません</div>';
-    // 差分オーバーレイ（本人指定2026-09-03「実際と違うところを赤枠でラインごとに」）。
-    // 足す・削るとも赤枠で囲む。削る区間は仮WSに何も無いので、枠だけだと見落とすので
-    // 薄い赤の斜線を敷く。休憩は塗らないがバーの切れ目で分かるので休憩の移動も出る。
+    // 差分オーバーレイ（本人指定2026-09-03「違うところを枠でラインごとに」→色はオレンジ）。
+    // 足す・削るとも同じオレンジ枠。削る区間は仮WSに何も無いので、枠だけだと見落とすので
+    // 薄いオレンジの斜線を敷く。休憩は塗らないがバーの切れ目で分かるので休憩の移動も出る。
     const dOf = (nm) => (diff && diff.byName && diff.byName[normName(nm)]) || null;
     const ovl = (d) => {
       if (!d) return '';
@@ -4101,13 +4136,13 @@
       for (const [k, j] of rfRuns(d.del)) {
         h += `<div title="${esc(`${rfTm(k)}〜${rfTm(j)} らくしふにはあるが仮WSに無い（＝らくしふから外す区間）`)}" ` +
           `style="position:absolute;top:1px;height:24px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
-          `box-sizing:border-box;border:2px solid #c0392b;border-radius:5px;` +
-          `background:repeating-linear-gradient(45deg,rgba(192,57,43,.30) 0 4px,rgba(192,57,43,.06) 4px 8px)"></div>`;
+          `box-sizing:border-box;border:2px solid ${RF_DIFF_COL};border-radius:5px;` +
+          `background:${RF_DIFF_HATCH}"></div>`;
       }
       for (const [k, j] of rfRuns(d.add)) {
         h += `<div title="${esc(`${rfTm(k)}〜${rfTm(j)} 仮WSにあってらくしふに無い（＝らくしふへ足す区間）`)}" ` +
           `style="position:absolute;top:1px;height:24px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
-          `box-sizing:border-box;border:2px solid #c0392b;border-radius:5px"></div>`;
+          `box-sizing:border-box;border:2px solid ${RF_DIFF_COL};border-radius:5px"></div>`;
       }
       return h;
     };
@@ -4139,7 +4174,7 @@
       }
       const dd = dOf(r.name);
       const mark = dd
-        ? `<i title="らくしふと違う行" style="flex:none;width:4px;align-self:stretch;background:#c0392b;margin-right:5px"></i>`
+        ? `<i title="らくしふと違う行" style="flex:none;width:4px;align-self:stretch;background:${RF_DIFF_COL};margin-right:5px"></i>`
         : '';
       out += `<div style="display:flex;border:1px solid #e3e2dc;border-top:0;background:#fff">` +
         `<div style="width:${LABW}px;min-width:${LABW}px;font-size:11px;padding:5px 8px;white-space:nowrap;overflow:hidden;` +
@@ -7100,6 +7135,9 @@
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
     guarded('ivShade', () => { if (!document.querySelector('.rf-iv-shade')) updateIvShade().catch(() => {}); });
+    guarded('awsDiffLines', () => {
+      if (!document.querySelector('.rf-aws-diff')) updateAwsDiffLines().catch(() => {});
+    });
     guarded('eventMarks', () => {
       const needStore = rfEvents &&
         eventsOn(ymd(targetDate)).some((e2) => !(e2.targets || []).length);
@@ -7157,6 +7195,7 @@
       updateShiftMarks();
       updateReqLines();
       updateIvShade().catch(() => {});
+      updateAwsDiffLines().catch(() => {});
     }
   }, URL_WATCH_MS));
 
