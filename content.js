@@ -1765,7 +1765,9 @@
         const nameEl = row.querySelector('.user-cell .name');
         const track = row.querySelector('.schedule-table-contents');
         if (!nameEl || !track) continue;
-        const nm = normName(nameEl.textContent);
+        // 名前は素のテキストのみで照合（🔰等の注入spanを除外。textContentだと
+        // 『髙橋　心🔰勤務6回』になり台帳と一致せず帯が消える: 2026-09-03修正）
+        const nm = normName(cellName(nameEl));
         if (!nm) continue;
         // 完了した依頼も帯は点線で残す（2026-08-14拡大・編集画面と同ルール）
         const rel = cases.filter((c) => (c.target === '全員' || normName(c.target) === nm) &&
@@ -2016,7 +2018,10 @@
     for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
       const nameEl = tr.querySelector('.user-cell .name');
       if (!nameEl) continue;
-      const nm = normName(nameEl.textContent);
+      // 🔰バッジ等の注入spanを除いた素の名前で照合する。textContentのままだと
+      // 『髙橋　心🔰勤務6回』になり台帳と一致せず、パネル更新のたびに新人だけ
+      // 依頼帯（途中希望の青帯を含む）が消えていた（本人指摘2026-09-03）。
+      const nm = normName(cellName(nameEl));
       if (!nm) continue;
       // 対象=この人・当日一致 or 日付未記入のオープン。状態は完了以外（保留=黄 / 拒否=赤×）
       // target='全員'（休み募集）は全行に出す（本人指定）。
