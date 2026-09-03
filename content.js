@@ -2912,7 +2912,8 @@
       { id: u.id, age: u.age, underage: !!u.underage }]));
     const perName = {};
     const ent = (nm) => (perName[nm] ||= { asg: new Set(), wish: new Set(), asgT: {},
-      mins: 0, minsD: {}, byG: { F: 0, K: 0, REG: 0, OTH: 0 }, other: new Set(), spans: {} });
+      mins: 0, minsD: {}, byG: { F: 0, K: 0, REG: 0, OTH: 0 }, other: new Set(),
+      spans: {}, rests: {} });
     // 週バッジと同じ扱い: 他店あて（兼任の本籍店・他店応援）は当店の出勤ではない＝非出勤日
     const mine = (x) => x.attending_store_id == null ||
       String(x.attending_store_id) === String(storeId);
@@ -2927,6 +2928,12 @@
       e2.asgT[sh.date] = `${hm2(sh.start_as_min)}-${hm2(sh.end_as_min)}`;
       // 同じ日に複数本あることがあるので日ごとに全部ためる（12時間インターバル判定用）
       (e2.spans[sh.date] ||= []).push([sh.start_as_min, sh.end_as_min]);
+      // 休憩も日ごとに貯める。仮WSは休憩を塗らない＝バーの切れ目が休憩なので、
+      // 「シフト−休憩」を30分スロットに直せば仮WSと1コマ単位で比べられる（本人指摘2026-09-03）
+      for (const rt of sh.rest_times || []) {
+        (e2.rests[sh.date] ||= []).push([rt.start_hour * 60 + rt.start_minute,
+                                         rt.end_hour * 60 + rt.end_minute]);
+      }
       // 人別の月間労働時間（休憩控除後）。店舗計の月チップ(fetchMonthHours)と同じ数え方。
       let mn = sh.end_as_min - sh.start_as_min;
       for (const rt of sh.rest_times || []) {
@@ -3943,7 +3950,7 @@
       `<td style="text-align:center;font-size:10.5px;border:1px solid #d9d8d2;background:#f4f2ee"><b>計</b></td></tr>`;
     return `<table style="border-collapse:collapse;margin-bottom:0">${hourHdr}${html}</table>`;
   }
-  function awsPanelHtml(rows, iso, le, updatedAt, asIs) {
+  function awsPanelHtml(rows, iso, le, updatedAt, asIs, diff) {
     const n = (rows || []).length;
     const tot = (rows || []).reduce((x, r) => x + (r.slots || []).filter(Boolean).length * 0.5, 0);
     const tag = asIs
@@ -3961,8 +3968,13 @@
         <a href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener" style="font-size:12px;color:#1a5fb4;text-decoration:none;white-space:nowrap">✏編集はスケジューラーで↗</a>
       </div>
       ${awsSummaryHtml(rows, le)}
-      ${awsLaneChartHtml(rows)}
-      <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラーの「実WS」タブ）。仮WS＝実WS（らくしふ）を元に組み直した案。色: F=青・K=緑・FK=紫・正社員ライン=黒・TR=橙・固定=ティール・非生産=赤・不明=灰。</div>
+      ${awsLaneChartHtml(rows, diff)}
+      ${diff ? `<div style="display:flex;align-items:center;gap:10px;font-size:11px;color:#6d6d69;margin-top:6px">
+        <span style="font-weight:700;color:#c0392b">らくしふとの差分 ${diff.lines.length}人</span>
+        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid #16a34a;border-radius:3px"></i>足す（仮WSにあってらくしふに無い）</span>
+        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:1px solid #c0392b;background:repeating-linear-gradient(45deg,rgba(192,57,43,.55) 0 4px,rgba(192,57,43,.12) 4px 8px)"></i>削る（らくしふにあって仮WSに無い）</span>
+      </div>` : ''}
+      <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラーの「実WS」タブ）。仮WS＝実WS（らくしふ）を元に組み直した案。色: F=青・K=緑・FK=紫・正社員ライン=黒・TR=黄・固定=ティール・非生産=赤・不明=灰。</div>
     </div>`;
   }
   // 仮WSパネルの再描画（開いている時だけ・日付/データに追従）
@@ -3970,6 +3982,7 @@
     const el = $('#awsBody');
     if (!el || !awsPanel.classList.contains('open')) return;
     const iso = ymd(targetDate);
+    if (force) delete awsDiffCache[iso];
     try {
       const m = await awsFetchMonth(iso.slice(0, 7), force);
       const day = (m.days || {})[iso] || null;
@@ -3987,7 +4000,9 @@
           `<a href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener" style="color:#1a5fb4;text-decoration:none">スケジューラーの「実WS」タブ↗</a></div>`;
         return;
       }
-      el.innerHTML = awsPanelHtml(rows, iso, le, day && day.updated_at, asIs);
+      // 未編集の日（実WSそのまま）は比べる意味がないので差分は出さない
+      const diff = asIs ? null : await awsDiffOf(iso).catch(() => null);
+      el.innerHTML = awsPanelHtml(rows, iso, le, day && day.updated_at, asIs, diff);
     } catch (e) {
       el.innerHTML = `<div style="font-size:12.5px;color:#c0392b">仮WSを取得できませんでした（スケジューラー :8790）: ${esc(String(e.message || e))}</div>`;
     }
@@ -4003,7 +4018,7 @@
                     TR: 'TR', FIX: '非生産', NPM: '非生産', UNK: '不明' };
   // 色はスケジューラーの仮WSグリッド（table.awsg td.awsc.k-*）と揃える
   const AWS_COL = { F: '#3b82f6', K: '#10b981', FK: '#8b5cf6', MGT: '#374151', cMGT: '#9ca3af',
-                    TR: '#f59e0b', FIX: '#be123c', NPM: '#be123c', UNK: '#d1d5db' };
+                    TR: '#facc15', FIX: '#be123c', NPM: '#be123c', UNK: '#d1d5db' };
   const AWS_ORD = { F: 0, FK: 1, K: 2, TR: 3, FIX: 4, NPM: 5, cMGT: 6, MGT: 7, UNK: 8 };
   const AWS_PROD = { F: 1, K: 1, FK: 1 };
 
@@ -4026,7 +4041,7 @@
   }
 
   // 仮WSのレーン表（モデルWSレーン表と同じ寸法・同じ見た目で並べて比べられるように）
-  function awsLaneChartHtml(rows) {
+  function awsLaneChartHtml(rows, diff) {
     const SLOTW = 16, LABW = 190, KEIW = 52, GRIDW = SLOTW * 36;
     const tmOf = (k) => `${Math.floor(6 + k / 2)}:${k % 2 ? '30' : '00'}`;
     const domi = (r) => {
@@ -4040,12 +4055,35 @@
       (AWS_ORD[domi(x)] ?? 9) - (AWS_ORD[domi(y)] ?? 9) || first(x) - first(y) ||
       String(x.name).localeCompare(String(y.name), 'ja'));
     if (!ls.length) return '<div style="font-size:12px;color:#8c8c88;padding:8px 0">この日の仮WSはまだありません</div>';
+    // 差分オーバーレイ（本人要望2026-09-03「仮WSと違う部分を可視化」）。
+    //   足す(仮WSにあってらくしふに無い) = 緑の枠 ／ 削る(らくしふにあって仮WSに無い) = 赤の斜線
+    // 休憩は塗らないがバーの切れ目で分かるので、休憩の移動もそのまま出る。
+    const dOf = (nm) => (diff && diff.byName && diff.byName[normName(nm)]) || null;
+    const ovl = (d) => {
+      if (!d) return '';
+      let h = '';
+      for (const [k, j] of rfRuns(d.del)) {
+        h += `<div title="${esc(`${rfTm(k)}〜${rfTm(j)} らくしふにはあるが仮WSに無い（削る）`)}" ` +
+          `style="position:absolute;top:3px;height:20px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
+          `box-sizing:border-box;border:1px solid #c0392b;border-radius:3px;` +
+          `background:repeating-linear-gradient(45deg,rgba(192,57,43,.55) 0 4px,rgba(192,57,43,.12) 4px 8px)"></div>`;
+      }
+      for (const [k, j] of rfRuns(d.add)) {
+        h += `<div title="${esc(`${rfTm(k)}〜${rfTm(j)} 仮WSで足した区間（らくしふに無い）`)}" ` +
+          `style="position:absolute;top:1px;height:24px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
+          `box-sizing:border-box;border:2px solid #16a34a;border-radius:5px"></div>`;
+      }
+      return h;
+    };
+    // らくしふにだけ居る人（仮WSから外した人）は行ごと足す＝消し忘れが見えるように
+    const onlyRows = ((diff && diff.only) || []).map((o) => ({
+      name: o.nm, slots: new Array(36).fill(null), _only: true }));
     const gridBg = 'background:' +
       `repeating-linear-gradient(90deg, transparent 0 ${SLOTW * 2 - 1}px, #eceae5 ${SLOTW * 2 - 1}px ${SLOTW * 2}px);`;
     const qLines = [10, 14, 18, 22].map((h) =>
       `<i style="position:absolute;top:0;bottom:0;left:${(h - 6) * SLOTW * 2 - 1}px;width:2px;background:#d6d4ce"></i>`).join('');
     let out = '';
-    for (const r of ls) {
+    for (const r of [...ls, ...onlyRows]) {
       const sl = r.slots || [];
       let segs = '', h = 0, k = 0;
       while (k < 36) {
@@ -4056,15 +4094,23 @@
         h += (j - k) * 0.5;
         const rl = sl[k - 1] === v ? '0' : '13px', rr = sl[j] === v ? '0' : '13px';
         const lbl = (j - k) * SLOTW >= 40 && !AWS_PROD[v]
-          ? `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;white-space:nowrap;overflow:hidden;padding:0 3px">${esc(AWS_LAB[v] || v)}</span>` : '';
+          ? `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;` +
+            `color:${v === 'TR' ? '#4a3800' : '#fff'};font-size:9px;white-space:nowrap;overflow:hidden;padding:0 3px">${esc(AWS_LAB[v] || v)}</span>` : '';
         segs += `<div title="${esc(`${tmOf(k)}〜${tmOf(j)} ${AWS_LAB[v] || v}`)}" ` +
           `style="position:absolute;top:3px;height:20px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
           `border-radius:${rl} ${rr} ${rr} ${rl};background:${AWS_COL[v] || '#d1d5db'};">${lbl}</div>`;
         k = j;
       }
+      const dd = dOf(r.name);
+      const mark = dd
+        ? `<i title="らくしふと違う行" style="flex:none;width:4px;align-self:stretch;background:#c0392b;margin-right:5px"></i>`
+        : '';
       out += `<div style="display:flex;border:1px solid #e3e2dc;border-top:0;background:#fff">` +
-        `<div style="width:${LABW}px;min-width:${LABW}px;font-size:11px;padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name || '')}</div>` +
-        `<div style="position:relative;width:${GRIDW}px;min-width:${GRIDW}px;height:26px;${gridBg}">${qLines}${segs}</div>` +
+        `<div style="width:${LABW}px;min-width:${LABW}px;font-size:11px;padding:5px 8px;white-space:nowrap;overflow:hidden;` +
+        `text-overflow:ellipsis;display:flex;align-items:center;${dd ? 'font-weight:700;' : ''}` +
+        `${r._only ? 'color:#c0392b;' : ''}">${mark}${esc(r.name || '')}` +
+        `${r._only ? '<span style="font-weight:400;font-size:10px;margin-left:4px">仮WSに無し</span>' : ''}</div>` +
+        `<div style="position:relative;width:${GRIDW}px;min-width:${GRIDW}px;height:26px;${gridBg}">${qLines}${segs}${ovl(dd)}</div>` +
         `<div style="width:${KEIW}px;min-width:${KEIW}px;text-align:right;font-size:10.5px;font-weight:700;color:#7c2d12;padding:5px 6px">${h ? h + 'h' : ''}</div></div>`;
     }
     return `<div style="border-top:1px solid #e3e2dc">${out}</div>`;
@@ -5472,6 +5518,39 @@
   // タスク帯の先頭に赤地・白字で「仮WSが変更されています」を出す＝反映漏れの目印。
   // 比べるのは 人ごとの「実働の分数」と「通しの開始〜終了」。休憩の入れ方の違いでは鳴らさない
   // （仮WSは休憩を塗らないため）。仮WSを作っていない日は何も出さない。
+  // らくしふの「シフト−休憩」を30分×36スロットに直す。スロットの判定は
+  // スケジューラー serve.py の shift_slots と同じ＝そのコマに実働が1分でもあれば on。
+  const rfOverlap = (a, b, c, d) => Math.max(0, Math.min(b, d) - Math.max(a, c));
+  function rkSlotsOf(st, iso) {
+    const on = new Array(36).fill(false);
+    const sp = (st && st.spans && st.spans[iso]) || [];
+    if (!sp.length) return on;
+    const rests = (st.rests && st.rests[iso]) || [];
+    for (let i = 0; i < 36; i++) {
+      const t0 = 360 + i * 30, t1 = t0 + 30;
+      let work = 0;
+      for (const [a, b] of sp) work += rfOverlap(a, b, t0, t1);
+      for (const [a, b] of rests) work -= rfOverlap(t0, t1, a, b);
+      if (work > 0) on[i] = true;
+    }
+    return on;
+  }
+  const rfTm = (k) => `${Math.floor(6 + k / 2)}:${k % 2 ? '30' : '00'}`;
+  // 連続するtrueを [開始コマ, 終了コマ) の区間にまとめる
+  function rfRuns(arr) {
+    const out = [];
+    let k = 0;
+    while (k < 36) {
+      if (!arr[k]) { k++; continue; }
+      let j = k + 1;
+      while (j < 36 && arr[j]) j++;
+      out.push([k, j]); k = j;
+    }
+    return out;
+  }
+  // その日の「仮WS vs らくしふ」を1コマ単位で比べる。
+  // add=仮WSにあってらくしふに無い（＝足す）／del=らくしふにあって仮WSに無い（＝削る）。
+  // 休憩は塗らないがバーの切れ目で分かるので、休憩の移動もそのまま差分に出る。
   const awsDiffCache = {};
   async function awsDiffOf(iso) {
     if (iso in awsDiffCache) return awsDiffCache[iso];
@@ -5482,35 +5561,35 @@
       const rows = (day && day.rows) || null;
       if (rows && rows.length) {
         const per = await mcalMonth(iso.slice(0, 7));
-        const hm2 = (v) => `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`;
-        const draftOf = (row) => {
-          const on = (row.slots || []).map((v) => !!v);
-          const ix = on.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
-          return { mins: ix.length * 30,
-                   outer: ix.length ? `${hm2(360 + ix[0] * 30)}〜${hm2(360 + (ix[ix.length - 1] + 1) * 30)}` : '' };
-        };
-        const rkOf = (nm) => {
-          const st = per[nm];
-          const sp = (st && st.spans && st.spans[iso]) || [];
-          if (!sp.length) return { mins: 0, outer: '' };
-          const s0 = Math.min(...sp.map((x) => x[0])), e0 = Math.max(...sp.map((x) => x[1]));
-          return { mins: (st.minsD && st.minsD[iso]) || 0, outer: `${hm2(s0)}〜${hm2(e0)}` };
-        };
-        const diffs = [];
+        const byName = {};
+        const lines = [];
+        const only = [];            // らくしふにだけ居る人（仮WSから外した人）
         const seen = new Set();
+        const note = (nm, add, del) => {
+          const a = rfRuns(add).map(([x, y]) => `＋${rfTm(x)}〜${rfTm(y)}`);
+          const d = rfRuns(del).map(([x, y]) => `−${rfTm(x)}〜${rfTm(y)}`);
+          lines.push(`${nm}: ${[...d, ...a].join(' ')}`);
+        };
         for (const row of rows) {
           const nm = normName(row.name);
           seen.add(nm);
-          const d = draftOf(row), k = rkOf(nm);
-          if (Math.abs(d.mins - k.mins) >= 1 || d.outer !== k.outer)
-            diffs.push(`${row.name}: らくしふ ${k.outer || 'なし'} → 仮WS ${d.outer || 'なし'}`);
+          const dr = (row.slots || []).map((v) => !!v);
+          const rk = rkSlotsOf(per[nm], iso);
+          const add = dr.map((v, i) => v && !rk[i]);
+          const del = rk.map((v, i) => v && !dr[i]);
+          if (!add.some(Boolean) && !del.some(Boolean)) continue;
+          byName[nm] = { add, del };
+          note(row.name, add, del);
         }
-        // 仮WSから外した人（らくしふには残っている）も食い違い
         for (const nm in per) {
           if (seen.has(nm) || !(per[nm].asg && per[nm].asg.has(iso))) continue;
-          diffs.push(`${nm}: らくしふ ${rkOf(nm).outer} → 仮WS なし`);
+          const del = rkSlotsOf(per[nm], iso);
+          if (!del.some(Boolean)) continue;
+          byName[nm] = { add: new Array(36).fill(false), del };
+          only.push({ nm, del });
+          note(nm, new Array(36).fill(false), del);
         }
-        if (diffs.length) out = diffs;
+        if (lines.length) out = { byName, only, lines };
       }
     } catch { out = null; }   // 8790に届かない時は黙って出さない
     awsDiffCache[iso] = out;
@@ -5578,13 +5657,14 @@
       'margin:4px 0 6px;padding:6px 14px;background:#fff;border:1px solid #d9d8d2;';
     const lbl = (t) => `<b style="flex:none;font:700 12.5px/1.4 'Hiragino Sans',sans-serif;color:#161616;` +
       `box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">${t}</b>`;
-    const warn = awsDiff
-      ? `<span title="${esc(`スケジューラーの仮WSとらくしふの確定シフトが違います（${awsDiff.length}件）\n` +
-          awsDiff.slice(0, 12).join('\n') + (awsDiff.length > 12 ? `\n…ほか${awsDiff.length - 12}件` : '') +
-          '\nクリックでスケジューラーのこの日の仮WSを開きます')}" class="rf-aws-warn" ` +
+    const dl = awsDiff ? awsDiff.lines : null;
+    const warn = dl
+      ? `<span title="${esc(`スケジューラーの仮WSとらくしふの確定シフトが違います（${dl.length}人）\n` +
+          dl.slice(0, 12).join('\n') + (dl.length > 12 ? `\n…ほか${dl.length - 12}人` : '') +
+          '\n＋=足す区間 / −=削る区間\nクリックで仮WSパネルを開いて差分を出します')}" class="rf-aws-warn" ` +
         `style="flex:none;cursor:pointer;font:700 12.5px/1.5 'Hiragino Sans','Yu Gothic',sans-serif;` +
         `color:#fff;background:#c0392b;padding:2px 9px;white-space:nowrap">` +
-        `仮WSが変更されています（${awsDiff.length}件）</span>` +
+        `仮WSが変更されています（${dl.length}人）</span>` +
         `<span style="flex:none;width:1px;height:16px;background:#d9d8d2;margin:0 4px"></span>`
       : '';
     strip.innerHTML = warn +
@@ -5595,7 +5675,8 @@
         lbl('イベント') + evChips.join('') : '');
     const wEl = strip.querySelector('.rf-aws-warn');
     if (wEl) wEl.addEventListener('click', () => {
-      window.open(`http://mac-mini.tail1f88ff.ts.net:8790/#act=${iso}`, '_blank', 'noopener');
+      if (!awsPanel.classList.contains('open')) $('#awsToggle').click();
+      else renderAwsPanel(true);
     });
     tt.parentElement.insertBefore(strip, tt);
   }
