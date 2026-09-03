@@ -3970,9 +3970,9 @@
       ${awsSummaryHtml(rows, le)}
       ${awsLaneChartHtml(rows, diff)}
       ${diff ? `<div style="display:flex;align-items:center;gap:10px;font-size:11px;color:#6d6d69;margin-top:6px">
-        <span style="font-weight:700;color:#c0392b">らくしふとの差分 ${diff.lines.length}人</span>
-        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid #16a34a;border-radius:3px"></i>足す（仮WSにあってらくしふに無い）</span>
-        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:1px solid #c0392b;background:repeating-linear-gradient(45deg,rgba(192,57,43,.55) 0 4px,rgba(192,57,43,.12) 4px 8px)"></i>削る（らくしふにあって仮WSに無い）</span>
+        <span style="font-weight:700;color:#c0392b">らくしふと違う行 ${diff.lines.length}人</span>
+        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid #c0392b;border-radius:3px"></i>赤枠＝らくしふと違う区間</span>
+        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid #c0392b;background:repeating-linear-gradient(45deg,rgba(192,57,43,.30) 0 4px,rgba(192,57,43,.06) 4px 8px)"></i>斜線つき＝らくしふから外す区間</span>
       </div>` : ''}
       <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラーの「実WS」タブ）。仮WS＝実WS（らくしふ）を元に組み直した案。色: F=青・K=緑・FK=紫・正社員ライン=黒・TR=黄・固定=ティール・非生産=赤・不明=灰。</div>
     </div>`;
@@ -4055,23 +4055,23 @@
       (AWS_ORD[domi(x)] ?? 9) - (AWS_ORD[domi(y)] ?? 9) || first(x) - first(y) ||
       String(x.name).localeCompare(String(y.name), 'ja'));
     if (!ls.length) return '<div style="font-size:12px;color:#8c8c88;padding:8px 0">この日の仮WSはまだありません</div>';
-    // 差分オーバーレイ（本人要望2026-09-03「仮WSと違う部分を可視化」）。
-    //   足す(仮WSにあってらくしふに無い) = 緑の枠 ／ 削る(らくしふにあって仮WSに無い) = 赤の斜線
-    // 休憩は塗らないがバーの切れ目で分かるので、休憩の移動もそのまま出る。
+    // 差分オーバーレイ（本人指定2026-09-03「実際と違うところを赤枠でラインごとに」）。
+    // 足す・削るとも赤枠で囲む。削る区間は仮WSに何も無いので、枠だけだと見落とすので
+    // 薄い赤の斜線を敷く。休憩は塗らないがバーの切れ目で分かるので休憩の移動も出る。
     const dOf = (nm) => (diff && diff.byName && diff.byName[normName(nm)]) || null;
     const ovl = (d) => {
       if (!d) return '';
       let h = '';
       for (const [k, j] of rfRuns(d.del)) {
-        h += `<div title="${esc(`${rfTm(k)}〜${rfTm(j)} らくしふにはあるが仮WSに無い（削る）`)}" ` +
-          `style="position:absolute;top:3px;height:20px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
-          `box-sizing:border-box;border:1px solid #c0392b;border-radius:3px;` +
-          `background:repeating-linear-gradient(45deg,rgba(192,57,43,.55) 0 4px,rgba(192,57,43,.12) 4px 8px)"></div>`;
+        h += `<div title="${esc(`${rfTm(k)}〜${rfTm(j)} らくしふにはあるが仮WSに無い（＝らくしふから外す区間）`)}" ` +
+          `style="position:absolute;top:1px;height:24px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
+          `box-sizing:border-box;border:2px solid #c0392b;border-radius:5px;` +
+          `background:repeating-linear-gradient(45deg,rgba(192,57,43,.30) 0 4px,rgba(192,57,43,.06) 4px 8px)"></div>`;
       }
       for (const [k, j] of rfRuns(d.add)) {
-        h += `<div title="${esc(`${rfTm(k)}〜${rfTm(j)} 仮WSで足した区間（らくしふに無い）`)}" ` +
+        h += `<div title="${esc(`${rfTm(k)}〜${rfTm(j)} 仮WSにあってらくしふに無い（＝らくしふへ足す区間）`)}" ` +
           `style="position:absolute;top:1px;height:24px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
-          `box-sizing:border-box;border:2px solid #16a34a;border-radius:5px"></div>`;
+          `box-sizing:border-box;border:2px solid #c0392b;border-radius:5px"></div>`;
       }
       return h;
     };
