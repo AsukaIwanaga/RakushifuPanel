@@ -3974,7 +3974,7 @@
         <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid #c0392b;border-radius:3px"></i>赤枠＝らくしふと違う区間</span>
         <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid #c0392b;background:repeating-linear-gradient(45deg,rgba(192,57,43,.30) 0 4px,rgba(192,57,43,.06) 4px 8px)"></i>斜線つき＝らくしふから外す区間</span>
       </div>` : ''}
-      <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラーの「実WS」タブ）。仮WS＝実WS（らくしふ）を元に組み直した案。色: F=青・K=緑・FK=紫・正社員ライン=黒・TR=黄・固定=ティール・非生産=赤・不明=灰。</div>
+      <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラーの「実WS」タブ）。仮WS＝実WS（らくしふ）を元に組み直した案。色: F=青・K=緑・FK=紫・正社員ライン=黒・TR=黄・非生産=黄の斜線・不明=灰。</div>
     </div>`;
   }
   // 仮WSパネルの再描画（開いている時だけ・日付/データに追従）
@@ -4018,7 +4018,9 @@
                     TR: 'TR', FIX: '非生産', NPM: '非生産', UNK: '不明' };
   // 色はスケジューラーの仮WSグリッド（table.awsg td.awsc.k-*）と揃える
   const AWS_COL = { F: '#3b82f6', K: '#10b981', FK: '#8b5cf6', MGT: '#374151', cMGT: '#9ca3af',
-                    TR: '#facc15', FIX: '#be123c', NPM: '#be123c', UNK: '#d1d5db' };
+                    TR: '#facc15', UNK: '#d1d5db',
+                    FIX: 'repeating-linear-gradient(45deg,#facc15 0 6px,#fde68a 6px 12px)',
+                    NPM: 'repeating-linear-gradient(45deg,#facc15 0 6px,#fde68a 6px 12px)' };
   const AWS_ORD = { F: 0, FK: 1, K: 2, TR: 3, FIX: 4, NPM: 5, cMGT: 6, MGT: 7, UNK: 8 };
   const AWS_PROD = { F: 1, K: 1, FK: 1 };
 
@@ -4095,7 +4097,7 @@
         const rl = sl[k - 1] === v ? '0' : '13px', rr = sl[j] === v ? '0' : '13px';
         const lbl = (j - k) * SLOTW >= 40 && !AWS_PROD[v]
           ? `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;` +
-            `color:${v === 'TR' ? '#4a3800' : '#fff'};font-size:9px;white-space:nowrap;overflow:hidden;padding:0 3px">${esc(AWS_LAB[v] || v)}</span>` : '';
+            `color:${['TR', 'NPM', 'FIX'].includes(v) ? '#4a3800' : '#fff'};font-size:9px;white-space:nowrap;overflow:hidden;padding:0 3px">${esc(AWS_LAB[v] || v)}</span>` : '';
         segs += `<div title="${esc(`${tmOf(k)}〜${tmOf(j)} ${AWS_LAB[v] || v}`)}" ` +
           `style="position:absolute;top:3px;height:20px;left:${k * SLOTW}px;width:${(j - k) * SLOTW}px;` +
           `border-radius:${rl} ${rr} ${rr} ${rl};background:${AWS_COL[v] || '#d1d5db'};">${lbl}</div>`;
