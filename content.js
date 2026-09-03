@@ -1031,6 +1031,7 @@
     taskRowsCache = null;   // タスクシートも再取得
     for (const k in awsDiffCache) delete awsDiffCache[k];   // 仮WSとの食い違いも取り直す
     document.querySelectorAll('.rf-aws-diff').forEach((e) => e.remove());   // 本体側の枠も引き直す
+    document.querySelectorAll('.rf-date-chip').forEach((e) => e.remove());   // 日付横のバッジも
     leMakerCache = null;    // LE Maker のdata/paramsも取り直す
     storeTaskMapCache = null;
     lastDraftDay = null;    // ShiftDraft原案も取り直す
@@ -3039,6 +3040,76 @@
   const isVeteran = (nm) => !!(vetSet && vetSet.has(String(nm || '').replace(/\s+/g, '')));
   const V_WEEK_MAX = 20 * 60;    // 契約は「週20H未満」＝この分数以上はNG
   const V_WEEK_WARN = 18 * 60;   // 残り2hを切ったら注意表示
+  // いま開いているらくしふのURLの日付だけ差し替えて遷移（店舗・区分フィルタは維持）
+  function gotoRkDay(iso) {
+    const u = new URL(location.href);
+    u.searchParams.set('from', iso);
+    u.searchParams.set('to', iso);
+    u.searchParams.set('u', 'OneDay');
+    location.href = u.toString();
+  }
+  // ===== 日付チップ→月間カレンダー（店舗の月・本人要望2026-09-03）=====
+  // 人ごとの月間カレンダーと同じ見た目。日をクリックするとその日のらくしふへ飛ぶ。
+  function openStoreMonthCal(ev, ymOpt) {
+    document.getElementById('rf-smcal')?.remove();
+    const cur = ymd(targetDate);
+    const ym = ymOpt || cur.slice(0, 7);
+    const box = document.createElement('div');
+    box.id = 'rf-smcal';
+    box.style.cssText = 'position:fixed;z-index:2147483200;background:#fff;border:1px solid #d9d8d2;' +
+      'box-shadow:0 8px 30px rgba(20,20,18,.18);padding:10px 12px;width:300px;' +
+      "font-family:'Hiragino Sans','Yu Gothic',sans-serif;font-size:12px;color:#161616;";
+    const x = Math.min((ev && ev.clientX) || 60, innerWidth - 320);
+    const y = Math.min((ev && ev.clientY) || 120, innerHeight - 320);
+    box.style.left = `${Math.max(8, x)}px`;
+    box.style.top = `${Math.max(8, y + 14)}px`;
+    const [y2, m2] = ym.split('-').map(Number);
+    const last = new Date(y2, m2, 0).getDate();
+    const first = new Date(y2, m2 - 1, 1);
+    const today = ymd(new Date());
+    const cells = [];
+    for (let i = 0; i < (first.getDay() + 6) % 7; i++) cells.push('<span></span>');
+    for (let d = 1; d <= last; d++) {
+      const iso = `${ym}-${String(d).padStart(2, '0')}`;
+      const dt = new Date(y2, m2 - 1, d);
+      const hol = isHolidayExt(iso);
+      const col = (dt.getDay() === 0 || hol) ? '#c33' : dt.getDay() === 6 ? '#26c' : '#161616';
+      const nc = unconfirmedSet && unconfirmedSet.has(iso);
+      let st = 'position:relative;display:flex;align-items:center;justify-content:center;height:30px;' +
+        `font-size:11.5px;cursor:pointer;color:${col};`;
+      if (iso === cur) st += 'background:#161616;color:#fff;font-weight:700;';
+      else if (iso === today) st += 'box-shadow:inset 0 0 0 2px #d3402a;font-weight:700;';
+      const tip = `${iso}${hol ? '（祝）' : ''}${nc ? '・未確定' : ''}\nクリックでこの日のらくしふを開く`;
+      cells.push(`<span data-smd="${iso}" title="${esc(tip)}" style="${st}">${d}` +
+        (nc ? '<i style="position:absolute;right:3px;top:3px;width:5px;height:5px;background:#d3402a"></i>' : '') +
+        '</span>');
+    }
+    while (cells.length % 7) cells.push('<span></span>');
+    box.innerHTML = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <button class="sm-prev" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">◀</button>
+      <b style="font-weight:600">${ym.replace('-', '/')}</b>
+      <button class="sm-next" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">▶</button>
+      <span style="flex:1"></span>
+      <button class="sm-x" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">✕</button></div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:2px">` +
+      ['月', '火', '水', '木', '金', '土', '日'].map((w, i) =>
+        `<span style="text-align:center;font-size:10px;color:${i === 6 ? '#c33' : i === 5 ? '#26c' : '#8c8c88'}">${w}</span>`).join('') +
+      `</div><div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px">${cells.join('')}</div>
+      <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒地=表示中の日・赤枠=今日・右上の赤点=未確定<br>日付をクリックするとその日のらくしふを開きます</div>`;
+    document.body.appendChild(box);
+    const close = () => { box.remove(); document.removeEventListener('mousedown', out); };
+    const out = (e2) => { if (!box.contains(e2.target)) close(); };
+    setTimeout(() => document.addEventListener('mousedown', out), 0);
+    box.querySelector('.sm-x').addEventListener('click', close);
+    box.querySelector('.sm-prev').addEventListener('click', () => { close(); openStoreMonthCal(ev, addYm(ym, -1)); });
+    box.querySelector('.sm-next').addEventListener('click', () => { close(); openStoreMonthCal(ev, addYm(ym, 1)); });
+    box.addEventListener('click', (e2) => {
+      const c = e2.target.closest && e2.target.closest('[data-smd]');
+      if (!c) return;
+      close();
+      gotoRkDay(c.dataset.smd);
+    });
+  }
   async function openMonthCal(name, ev, ymOpt) {
     document.getElementById('rf-mcal')?.remove();
     const ym = ymOpt || ymd(targetDate).slice(0, 7);
@@ -3071,12 +3142,8 @@
     box.addEventListener('click', (e2) => {
       const cell = e2.target.closest && e2.target.closest('[data-mcd]');
       if (!cell) return;
-      const u = new URL(location.href);
-      u.searchParams.set('from', cell.dataset.mcd);
-      u.searchParams.set('to', cell.dataset.mcd);
-      u.searchParams.set('u', 'OneDay');
       close();
-      location.href = u.toString();
+      gotoRkDay(cell.dataset.mcd);
     });
     box.querySelector('.mc-prev').addEventListener('click', () => { close(); openMonthCal(name, ev, addYm(ym, -1)); });
     box.querySelector('.mc-next').addEventListener('click', () => { close(); openMonthCal(name, ev, addYm(ym, 1)); });
@@ -4530,6 +4597,10 @@
       `color:${color};border-bottom:2px solid #d3402a;padding-bottom:1px;` +
       'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;';
     if (hol) chip.textContent += '祝';
+    // クリックで月間カレンダー（本人要望2026-09-03「日付をクリックしたらマンスリー」）
+    chip.style.cursor = 'pointer';
+    chip.title = 'クリックで月間カレンダー（日をクリックするとその日のらくしふへ）';
+    chip.addEventListener('click', (ev) => { ev.stopPropagation(); openStoreMonthCal(ev); });
     el.parentElement.insertBefore(chip, el);
     // すかいらーくルール: 1週間先までの日は確定済みであるべき（本人指定2026-08-05）。
     // 対象日が今日〜+7日 かつ 未確定（shift_confirm_target_candidates の need_to_confirm）なら
@@ -4537,16 +4608,47 @@
     const today0 = new Date(); today0.setHours(0, 0, 0, 0);
     const d0 = new Date(d); d0.setHours(0, 0, 0, 0);
     const diffDays = Math.round((d0 - today0) / 86400000);
+    // 日付の左に並ぶ状態バッジ（本人指定2026-09-03）。
+    //   要確定       … 赤地・白文字（すかいらーくルール: 1週間先までは確定済みであるべき）
+    //   仮WSと違う   … オレンジ塗り（スケジューラーの仮WSとらくしふが食い違っている）
+    //   変更希望未対応 … 赤文字（この日の未完了の変更依頼が残っている）
+    const mkBadge = (text, css, title, onClick) => {
+      const b = document.createElement('span');
+      b.className = 'rf-date-chip';   // 日付チップと同時に張り替える
+      b.textContent = text;
+      if (title) b.title = title;
+      b.style.cssText = 'display:inline-block;font-weight:700;font-size:12px;padding:2px 9px;' +
+        'margin-right:10px;letter-spacing:.5px;white-space:nowrap;' +
+        'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;' + css;
+      if (onClick) { b.style.cursor = 'pointer'; b.addEventListener('click', onClick); }
+      el.parentElement.insertBefore(b, chip);
+      return b;
+    };
     if (diffDays >= 0 && diffDays <= 7 && unconfirmedSet.has(ymd(d))) {
-      const warn = document.createElement('span');
-      warn.className = 'rf-date-chip';   // 日付チップと同時に張り替える
-      warn.textContent = '要確定';
-      warn.title = '1週間先までのシフトは確定が必要（すかいらーくルール）。この日は未確定です';
-      warn.style.cssText = 'display:inline-block;background:#d3402a;color:#fff;font-weight:700;' +
-        'font-size:12px;padding:2px 9px;margin-right:10px;letter-spacing:1px;' +
-        'font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;';
-      el.parentElement.insertBefore(warn, chip);
+      mkBadge('要確定', 'background:#d3402a;color:#fff;letter-spacing:1px;',
+        '1週間先までのシフトは確定が必要（すかいらーくルール）。この日は未確定です');
     }
+    // 変更希望未対応＝この日の未完了の変更依頼（後出し希望は依頼ではないので除く）
+    const openReqs = ((scState && scState.cases) || []).filter((c) =>
+      !scClosed(c) && !scAvailOnly(c) &&
+      (scMatchesDay(c, d) || !(c.target_date || '').trim()));
+    if (openReqs.length) {
+      mkBadge(`変更希望未対応（${openReqs.length}件）`, 'color:#d3402a;',
+        `この日の未完了の変更依頼 ${openReqs.length}件\n` +
+        openReqs.slice(0, 10).map((c) => `・${scStatusLabel(c)}: ${c.title || c.change || ''}`).join('\n') +
+        (openReqs.length > 10 ? `\n…ほか${openReqs.length - 10}件` : '') +
+        '\nクリックで変更依頼パネルを開きます',
+        () => { if (!shiftPanel.classList.contains('open')) $('#shiftToggle').click(); scSetFilter('day'); });
+    }
+    // 仮WSとの食い違い（:8790 への問い合わせが要るので後追いで足す）
+    awsDiffOf(ymd(d)).then((df) => {
+      if (!df || !el.parentElement || !el.parentElement.contains(chip)) return;
+      mkBadge(`仮WSと違う（${df.lines.length}人）`, 'background:#ea580c;color:#fff;',
+        `スケジューラーの仮WSとらくしふが違います（${df.lines.length}人）\n` +
+        df.lines.slice(0, 10).join('\n') + (df.lines.length > 10 ? `\n…ほか${df.lines.length - 10}人` : '') +
+        '\n＋=足す区間 / −=外す区間\nクリックで仮WSパネルを開きます',
+        () => { if (!awsPanel.classList.contains('open')) $('#awsToggle').click(); else renderAwsPanel(true); });
+    }).catch(() => {});
   }
 
   // ===== 月間シフト合計チップ（本人要望2026-08-20「月で今何時間分入っているのか」）=====
@@ -5716,7 +5818,6 @@
           `週次${mgt ? 'MGT' : 'クルー'}タスク: ${x.label}${x.time ? ` ${x.time}` : ''}${nthTxt}（設定=スケジューラーMGR予定の「👷週次タスク」）`);
       }
     } catch { /* 8790不達時はスキップ */ }
-    const awsDiff = await awsDiffOf(iso).catch(() => null);
     if (seq !== taskStripSeq) return;   // 古い非同期結果で二重挿入しない
     document.querySelectorAll('.rf-task-strip').forEach((e) => e.remove());
     const tt = [...document.querySelectorAll('.table-title')].find((t) =>
@@ -5728,27 +5829,13 @@
       'margin:4px 0 6px;padding:6px 14px;background:#fff;border:1px solid #d9d8d2;';
     const lbl = (t) => `<b style="flex:none;font:700 12.5px/1.4 'Hiragino Sans',sans-serif;color:#161616;` +
       `box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">${t}</b>`;
-    const dl = awsDiff ? awsDiff.lines : null;
-    const warn = dl
-      ? `<span title="${esc(`スケジューラーの仮WSとらくしふの確定シフトが違います（${dl.length}人）\n` +
-          dl.slice(0, 12).join('\n') + (dl.length > 12 ? `\n…ほか${dl.length - 12}人` : '') +
-          '\n＋=足す区間 / −=削る区間\nクリックで仮WSパネルを開いて差分を出します')}" class="rf-aws-warn" ` +
-        `style="flex:none;cursor:pointer;font:700 12.5px/1.5 'Hiragino Sans','Yu Gothic',sans-serif;` +
-        `color:#fff;background:#c0392b;padding:2px 9px;white-space:nowrap">` +
-        `仮WSが変更されています（${dl.length}人）</span>` +
-        `<span style="flex:none;width:1px;height:16px;background:#d9d8d2;margin:0 4px"></span>`
-      : '';
-    strip.innerHTML = warn +
+    // 仮WSとの食い違いは日付の横のバッジ（rf-date-chip）で出すのでここには置かない
+    strip.innerHTML =
       lbl('タスク') +
       (chips.length ? chips.join('') :
         `<span style="font-size:12px;color:#8c8c88">この日のタスクなし</span>`) +
       (evChips.length ? `<span style="flex:none;width:1px;height:16px;background:#d9d8d2;margin:0 4px"></span>` +
         lbl('イベント') + evChips.join('') : '');
-    const wEl = strip.querySelector('.rf-aws-warn');
-    if (wEl) wEl.addEventListener('click', () => {
-      if (!awsPanel.classList.contains('open')) $('#awsToggle').click();
-      else renderAwsPanel(true);
-    });
     tt.parentElement.insertBefore(strip, tt);
   }
 
