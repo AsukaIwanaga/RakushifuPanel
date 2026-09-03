@@ -2012,6 +2012,40 @@
     }
   }
 
+  // ===== 勤務間インターバル（12時間）の薄いグレーアウト（本人指定2026-09-03）=====
+  // 前日の上がりから12時間は入れられない。その時間帯をラインの上に薄いグレーで敷くだけ
+  // （斜線や警告は出さない）。前日にシフトが無い人には何も出さない。
+  const RF_IV_MIN = 12 * 60;
+  let ivShadeSeq = 0;
+  async function updateIvShade() {
+    const seq = ++ivShadeSeq;
+    document.querySelectorAll('.rf-iv-shade').forEach((e) => e.remove());
+    if (!onOneDayTarget()) return;
+    const pv = new Date(targetDate); pv.setDate(pv.getDate() - 1);
+    const pIso = ymd(pv);
+    let per;
+    try { per = await mcalMonth(pIso.slice(0, 7)); } catch { return; }
+    if (seq !== ivShadeSeq) return;
+    const hm2 = (v) => `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`;
+    for (const tr of document.querySelectorAll('tr.user-cell-container.table-body-row')) {
+      const nameEl = tr.querySelector('.user-cell .name');
+      if (!nameEl) continue;
+      const st = per[normName(cellName(nameEl))];
+      const sp = (st && st.spans && st.spans[pIso]) || [];
+      if (!sp.length) continue;
+      const end = Math.max(...sp.map((x) => x[1]));
+      const until = end + RF_IV_MIN - 1440;      // 前日23:00上がり → この日11:00まで
+      if (until <= 360) continue;                 // 6:00より前に空くなら出さない
+      const track = tr.querySelector('.schedule-row');
+      if (!track) continue;
+      const el = document.createElement('div');
+      el.className = 'rf-iv-shade';
+      el.title = `前日 ${hm2(end)}上がり → ${hm2(until)}まではインターバル12時間が空きません`;
+      el.style.cssText = `position:absolute;left:0;width:${until - 360}px;top:0;bottom:0;` +
+        'z-index:2;pointer-events:none;background:rgba(120,113,108,.13);';
+      track.appendChild(el);
+    }
+  }
   function updateReqLines() {
     document.querySelectorAll('.rf-req-line, .rf-req-x').forEach((e) => e.remove());
     if (!scState) return;
@@ -7065,6 +7099,7 @@
     guarded('monthChip', () => { if (!document.querySelector('.rf-month-chip')) updateMonthChip().catch(() => {}); });
     guarded('shiftMarks', () => { if (scState && !document.querySelector('.rf-sc-mark')) updateShiftMarks(); });
     guarded('reqLines', () => { if (scState && !document.querySelector('.rf-req-line')) updateReqLines(); });
+    guarded('ivShade', () => { if (!document.querySelector('.rf-iv-shade')) updateIvShade().catch(() => {}); });
     guarded('eventMarks', () => {
       const needStore = rfEvents &&
         eventsOn(ymd(targetDate)).some((e2) => !(e2.targets || []).length);
@@ -7121,6 +7156,7 @@
       scRenderList();      // 「この日」フィルタと依頼マークを新しい日付へ追従
       updateShiftMarks();
       updateReqLines();
+      updateIvShade().catch(() => {});
     }
   }, URL_WATCH_MS));
 
