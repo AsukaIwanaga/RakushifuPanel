@@ -1029,6 +1029,7 @@
   // 対象日はらくしふ画面(URLのfrom=)に完全追従（独自の日付移動は廃止）
   $('#reload').addEventListener('click', () => {
     taskRowsCache = null;   // タスクシートも再取得
+    for (const k in awsDiffCache) delete awsDiffCache[k];   // 仮WSとの食い違いも取り直す
     leMakerCache = null;    // LE Maker のdata/paramsも取り直す
     storeTaskMapCache = null;
     lastDraftDay = null;    // ShiftDraft原案も取り直す
@@ -2983,12 +2984,24 @@
       <button class="mc-x" style="border:1px solid #d9d8d2;background:#fff;cursor:pointer;font-size:11px;padding:0 6px">✕</button></div>
       <div class="mc-sum" style="display:flex;align-items:baseline;gap:8px;margin:0 0 6px;font-size:12px;color:#8c8c88">月計 <span style="color:#c9c8c2">…</span></div>
       <div class="mc-body" style="min-height:230px;color:#8c8c88">読込中…</div>
-      <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒=勤務(アサイン済み・時間はマウスで)・下線=希望のみ（らくしふ提出＋台帳）・他店の勤務は非出勤日・右端=週計(月〜日)</div>`;
+      <div style="margin-top:6px;font-size:10px;color:#8c8c88">黒=勤務(アサイン済み・時間はマウスで)・下線=希望のみ（らくしふ提出＋台帳）・他店の勤務は非出勤日・右端=週計(月〜日)<br>日付をクリックするとその日のらくしふを開きます</div>`;
     document.body.appendChild(box);
     const close = () => { box.remove(); document.removeEventListener('mousedown', out); };
     const out = (e2) => { if (!box.contains(e2.target)) close(); };
     document.addEventListener('mousedown', out);
     box.querySelector('.mc-x').addEventListener('click', close);
+    // 日付クリック＝いま開いているらくしふのURLの日付だけ差し替えて遷移（本人要望2026-09-03）。
+    // s（店舗）やg（区分フィルタ）はそのまま持っていく。日ビュー(u=OneDay)で開く。
+    box.addEventListener('click', (e2) => {
+      const cell = e2.target.closest && e2.target.closest('[data-mcd]');
+      if (!cell) return;
+      const u = new URL(location.href);
+      u.searchParams.set('from', cell.dataset.mcd);
+      u.searchParams.set('to', cell.dataset.mcd);
+      u.searchParams.set('u', 'OneDay');
+      close();
+      location.href = u.toString();
+    });
     box.querySelector('.mc-prev').addEventListener('click', () => { close(); openMonthCal(name, ev, addYm(ym, -1)); });
     box.querySelector('.mc-next').addEventListener('click', () => { close(); openMonthCal(name, ev, addYm(ym, 1)); });
     try {
@@ -3024,7 +3037,8 @@
         const tt = asg ? ` 勤務 ${st.asgT[iso] || ''}${dh}`
           : wish ? ' 希望'
           : (st.other && st.other.has(iso)) ? ' 他店勤務（当店は非出勤）' : '';
-        cells.push(`<span title="${iso}${tt}" style="${s2}">${d}</span>`);
+        s2 += 'cursor:pointer;';   // クリックでその日のらくしふへ（本人要望2026-09-03）
+        cells.push(`<span data-mcd="${iso}" title="${iso}${tt}\nクリックでこの日のらくしふを開く" style="${s2}">${d}</span>`);
       }
       // 月のトータル時間数（休憩控除後）＋区分内訳（本人要望2026-08-28）
       {
@@ -5453,6 +5467,55 @@
   }
 
   // ===== 日付ヘッダー下のタスクストリップ（本人要望2026-08-17「ここにタスクを載せて」）=====
+  // ===== 仮WS（スケジューラー8790）とらくしふの食い違い検知（本人指定2026-09-03）=====
+  // その日の仮WSが保存されていて、らくしふの確定シフトと中身が違うなら
+  // タスク帯の先頭に赤地・白字で「仮WSが変更されています」を出す＝反映漏れの目印。
+  // 比べるのは 人ごとの「実働の分数」と「通しの開始〜終了」。休憩の入れ方の違いでは鳴らさない
+  // （仮WSは休憩を塗らないため）。仮WSを作っていない日は何も出さない。
+  const awsDiffCache = {};
+  async function awsDiffOf(iso) {
+    if (iso in awsDiffCache) return awsDiffCache[iso];
+    let out = null;
+    try {
+      const r = await draftApi(`/api/actws?month=${iso.slice(0, 7)}`);
+      const day = r && r.ok && r.data && r.data.days && r.data.days[iso];
+      const rows = (day && day.rows) || null;
+      if (rows && rows.length) {
+        const per = await mcalMonth(iso.slice(0, 7));
+        const hm2 = (v) => `${Math.floor(v / 60)}:${String(v % 60).padStart(2, '0')}`;
+        const draftOf = (row) => {
+          const on = (row.slots || []).map((v) => !!v);
+          const ix = on.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
+          return { mins: ix.length * 30,
+                   outer: ix.length ? `${hm2(360 + ix[0] * 30)}〜${hm2(360 + (ix[ix.length - 1] + 1) * 30)}` : '' };
+        };
+        const rkOf = (nm) => {
+          const st = per[nm];
+          const sp = (st && st.spans && st.spans[iso]) || [];
+          if (!sp.length) return { mins: 0, outer: '' };
+          const s0 = Math.min(...sp.map((x) => x[0])), e0 = Math.max(...sp.map((x) => x[1]));
+          return { mins: (st.minsD && st.minsD[iso]) || 0, outer: `${hm2(s0)}〜${hm2(e0)}` };
+        };
+        const diffs = [];
+        const seen = new Set();
+        for (const row of rows) {
+          const nm = normName(row.name);
+          seen.add(nm);
+          const d = draftOf(row), k = rkOf(nm);
+          if (Math.abs(d.mins - k.mins) >= 1 || d.outer !== k.outer)
+            diffs.push(`${row.name}: らくしふ ${k.outer || 'なし'} → 仮WS ${d.outer || 'なし'}`);
+        }
+        // 仮WSから外した人（らくしふには残っている）も食い違い
+        for (const nm in per) {
+          if (seen.has(nm) || !(per[nm].asg && per[nm].asg.has(iso))) continue;
+          diffs.push(`${nm}: らくしふ ${rkOf(nm).outer} → 仮WS なし`);
+        }
+        if (diffs.length) out = diffs;
+      }
+    } catch { out = null; }   // 8790に届かない時は黙って出さない
+    awsDiffCache[iso] = out;
+    return out;
+  }
   // フロア/キッチン見出しの上に、この日のタスク（月次/週次/要請＋MGR業務＋クルー業務）を1帯で出す
   let taskStripSeq = 0;
   async function updateTaskStrip() {
@@ -5503,6 +5566,7 @@
           `週次${mgt ? 'MGT' : 'クルー'}タスク: ${x.label}${x.time ? ` ${x.time}` : ''}${nthTxt}（設定=スケジューラーMGR予定の「👷週次タスク」）`);
       }
     } catch { /* 8790不達時はスキップ */ }
+    const awsDiff = await awsDiffOf(iso).catch(() => null);
     if (seq !== taskStripSeq) return;   // 古い非同期結果で二重挿入しない
     document.querySelectorAll('.rf-task-strip').forEach((e) => e.remove());
     const tt = [...document.querySelectorAll('.table-title')].find((t) =>
@@ -5514,12 +5578,25 @@
       'margin:4px 0 6px;padding:6px 14px;background:#fff;border:1px solid #d9d8d2;';
     const lbl = (t) => `<b style="flex:none;font:700 12.5px/1.4 'Hiragino Sans',sans-serif;color:#161616;` +
       `box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">${t}</b>`;
-    strip.innerHTML =
+    const warn = awsDiff
+      ? `<span title="${esc(`スケジューラーの仮WSとらくしふの確定シフトが違います（${awsDiff.length}件）\n` +
+          awsDiff.slice(0, 12).join('\n') + (awsDiff.length > 12 ? `\n…ほか${awsDiff.length - 12}件` : '') +
+          '\nクリックでスケジューラーのこの日の仮WSを開きます')}" class="rf-aws-warn" ` +
+        `style="flex:none;cursor:pointer;font:700 12.5px/1.5 'Hiragino Sans','Yu Gothic',sans-serif;` +
+        `color:#fff;background:#c0392b;padding:2px 9px;white-space:nowrap">` +
+        `仮WSが変更されています（${awsDiff.length}件）</span>` +
+        `<span style="flex:none;width:1px;height:16px;background:#d9d8d2;margin:0 4px"></span>`
+      : '';
+    strip.innerHTML = warn +
       lbl('タスク') +
       (chips.length ? chips.join('') :
         `<span style="font-size:12px;color:#8c8c88">この日のタスクなし</span>`) +
       (evChips.length ? `<span style="flex:none;width:1px;height:16px;background:#d9d8d2;margin:0 4px"></span>` +
         lbl('イベント') + evChips.join('') : '');
+    const wEl = strip.querySelector('.rf-aws-warn');
+    if (wEl) wEl.addEventListener('click', () => {
+      window.open(`http://mac-mini.tail1f88ff.ts.net:8790/#act=${iso}`, '_blank', 'noopener');
+    });
     tt.parentElement.insertBefore(strip, tt);
   }
 
