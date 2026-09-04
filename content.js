@@ -664,6 +664,30 @@
       .sc-head { display: flex; gap: 7px; align-items: baseline; margin-bottom: 12px; flex-wrap: wrap;
         border-bottom: 2px solid var(--ink); padding-bottom: 10px; }
       .sc-head b { flex: 1 0 auto; font-size: 16px; font-weight: 600; white-space: nowrap; }
+      /* 依頼マンスリー（scRenderMonth） */
+      .sc-mnav { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+      .sc-mnav b { font-size: 14px; }
+      .sc-mnav button { border: 1px solid var(--line2); background: var(--panel); cursor: pointer;
+        font-size: 14px; line-height: 1; padding: 2px 9px; }
+      .sc-mnodate { font-size: 11px; margin-bottom: 6px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+      .sc-mhead { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center;
+        font-size: 10px; color: var(--faint); margin-bottom: 2px; }
+      .sc-mhead .sat { color: #2563eb; } .sc-mhead .sun { color: #dc2626; }
+      .sc-mgrid { display: grid; grid-template-columns: repeat(7, 1fr);
+        border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+      .sc-mcell { min-height: 52px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+        padding: 2px 3px; min-width: 0; }
+      .sc-mcell.out { background: var(--line); opacity: .25; }
+      .sc-mcell.today { box-shadow: inset 0 0 0 2px #2563eb; }
+      .sc-mcell.cur .sc-mday { text-decoration: underline; }
+      .sc-mday { font-size: 10.5px; font-weight: 600; display: block; }
+      .sc-mcell.sat .sc-mday { color: #2563eb; } .sc-mcell.sun .sc-mday { color: #dc2626; }
+      .sc-mchip { display: block; margin-top: 2px; font-size: 10px; line-height: 1.35; padding: 1px 3px;
+        background: color-mix(in srgb, var(--mc) 16%, transparent);
+        border-left: 3px solid var(--mc); cursor: pointer; white-space: nowrap;
+        overflow: hidden; text-overflow: ellipsis; }
+      .sc-mnodate .sc-mchip { display: inline-block; margin-top: 0; }
+      .sc-mchip.done { opacity: .55; border-left-style: dashed; }
       #scDetectBox { border: 0; border-left: 2px solid var(--warn); background: transparent; border-radius: 0;
         padding: 4px 0 4px 9px; margin-bottom: 10px; font-size: 12px; }
       .sc-detect-head { font-weight: 600; margin-bottom: 4px; }
@@ -1511,6 +1535,80 @@
     bd.style.display = n ? 'block' : 'none';
     $('#shiftToggle').title = scFilter === 'day'
       ? `シフト変更依頼（この日の未完了 ${n}件）` : `シフト変更依頼（未完了 ${n}件）`;
+  }
+
+  // ===== 依頼のマンスリー表示（本人要望2026-09-04「依頼の画面はマンスリーで」）=====
+  // チップの色は依頼帯(updateReqLines)と同じ意味論: 休み系=赤 / クルー発の途中希望=青 /
+  // 承諾済み=緑◯ / 通常(依頼中)=黄 / 拒否=赤✕。完了・拒否は点線・淡色で残す（帯と同ルール）。
+  function scCaseHue(c) {
+    const blob = `${c.change || ''} ${c.title || ''}`;
+    const availWord = /勤務可|出勤でき|出勤可能|出れます|入れます/.test(blob);
+    const isOff = /休み|休暇/.test(blob) && !availWord;
+    const storeInit = /先打ち|打診/.test(blob);
+    const isLate = !isOff && !storeInit && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWord);
+    if (c.is_rejected) return { bg: '#dc2626', mark: '✕' };
+    const okd = !isOff && !isLate && c.accepted_done;
+    return isOff ? { bg: '#dc2626', mark: '' }
+      : isLate ? { bg: '#2563eb', mark: '' }
+        : okd ? { bg: '#16a34a', mark: '◯' } : { bg: '#f5b301', mark: '' };
+  }
+  function scRenderMonth(el, cases, open) {
+    const base = scMonth || new Date(targetDate.getFullYear(), targetDate.getMonth(), 1);
+    scMonth = base;
+    const y = base.getFullYear(), mo = base.getMonth();
+    const days = new Date(y, mo + 1, 0).getDate();
+    const lead = (new Date(y, mo, 1).getDay() + 6) % 7;   // 月曜始まり
+    const today = new Date();
+    const noDate = open.filter((c) => !(c.target_date || '').trim());
+    const chipOf = (c) => {
+      const hue = scCaseHue(c);
+      const nm = c.target === '全員' ? '募集' : normName(c.target || '?').slice(0, 4);
+      const st = c.is_rejected ? '🚫拒否' : c.is_done ? '✅完了' : scStatusLabel(c);
+      return `<span class="sc-mchip${scClosed(c) ? ' done' : ''}" data-p="${esc(c.path)}"` +
+        ` style="--mc:${hue.bg}" title="${esc(`${st}: ${c.title || ''}`)}">${hue.mark}${esc(nm)}</span>`;
+    };
+    let cells = '';
+    for (let i = 0; i < lead; i++) cells += '<div class="sc-mcell out"></div>';
+    for (let da = 1; da <= days; da++) {
+      const dt = new Date(y, mo, da);
+      const dow = dt.getDay();
+      const rel = cases.filter((c) => scMatchesDay(c, dt));
+      // 後出し希望（scAvailOnly）は期間指定が多く毎日に展開されてグリッドを埋めるので、
+      // 日ごとに1枚へ畳む（誰のかはツールチップ・クリックで「すべて」リストへ）
+      const avail = rel.filter(scAvailOnly);
+      const availChip = !avail.length ? '' :
+        `<span class="sc-mchip sc-mavail" style="--mc:#2563eb" title="${esc('後出し希望:\n' +
+          avail.map((c) => `${normName(c.target || '?')} ${c.title || ''}`.trim()).join('\n'))}">🙋希望${avail.length}</span>`;
+      const chips = rel.filter((c) => !scAvailOnly(c)).map(chipOf).join('') + availChip;
+      const cls = ['sc-mcell'];
+      if (dow === 0) cls.push('sun');
+      if (dow === 6) cls.push('sat');
+      if (y === today.getFullYear() && mo === today.getMonth() && da === today.getDate()) cls.push('today');
+      if (y === targetDate.getFullYear() && mo === targetDate.getMonth() && da === targetDate.getDate()) cls.push('cur');
+      cells += `<div class="${cls.join(' ')}"><span class="sc-mday">${da}</span>${chips}</div>`;
+    }
+    el.innerHTML = `
+      <div class="sc-mnav">
+        <button id="scMPrev" title="前の月">‹</button>
+        <b>${y}年${mo + 1}月</b>
+        <button id="scMNext" title="次の月">›</button>
+        <span class="muted" style="font-size:11px">黄=依頼中・赤=休み系・緑◯=承諾済み・🙋=後出し希望の束・淡=クローズ</span>
+      </div>
+      ${noDate.length ? `<div class="sc-mnodate">📅日付未記入: ${noDate.map(chipOf).join('')}</div>` : ''}
+      <div class="sc-mhead">${['月', '火', '水', '木', '金', '土', '日'].map((w, i) =>
+        `<span class="${i === 5 ? 'sat' : i === 6 ? 'sun' : ''}">${w}</span>`).join('')}</div>
+      <div class="sc-mgrid">${cells}</div>`;
+    $('#scMPrev').addEventListener('click', () => { scMonth = new Date(y, mo - 1, 1); scRenderList(); });
+    $('#scMNext').addEventListener('click', () => { scMonth = new Date(y, mo + 1, 1); scRenderList(); });
+    el.querySelectorAll('.sc-mchip').forEach((ch) => ch.addEventListener('click', () => {
+      if (ch.classList.contains('sc-mavail')) { scSetFilter('all'); return; }
+      const c = cases.find((x) => x.path === ch.dataset.p);
+      if (c) openScCase(c);
+    }));
+    const bd = $('#shiftBadge');
+    bd.textContent = open.length;
+    bd.style.display = open.length ? 'block' : 'none';
+    $('#shiftToggle').title = `シフト変更依頼（未完了 ${open.length}件）`;
   }
 
   async function scRefresh() {
@@ -2654,14 +2752,17 @@
     $('#scFilterOpen').classList.toggle('on', f === 'open');
     $('#scFilterDay').classList.toggle('on', f === 'day');
     $('#scFilterAll').classList.toggle('on', f === 'all');
+    $('#scFilterMonth').classList.toggle('on', f === 'month');
     scRenderList();
   };
   $('#scFilterOpen').addEventListener('click', () => scSetFilter('open'));
   $('#scFilterDay').addEventListener('click', () => scSetFilter('day'));
   $('#scFilterAll').addEventListener('click', () => scSetFilter('all'));
+  // 月ボタンは押すたび表示中の日の月へ戻す（‹›で動かした後の迷子防止）
+  $('#scFilterMonth').addEventListener('click', () => { scMonth = null; scSetFilter('month'); });
   // 前回のフィルタ選択を復元
   const savedScFilter = localStorage.getItem('rfScFilter');
-  if (savedScFilter && ['open', 'day', 'all'].includes(savedScFilter)) scSetFilter(savedScFilter);
+  if (savedScFilter && ['open', 'day', 'all', 'month'].includes(savedScFilter)) scSetFilter(savedScFilter);
   $('#scNewBtn').addEventListener('click', () => {
     const f = $('#scNewForm');
     if (f.style.display !== 'none') { scCloseNewForm(); return; } // 開いていれば閉じる
