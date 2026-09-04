@@ -856,8 +856,8 @@
     </style>
     <button id="toggle" title="客数予測パネル（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span class="badge" id="badge"></span></button>
     <button id="shiftToggle" title="シフト変更依頼（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span class="badge" id="shiftBadge"></span></button>
-    <button id="wsLanesToggle" title="モデルWSレーン表（この日に適用される型）"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="11" height="3.6" rx="1.8"/><rect x="8" y="10.2" width="13" height="3.6" rx="1.8"/><rect x="5" y="15.4" width="9" height="3.6" rx="1.8"/></svg></button>
-    <button id="awsToggle" title="仮WS（スケジューラーで組んだこの日の案。Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="9" height="3.6" rx="1.8" stroke-dasharray="3 2"/><rect x="8" y="10.2" width="12" height="3.6" rx="1.8" stroke-dasharray="3 2"/><path d="M14.5 19.6l5.2-5.2 1.7 1.7-5.2 5.2H14.5z"/></svg></button>
+    <button id="wsLanesToggle" title="デイリーWS（モデルWS⇄仮WSを切替・差分表示つき）"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="11" height="3.6" rx="1.8"/><rect x="8" y="10.2" width="13" height="3.6" rx="1.8"/><rect x="5" y="15.4" width="9" height="3.6" rx="1.8"/></svg></button>
+    <button id="awsToggle" title="仮WS マンスリー（月の一覧・らくしふと違う日。Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="9" height="3.6" rx="1.8" stroke-dasharray="3 2"/><rect x="8" y="10.2" width="12" height="3.6" rx="1.8" stroke-dasharray="3 2"/><path d="M14.5 19.6l5.2-5.2 1.7 1.7-5.2 5.2H14.5z"/></svg></button>
     <!-- 反映パネルは2026-08-08撤去（本人「もう多分これいらない」・原案→反映ワークフロー廃止済み）。
          コードは温存し入口だけ非表示。復活はこの display:none を外すだけ。 -->
     <button id="reflectToggle" style="display:none" title="海賊版らくしふ → らくしふへ反映（Shift+クリックで他と併用）"><svg viewBox="0 0 24 24"><path d="M3 6h13M3 6l3-3M3 6l3 3M21 18H8M21 18l-3-3M21 18l-3 3"/></svg></button>
@@ -900,7 +900,7 @@
       <div id="wsLanesBody" class="muted">モデルWS読込中…</div>
     </div>
     <div id="awsPanel">
-      <div id="awsBody" class="muted">仮WS読込中…</div>
+      <div id="awsBody" class="muted">仮WS マンスリー読込中…</div>
     </div>
     <div id="reflectPanel">
       <div class="rp-head"><b>海賊版らくしふ → 反映</b>
@@ -1004,8 +1004,10 @@
   // 📝 4つ目のアイコン: 仮WSパネル（本人要望2026-08-29「モデルWSとは別に仮WSのボタンで四つ目」）
   $('#awsToggle').addEventListener('click', (ev) => clickTogglePanel('#awsToggle', ev));
   if (localStorage.getItem('rfAwsOpen') === '1') { awsPanel.classList.add('open'); syncToggle('#awsToggle', true); }
-  // 仮WSパネル内の「⇄ モデルWSと比較」も同じ差異ウィンドウを開く
+  // 仮WSマンスリー: 行クリックでその日のらくしふへ（デイリーは📐パネル側）
   $('#awsBody').addEventListener('click', (ev) => {
+    const r = ev.target && ev.target.closest && ev.target.closest('[data-awsd]');
+    if (r) { gotoRkDay(r.dataset.awsd); return; }
     const b = ev.target && ev.target.closest && ev.target.closest('.rf-wscmp');
     if (!b) return;
     const iso = b.dataset.iso;
@@ -1014,7 +1016,13 @@
   });
 
   // ⇄ 仮WSと比較（別ウィンドウ）。ウィンドウはクリック直後に同期で開く（awaitを挟むとブロックされる）
+  // ＋ モデルWS⇄仮WS の表示切替（本人要望2026-09-04「表示そのものを切り替えるボタン」）
   $('#wsLanesBody').addEventListener('click', (ev) => {
+    const v = ev.target && ev.target.closest && ev.target.closest('.rf-wsview');
+    if (v) {
+      if (v.dataset.v !== wsDailyView()) { localStorage.setItem('rfWsDailyView', v.dataset.v); renderWsLanes(); }
+      return;
+    }
     const b = ev.target && ev.target.closest && ev.target.closest('.rf-wscmp');
     if (!b) return;
     const iso = b.dataset.iso;
@@ -1036,6 +1044,8 @@
     storeTaskMapCache = null;
     lastDraftDay = null;    // ShiftDraft原案も取り直す
     for (const k in awsPanelCache) delete awsPanelCache[k];   // 仮WSも取り直す
+    for (const k in awsDiffMonthCache) delete awsDiffMonthCache[k];   // マンスリーの差分も
+    for (const k in awsActualCache) delete awsActualCache[k];   // 実WSフォールバックも
     renderSheet();
   });
   // REQの基準を LE ⇔ モデルWS で切り替える（記憶して次回も同じ基準で開く）
@@ -3897,7 +3907,11 @@
   // タスク区間＋右端計）を読み取り専用で再現する（本人要望2026-08-15「これが拡張からも見たい」）。
   // データは leMakerCache.params（=params.json・スケジューラーと同一SoT）なので取得は増えない。
   function wsLaneHtml(params, tpl, iso, le, opts = {}) {
-    if (!tpl) return '<div class="muted" style="padding:10px 0">この日に適用されるモデルWS型がありません</div>';
+    if (!tpl) {
+      const hd = opts.viewSwitch ? `<div style="display:flex;align-items:center;gap:12px;margin:2px 0 8px">` +
+        `<b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">モデルWS</b>${wsViewSwitchHtml('model')}</div>` : '';
+      return hd + '<div class="muted" style="padding:10px 0">この日に適用されるモデルWS型がありません</div>';
+    }
     const SLOTW = 16, LABW = 190, KEIW = 52;
     const GRIDW = SLOTW * 36;
     const BARC = { F: '#4f8df7', K: '#27ae7e', FK: '#8b74f0' };
@@ -3912,6 +3926,37 @@
     const { ftMap, prodIds, laneTot, secTot, prodTot, npTot, slotInfo, lanes, fixIdsAll, fix30 } =
       wsModelAgg(params, tpl);
     const sumH = (a) => Math.round(a.reduce((x, y) => x + y, 0) * 10) / 10;
+
+    // 仮WSとの差分（本人要望2026-09-04「モデルWSにも差異表示を」）。モデルWSのレーンは
+    // 人に紐づかないので、行対応ではなく「区分(F/K/FK/非生産)×30分コマの人数差」で見せる。
+    // 色はらくしふ本体・仮WSの差分表示と同じオレンジ。
+    let diff = null;
+    if (opts.aws && Array.isArray(opts.aws.rows)) {
+      const z = () => new Array(36).fill(0);
+      const ms = { F: z(), K: z(), FK: z() }, mnp = z();
+      for (const rw of lanes) {
+        if (!Array.isArray(rw.h30)) continue;
+        for (let k = 0; k < 36; k++) {
+          if (!Number(rw.h30[k])) continue;
+          const si = slotInfo(rw, k);
+          if (si.np) mnp[k] += 1; else (ms[si.sec] || ms.F)[k] += 1;
+        }
+      }
+      for (const id of fixIdsAll) {
+        const a30 = fix30(id), ft = ftMap[id] || {}, prod = !!prodIds[id];
+        for (let k = 0; k < 36; k++) {
+          const v = Number(a30[k]) || 0;
+          if (v) { if (prod) (ms[ft.sec] || ms.F)[k] += v; else mnp[k] += v; }
+        }
+      }
+      const as2 = { F: z(), K: z(), FK: z() }, anp = z();
+      for (const r of opts.aws.rows) (r.slots || []).forEach((v, k) => {
+        if (!v) return;
+        if (AWS_PROD[v]) as2[v][k] += 1; else anp[k] += 1;
+      });
+      const dlt = (mm, aa) => mm.map((v, k) => Math.round((aa[k] - v) * 10) / 10);
+      diff = { F: dlt(ms.F, as2.F), K: dlt(ms.K, as2.K), FK: dlt(ms.FK, as2.FK), NP: dlt(mnp, anp) };
+    }
 
     // --- 上段サマリ表（客数/合計人数/F/K/FK/生産計/非生産計 × 時間帯18列） ---
     const hcell = (v, i, color, bg) =>
@@ -3992,12 +4037,37 @@
       `<div style="width:${LABW}px;min-width:${LABW}px;font-size:11px;padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc2(extraTitle || '')}">${label}</div>` +
       `<div style="position:relative;width:${GRIDW}px;min-width:${GRIDW}px;height:26px;${gridBg}">${qLines}${segs}</div>` +
       `<div style="width:${KEIW}px;min-width:${KEIW}px;text-align:right;font-size:10.5px;font-weight:700;color:#7c2d12;padding:5px 6px">${h ? h + 'h' : ''}</div></div>`;
+    // 差分1本ぶんの行（＋=仮WSが多い・−=足りない。区間ごとにオレンジ、−は斜線）
+    const diffLaneRow = (delta, what) => {
+      let segs = '', plus = 0, minus = 0, k = 0;
+      while (k < 36) {
+        const v = delta[k];
+        if (!v) { k++; continue; }
+        let j = k + 1;
+        while (j < 36 && delta[j] === v) j++;
+        if (v > 0) plus += (j - k) * 0.5 * v; else minus += (j - k) * 0.5 * -v;
+        const w = (j - k) * SLOTW;
+        const lb = (v > 0 ? '+' : '') + (v % 1 ? v.toFixed(1) : String(v));
+        segs += `<div title="${esc2(`${tmOf(k)}〜${tmOf(j)} ${what}: 仮WSがモデルWSより${v > 0 ? `${lb}人多い` : `${-v}人足りない`}`)}" ` +
+          `style="position:absolute;top:2px;height:22px;left:${k * SLOTW}px;width:${w}px;box-sizing:border-box;` +
+          `border:2px solid ${RF_DIFF_COL};border-radius:5px;${v < 0 ? `background:${RF_DIFF_HATCH};` : ''}">` +
+          (w >= 26 ? `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:700;color:${RF_DIFF_COL}">${lb}</span>` : '') +
+          `</div>`;
+        k = j;
+      }
+      const r10 = (x) => Math.round(x * 10) / 10;
+      const tot = segs
+        ? `<span style="color:${RF_DIFF_COL}">${plus ? `+${r10(plus)}h` : ''}${plus && minus ? '／' : ''}${minus ? `−${r10(minus)}h` : ''}</span>`
+        : '<span style="color:#a8a6a0;font-weight:400">仮WSと一致</span>';
+      return laneRow(`<span style="color:${RF_DIFF_COL};font-weight:700">仮WSとの差</span>&nbsp;${tot}`, segs, 0);
+    };
     let chart = '';
     for (const sec of ['F', 'K', 'FK']) {
       const rows = lanes.filter((rw) => (rw.home || rw.sec) === sec);
       const fixIds = fixIdsAll.filter((id) => (ftMap[id] || {}).sec === sec && fix30(id).some((v) => Number(v)));
-      if (!rows.length && !fixIds.length) continue;
+      if (!rows.length && !fixIds.length && !(diff && diff[sec].some((x) => x))) continue;
       chart += secHdrRow(sec);
+      if (diff) chart += diffLaneRow(diff[sec], sec);
       const bars = rows.map((rw) => ({ rw, ...laneBar(rw) }))
         .sort((a, b) => (a.range ? (rw2k(a.rw)) : 999) - (b.range ? rw2k(b.rw) : 999));
       let n = 0;
@@ -4028,26 +4098,71 @@
         chart += laneRow(`<span style="color:#92600a">固 ${esc2(ft.label || id)}</span>`, segs, h);
       }
     }
+    if (diff) {
+      // 非生産の差も1本（モデル=固定作業／仮WS=正社員ライン・TR・非生産・不明）
+      chart += `<div style="display:flex;border:1px solid #e3e2dc;border-top:2px solid #c9c7c1;background:#fdf3e3">` +
+        `<div style="width:${LABW}px;min-width:${LABW}px;font-size:11.5px;font-weight:700;padding:2px 8px;color:#92600a">非生産</div>` +
+        `<div style="width:${GRIDW}px;font-size:11px;color:#6d6d69;padding:2px 6px">モデル=固定作業 ／ 仮WS=正社員ライン・TR・非生産・不明</div>` +
+        `<div style="width:${KEIW}px"></div></div>` + diffLaneRow(diff.NP, '非生産');
+    }
     function rw2k(rw) { const i = (rw.h30 || []).findIndex((v) => Number(v)); return i < 0 ? 999 : i; }
 
     // ヘッダ（型名・適用日・比較ボタン）。差異ウィンドウは自前の見出しを持つので noHead で省く
     const headHtml = opts.noHead ? '' : `
       <div style="display:flex;align-items:center;gap:12px;margin:2px 0 8px">
         <b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">モデルWS ${esc2(tpl.name)}型</b>
+        ${opts.viewSwitch ? wsViewSwitchHtml('model') : ''}
         <span style="font-size:12px;color:#6d6d69">${esc2(iso)} に適用${tpl.tc ? `・TC ${esc2(String(tpl.tc))}` : ''}${le && le.total ? `・LE ${esc2(String(le.total))}` : ''}</span>
         <span style="flex:1"></span>
         ${opts.cmp ? `<button class="rf-wscmp" data-iso="${esc2(iso)}" title="スケジューラーで組んだ仮WSとモデルWSの差異を別ウィンドウで開く" style="font-size:12px;color:#161616;background:#fff;border:1px solid #c9c7c1;border-radius:4px;padding:2px 8px;cursor:pointer;white-space:nowrap">⇄ 仮WSと比較</button>` : ''}
         <a href="http://mac-mini.tail1f88ff.ts.net:8790/#ws" target="_blank" rel="noopener" style="font-size:12px;color:#1a5fb4;text-decoration:none;white-space:nowrap">⚙編集はスケジューラーで↗</a>
       </div>`;
+    const diffNote = !opts.viewSwitch ? '' : (diff
+      ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:11px;color:#6d6d69;margin-top:6px">
+        <span style="font-weight:700;color:${RF_DIFF_COL}">仮WSとの差分（区分×30分の人数差）</span>
+        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid ${RF_DIFF_COL};border-radius:3px"></i>枠＝仮WSが多い（＋人数）</span>
+        <span style="display:inline-flex;align-items:center;gap:4px"><i style="width:16px;height:11px;box-sizing:border-box;border:2px solid ${RF_DIFF_COL};background:${RF_DIFF_HATCH}"></i>斜線＝仮WSが足りない（−人数）</span>
+        <span>比較相手: ${opts.aws && opts.aws.asIs ? '実WS（この日は未編集＝らくしふのまま）' : '仮WS（編集済み）'}</span>
+      </div>`
+      : `<div style="font-size:11px;color:${opts.awsErr ? '#c0392b' : '#8c8c88'};margin-top:6px">${esc2(opts.awsErr || '仮WSとの差分を取得中…')}</div>`);
     return `<div style="width:fit-content;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616">
       ${headHtml}
       <table style="border-collapse:collapse;margin-bottom:0">${hourHdr}${sumHtml}</table>
       <div style="border-top:0">${chart}</div>
+      ${diffNote}
       <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラー・客数(時間帯)はこの日のLE）。斜線＋チップ=トップ/ラスト作業（生産）・黄=非生産タスクの30分上書き/固定作業・紫=FK切替。バーにマウスで詳細。</div>
     </div>`;
   }
 
-  // レーン表パネルの再描画（開いている時だけ・日付/データに追従）
+  // ===== デイリーWSパネル（📐）: モデルWS ⇄ 仮WS を切り替えて見る =====
+  // 本人要望2026-09-04:「モデルWSにも差異表示」「ダブるので表示そのものを切り替えるボタン」
+  // 「仮WSのデイリーのUIはモデルWSと一緒に」。マンスリーは📝パネル（renderAwsPanel）へ分離。
+  const wsDailyView = () => (localStorage.getItem('rfWsDailyView') === 'aws' ? 'aws' : 'model');
+  function wsViewSwitchHtml(view) {
+    const b = (v, lbl) =>
+      `<button class="rf-wsview" data-v="${v}" style="font-size:12px;padding:2px 10px;cursor:pointer;white-space:nowrap;` +
+      `border:1px solid ${view === v ? '#161616' : '#c9c7c1'};` +
+      `${v === 'model' ? 'border-radius:4px 0 0 4px;' : 'border-radius:0 4px 4px 0;border-left:0;'}` +
+      `background:${view === v ? '#161616' : '#fff'};color:${view === v ? '#fff' : '#161616'};` +
+      `font-weight:${view === v ? '700' : '400'}">${lbl}</button>`;
+    return `<span title="表示の切り替え（どちらも読み取り専用）" style="display:inline-flex">${b('model', 'モデルWS')}${b('aws', '仮WS')}</span>`;
+  }
+  // その日の仮WS（無ければ実WS=らくしふ）を1人1レーンで返す。差分計算とデイリー表示で共用
+  const awsActualCache = {};   // iso -> {at, rows}
+  async function awsRowsFor(iso, force) {
+    const m = await awsFetchMonth(iso.slice(0, 7), force);
+    const day = (m.days || {})[iso] || null;
+    if (day && (day.rows || []).length) return { rows: day.rows, asIs: false, updatedAt: day.updated_at };
+    const c = awsActualCache[iso];
+    if (!force && c && Date.now() - c.at < 60 * 1000) return c.rows ? { rows: c.rows, asIs: true } : null;
+    const r2 = await draftApi(`/api/shift-actual?month=${iso.slice(0, 7)}&date=${iso}`);
+    const d2 = r2 && r2.ok && r2.data;
+    const rows = (d2 && d2.ok && (d2.rows || []).length) ? awsRowsFromActual(d2.rows) : null;
+    awsActualCache[iso] = { at: Date.now(), rows };
+    return rows ? { rows, asIs: true } : null;
+  }
+  // レーン表パネルの再描画（開いている時だけ・日付/データ/表示切替に追従）
+  let wsLanesSeq = 0;
   function renderWsLanes() {
     const el = $('#wsLanesBody');
     if (!el || !wsLanesPanel.classList.contains('open')) return;
@@ -4060,7 +4175,45 @@
     const le = lastWsSum && lastWsSum.le;
     const leSum = le && le.total ? (parseFloat(String(le.total).replace(/,/g, '')) || 0) : 0;
     const tpl = wsTplFor(params, iso, leSum);
-    el.innerHTML = wsLaneHtml(params, tpl, iso, le, { cmp: true });
+    const seq = ++wsLanesSeq;
+    const alive = () => seq === wsLanesSeq && wsLanesPanel.classList.contains('open') && ymd(targetDate) === iso;
+    const awsHead = `<div style="display:flex;align-items:center;gap:12px;margin:2px 0 8px">` +
+      `<b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">仮WS</b>${wsViewSwitchHtml('aws')}</div>`;
+    if (wsDailyView() === 'aws') {
+      // 仮WSデイリー（差分=らくしふとの食い違い・従来の仮WSパネルと同じ見た目）
+      if (!el.querySelector('.rf-wsview')) el.innerHTML = awsHead + '<span class="muted">仮WS読込中…</span>';
+      (async () => {
+        const aws = await awsRowsFor(iso);
+        if (!alive()) return;
+        if (!aws) {
+          el.innerHTML = awsHead +
+            `<div style="font-size:12.5px;color:#6d6d69">${esc(iso)} は実WS（らくしふのシフト）も仮WSもありません。` +
+            `<a href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener" style="color:#1a5fb4;text-decoration:none">スケジューラーの「実WS」タブ↗</a></div>`;
+          return;
+        }
+        const diff = aws.asIs ? null : await awsDiffOf(iso).catch(() => null);
+        if (!alive()) return;
+        el.innerHTML = awsPanelHtml(aws.rows, iso, le, aws.updatedAt, aws.asIs, diff);
+      })().catch((e) => {
+        if (!alive()) return;
+        el.innerHTML = awsHead +
+          `<div style="font-size:12.5px;color:#c0392b">仮WSを取得できませんでした（スケジューラー :8790）: ${esc(String(e.message || e))}</div>`;
+      });
+      return;
+    }
+    // モデルWS（先に即描画→仮WSが取れたら差分を重ねて描き直す）
+    el.innerHTML = wsLaneHtml(params, tpl, iso, le, { cmp: true, viewSwitch: true });
+    if (!tpl) return;
+    (async () => {
+      const aws = await awsRowsFor(iso);
+      if (!alive()) return;
+      el.innerHTML = wsLaneHtml(params, tpl, iso, le, { cmp: true, viewSwitch: true, aws: aws || undefined,
+        awsErr: aws ? '' : 'この日は仮WSも実WS（らくしふ）も無いので差分は出せません' });
+    })().catch((e) => {
+      if (!alive()) return;
+      el.innerHTML = wsLaneHtml(params, tpl, iso, le, { cmp: true, viewSwitch: true,
+        awsErr: `差分用の仮WSを取得できませんでした（スケジューラー :8790）: ${String((e && e.message) || e)}` });
+    });
   }
 
   // ===== 仮WSパネル（4つ目のアイコン・本人要望2026-08-29）=====
@@ -4140,6 +4293,7 @@
     return `<div style="width:fit-content;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616">
       <div style="display:flex;align-items:center;gap:12px;margin:2px 0 8px">
         <b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">仮WS</b>
+        ${wsViewSwitchHtml('aws')}
         ${tag}
         <span style="font-size:12px;color:#6d6d69">${esc(iso)}・${n}人・計 ${Math.round(tot * 10) / 10}h` +
       `${updatedAt ? `・${esc(String(updatedAt).replace('T', ' ').slice(5, 16))} 保存` : ''}` +
@@ -4158,33 +4312,65 @@
       <div style="font-size:11px;color:#8c8c88;margin-top:6px">読み取り専用（正はスケジューラーの「実WS」タブ）。仮WS＝実WS（らくしふ）を元に組み直した案。色: F=青・K=緑・FK=紫・正社員ライン=黒・TR=黄・非生産=黄の斜線・不明=灰。</div>
     </div>`;
   }
-  // 仮WSパネルの再描画（開いている時だけ・日付/データに追従）
+  // ===== 仮WSパネル（📝）＝マンスリー（本人要望2026-09-04「マンスリーとデイリーの表示を分けて」）=====
+  // デイリーのレーン表は📐パネル（モデルWS⇄仮WS切替）へ移した。ここは月の一覧だけを出す。
+  function awsMonthlyHtml(ym, days, dm) {
+    const [y2, m2] = ym.split('-').map(Number);
+    const last = new Date(y2, m2, 0).getDate();
+    const cur = ymd(targetDate), today = ymd(new Date());
+    let rows = '', nEdit = 0, nDiff = 0;
+    for (let d = 1; d <= last; d++) {
+      const iso = `${ym}-${String(d).padStart(2, '0')}`;
+      const dt = new Date(y2, m2 - 1, d);
+      const wd = '日月火水木金土'[dt.getDay()];
+      const hol = isHolidayExt(iso);
+      const col = (dt.getDay() === 0 || hol) ? '#c33' : dt.getDay() === 6 ? '#26c' : '#161616';
+      const day = days[iso];
+      const n = day ? (day.rows || []).length : 0;
+      const tot = day ? Math.round((day.rows || []).reduce((x, r) => x + (r.slots || []).filter(Boolean).length, 0) * 0.5 * 10) / 10 : 0;
+      if (day) nEdit++;
+      const df = dm[iso];
+      if (df) nDiff++;
+      const st = day
+        ? `<span style="font-size:10px;font-weight:700;color:#92600a;background:#fdf3e3;border:1px solid #f0dfbb;border-radius:3px;padding:0 4px">編集済み</span>` +
+          `<span>${n}人・${tot}h${day.updated_at ? `・${esc(String(day.updated_at).replace('T', ' ').slice(5, 16))} 保存` : ''}</span>`
+        : `<span style="color:#a8a6a0">未編集（実WSのまま）</span>`;
+      const dfHtml = df
+        ? `<span style="font-weight:700;color:#fff;background:${RF_DIFF_COL};border-radius:3px;padding:0 5px">らくしふと違う ${df}人</span>`
+        : (day ? '<span style="color:#8c8c88">らくしふと一致</span>' : '');
+      rows += `<div data-awsd="${iso}" title="クリックで ${iso} のらくしふを開く（デイリーのレーン表は📐パネルで）" ` +
+        `style="display:flex;align-items:center;gap:10px;padding:3px 8px;border:1px solid #e3e2dc;border-top:0;cursor:pointer;` +
+        `${iso === cur ? 'background:#161616;color:#fff;' : df ? 'background:#fff7f2;' : 'background:#fff;'}` +
+        `${iso === today ? 'box-shadow:inset 3px 0 0 #d3402a;' : ''}">` +
+        `<b style="width:58px;color:${iso === cur ? '#fff' : col}">${d}日(${wd})</b>` +
+        `<span style="flex:1;font-size:11.5px;display:flex;align-items:center;gap:6px">${st}</span>` +
+        `<span style="font-size:11px">${dfHtml}</span></div>`;
+    }
+    return `<div style="width:430px;max-width:100%;font-family:'Hiragino Sans','Yu Gothic',-apple-system,sans-serif;color:#161616;font-size:12px">
+      <div style="display:flex;align-items:center;gap:10px;margin:2px 0 8px;flex-wrap:wrap">
+        <b style="font-size:14px;box-shadow:inset 0 -2px 0 #d3402a;padding-bottom:1px">仮WS マンスリー</b>
+        <span style="color:#6d6d69">${ym.replace('-', '/')}・編集済み ${nEdit}日・らくしふと違う <b style="color:${RF_DIFF_COL}">${nDiff}日</b></span>
+        <span style="flex:1"></span>
+        <a href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener" style="font-size:12px;color:#1a5fb4;text-decoration:none;white-space:nowrap">✏編集はスケジューラーで↗</a>
+      </div>
+      <div style="border-top:1px solid #e3e2dc">${rows}</div>
+      <div style="font-size:11px;color:#8c8c88;margin-top:6px">行クリック=その日のらくしふへ。デイリーのレーン表は📐パネル（モデルWS⇄仮WSの切替）に移しました。「らくしふと違う」=仮WSと実WSの人単位の食い違い。</div>
+    </div>`;
+  }
+  let awsMonSeq = 0;
   async function renderAwsPanel(force) {
     const el = $('#awsBody');
     if (!el || !awsPanel.classList.contains('open')) return;
-    const iso = ymd(targetDate);
-    if (force) delete awsDiffCache[iso];
+    const ym = ymd(targetDate).slice(0, 7);
+    const seq = ++awsMonSeq;
+    if (force) delete awsDiffMonthCache[ym];
     try {
-      const m = await awsFetchMonth(iso.slice(0, 7), force);
-      const day = (m.days || {})[iso] || null;
-      const le = lastWsSum && lastWsSum.le;
-      let rows = (day && (day.rows || []).length) ? day.rows : null;
-      let asIs = false;
-      if (!rows) {
-        // 未編集の日＝仮WSのレコードが無い。実WS（らくしふ）をそのまま出す
-        const r2 = await draftApi(`/api/shift-actual?month=${iso.slice(0, 7)}&date=${iso}`);
-        const d2 = r2 && r2.ok && r2.data;
-        if (d2 && d2.ok && (d2.rows || []).length) { rows = awsRowsFromActual(d2.rows); asIs = true; }
-      }
-      if (!rows) {
-        el.innerHTML = `<div style="font-size:12.5px;color:#6d6d69">${esc(iso)} は実WS（らくしふのシフト）も仮WSもありません。` +
-          `<a href="http://mac-mini.tail1f88ff.ts.net:8790/" target="_blank" rel="noopener" style="color:#1a5fb4;text-decoration:none">スケジューラーの「実WS」タブ↗</a></div>`;
-        return;
-      }
-      // 未編集の日（実WSそのまま）は比べる意味がないので差分は出さない
-      const diff = asIs ? null : await awsDiffOf(iso).catch(() => null);
-      el.innerHTML = awsPanelHtml(rows, iso, le, day && day.updated_at, asIs, diff);
+      const m = await awsFetchMonth(ym, force);
+      const dm = await awsDiffMonth(ym).catch(() => ({}));
+      if (seq !== awsMonSeq || !awsPanel.classList.contains('open')) return;
+      el.innerHTML = awsMonthlyHtml(ym, m.days || {}, dm);
     } catch (e) {
+      if (seq !== awsMonSeq) return;
       el.innerHTML = `<div style="font-size:12.5px;color:#c0392b">仮WSを取得できませんでした（スケジューラー :8790）: ${esc(String(e.message || e))}</div>`;
     }
   }
@@ -4692,7 +4878,8 @@
         `スケジューラーの仮WSとらくしふが違います（${df.lines.length}人）\n` +
         df.lines.slice(0, 10).join('\n') + (df.lines.length > 10 ? `\n…ほか${df.lines.length - 10}人` : '') +
         '\n＋=足す区間 / −=外す区間\nクリックで仮WSパネルを開きます',
-        () => { if (!awsPanel.classList.contains('open')) $('#awsToggle').click(); else renderAwsPanel(true); });
+        () => { localStorage.setItem('rfWsDailyView', 'aws');
+          if (!wsLanesPanel.classList.contains('open')) $('#wsLanesToggle').click(); else renderWsLanes(); });
     }).catch(() => {});
   }
 
