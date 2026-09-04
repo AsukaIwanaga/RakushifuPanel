@@ -1134,9 +1134,12 @@
   setInterval(checkExtUpdate, 10 * 60 * 1000);
 
   // ===== シフト変更依頼ダイアログ（WorkLogWebサーバ = ShiftChangeアプリと同一データ） =====
+  // 「らくしふ反映」「らくしふ確定完了」は工程から外した（本人指定2026-09-04）。
+  // らくしふに入っているかは仮WSとの差分（オレンジ枠・日付バッジ）で見えるので、
+  // 手でチェックを付けて管理する必要がなくなったため。完了判定も4項目になっている。
   const SC_CHECKS = [
-    ['requested_done', '依頼済み'], ['accepted_done', '承諾'], ['rakushifu_done', 'らくしふ反映'],
-    ['pre_sh_done', '確定前SH連絡'], ['confirmed_done', 'らくしふ確定完了'], ['sh_done', 'SH連絡'],
+    ['requested_done', '依頼済み'], ['accepted_done', '承諾'],
+    ['pre_sh_done', '確定前SH連絡'], ['sh_done', 'SH連絡'],
   ];
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -1408,7 +1411,7 @@
     // 「受け取るだけ」（本人指定2026-08-29）。どう線を引くかは仮WS側の仕事なので工程を出さない。
     const lateWish = scAvailOnly(c);
     const useChecks = lateWish ? []
-      : offCrew ? SC_CHECKS.filter(([k]) => k !== 'pre_sh_done' && k !== 'confirmed_done') : SC_CHECKS;
+      : offCrew ? SC_CHECKS.filter(([k]) => k !== 'pre_sh_done') : SC_CHECKS;
     const checks = useChecks.map(([k, lbl]) =>
       `<label><input type="checkbox" data-p="${esc(c.path)}" data-k="${k}" ${c[k] ? 'checked' : ''}>` +
       `${offCrew && k === 'sh_done' ? '本人へ連絡' : lbl}</label>`
@@ -1627,8 +1630,8 @@
 
   // 6チェックの最初の未完了工程を「今の状態」として言葉で返す（依頼中→承諾待ち→…）
   const SC_STATUS = [
-    ['requested_done', '依頼中'], ['accepted_done', '承諾待ち'], ['rakushifu_done', '反映待ち'],
-    ['pre_sh_done', '確定前連絡待ち'], ['confirmed_done', '確定待ち'], ['sh_done', '周知待ち'],
+    ['requested_done', '依頼中'], ['accepted_done', '承諾待ち'],
+    ['pre_sh_done', '確定前連絡待ち'], ['sh_done', '周知待ち'],
   ];
   const scStatusLabel = (c) => {
     const stage = SC_STATUS.find(([k]) => !c[k]);
@@ -1698,13 +1701,13 @@
       const hasRealShift = trRow &&
         trRow.querySelector('.schedule-bar-wrapper.not-off .schedule-bar:not(.isDesired)');
       const daySat = (c) => availC(c) && hasRealShift && scMatchesDay(c, targetDate) &&
-        c.requested_done && c.accepted_done && !c.rakushifu_done;
+        c.requested_done && c.accepted_done;
       const pendingLive = pending.filter((c) => !daySat(c));
       const mark = document.createElement('span');
       mark.className = 'rf-sc-mark';
       if (pending.length && !pendingLive.length) {
         mark.textContent = '✔この日反映済み';
-        mark.title = '出勤可依頼のこの日ぶんはシフト反映済み（カードの反映チェックは期間全体の完了時に）';
+        mark.title = '出勤可依頼のこの日ぶんはシフトに入っています（期間全体の完了はカードの工程で）';
         mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#1e7a44;background:#e8f5ec;border:1px solid #b5d9c3;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
         box.appendChild(mark);
@@ -2811,10 +2814,10 @@
       const c = (scState && scState.cases || []).find((x) => x.path === t.dataset.p);
       if (!c) return;
       const keys = (scOffCrew(c)
-        ? SC_CHECKS.filter(([k]) => k !== 'pre_sh_done' && k !== 'confirmed_done')
+        ? SC_CHECKS.filter(([k]) => k !== 'pre_sh_done')
         : SC_CHECKS).map(([k]) => k).filter((k) => !c[k]);
-      // 休み系でも非表示2項目が未trueなら合わせて埋める（完了判定は6フラグ全true）
-      if (scOffCrew(c)) for (const k of ['pre_sh_done', 'confirmed_done']) if (!c[k]) keys.push(k);
+      // 休み系でも非表示の確定前SH連絡が未trueなら合わせて埋める（完了判定は4フラグ全true）
+      if (scOffCrew(c) && !c.pre_sh_done) keys.push('pre_sh_done');
       t.disabled = true;
       t.textContent = '⏳';
       for (const k of keys) {
@@ -2861,10 +2864,9 @@
       if (crewOff && notePath.startsWith('/')) {
         await shiftApi('/api/shift/flag', { path: notePath, key: 'requested_done', value: true });
         await shiftApi('/api/shift/flag', { path: notePath, key: 'accepted_done', value: true });
-        // 確定前SH連絡・らくしふ確定完了は休み希望に工程として存在しない=対象外チェック
-        // （本人指摘2026-08-11）。残る実作業は「らくしふ反映」と「本人へ連絡」だけ。
+        // 確定前SH連絡は休み希望に工程として存在しない=対象外チェック（本人指摘2026-08-11）。
+        // 残る実作業は「本人へ連絡」だけ。
         await shiftApi('/api/shift/flag', { path: notePath, key: 'pre_sh_done', value: true });
-        await shiftApi('/api/shift/flag', { path: notePath, key: 'confirmed_done', value: true });
       }
       scShowWowtalk(target, targetDate, change, requester, reqTime);   // 起票直後にWowTalk用文言を出す
       scRefresh();
