@@ -2651,13 +2651,13 @@
     const diffText = (oldT, newT) => {
       const dS = oldT[0] !== newT[0], dE = oldT[1] !== newT[1];
       if (dE && !dS) return {
-        change: `${hmTok(oldT[1])}あがりのところ、${hmStr(newT[1])}までに変更できませんか？`,
+        change: `${hmTok(oldT[1])}あがりのところ、${hmStr(newT[1])}までに変更できませんでしょうか？`,
         reqTime: `${hmStr(Math.min(oldT[1], newT[1]))}-${hmStr(Math.max(oldT[1], newT[1]))}` };
       if (dS && !dE) return {
-        change: `${hmTok(oldT[0])}INのところ、${hmStr(newT[0])}INに変更できませんか？`,
+        change: `${hmTok(oldT[0])}INのところ、${hmStr(newT[0])}INに変更できませんでしょうか？`,
         reqTime: `${hmStr(Math.min(oldT[0], newT[0]))}-${hmStr(Math.max(oldT[0], newT[0]))}` };
       return {
-        change: `${hmStr(oldT[0])}-${hmStr(oldT[1])}のところ、${hmStr(newT[0])}-${hmStr(newT[1])}に変更できませんか？`,
+        change: `${hmStr(oldT[0])}-${hmStr(oldT[1])}のところ、${hmStr(newT[0])}-${hmStr(newT[1])}に変更できませんでしょうか？`,
         reqTime: `${hmStr(Math.min(oldT[0], newT[0]))}-${hmStr(Math.max(oldT[1], newT[1]))}` };
     };
     const mkBtn = (label, title, css, onClick) => {
@@ -2672,7 +2672,7 @@
     };
     const btn = mkBtn('❗ 依頼作成',
       'この人・この日のシフト変更依頼を起票（共有台帳へ。らくしふには何も書き込みません）。' +
-      'モーダルの時刻を変更後の希望に直してから押すと「◯時あがりのところ、◯:◯◯までに変更できませんか？」まで自動で入ります',
+      'モーダルの時刻を変更後の希望に直してから押すと「◯時あがりのところ、◯:◯◯までに変更できませんでしょうか？」まで自動で入ります（語尾は本人指定2026-09-04）',
       'border:1px solid #e0b4b4;background:#fff5f5;color:#b03030;',
       async () => {
         const { dateStr, t, mins } = readPreset();
@@ -2680,9 +2680,9 @@
         const orig = got && got.cur;
         // 文言（本人指定2026-08-06「HH時あがりのところ、」/ 2026-08-11 新旧比較で全文まで組む）:
         //  select未編集(=元シフトと同値) or 元が引けない → 従来どおり前置きだけ
-        //  終業だけ変更 → 「{元}あがりのところ、{新}までに変更できませんか？」
-        //  始業だけ変更 → 「{元}INのところ、{新}INに変更できませんか？」
-        //  両方変更   → 「{元s}-{元e}のところ、{新s}-{新e}に変更できませんか？」
+        //  終業だけ変更 → 「{元}あがりのところ、{新}までに変更できませんでしょうか？」
+        //  始業だけ変更 → 「{元}INのところ、{新}INに変更できませんでしょうか？」
+        //  両方変更   → 「{元s}-{元e}のところ、{新s}-{新e}に変更できませんでしょうか？」
         //    ただし新旧が重ならない場合は既定枠誤爆とみなし前置きだけ(2026-08-29)
         // 対象時間(帯)は変わった側の区間（延長なら旧終業〜新終業）。未編集なら現シフト全体。
         let change = '';
