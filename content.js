@@ -2372,7 +2372,8 @@
     $('#scNewForm').innerHTML =
       `<select id="scNewKind">` +
       `<option value="crew">クルー発（休み・時間変更の希望）</option>` +
-      `<option value="store">店舗発（LE・作成方針による打診）</option>` +
+      // 既定は店舗発（本人指定2026-09-04）。applyKind() が依頼者=自分/出所=店舗判断を補完する
+      `<option value="store" selected>店舗発（LE・作成方針による打診）</option>` +
       `</select>` +
       '<label style="display:flex;align-items:center;gap:5px;font-size:13px;margin-bottom:4px">' +
       '<input type="checkbox" id="scNewZenin" style="width:auto">全員宛（休み募集：代われる人を募集）</label>' +
@@ -2623,16 +2624,41 @@
         const nameOf = {};
         for (const u of (j.users || [])) nameOf[u.id] = normName(u.name);
         // このAPIは1日指定でも前日分を返す→日付厳密フィルタ必須
-        const rows = (j.instructed || []).filter((s) => s.date === iso && !s.is_deleted &&
+        const all = (j.instructed || []).filter((s) => s.date === iso &&
           !s.off && nameOf[s.user_id] === normName(name));
+        const rows = all.filter((s) => !s.is_deleted);
         if (!rows.length) return null;
-        if (rows.length === 1) return [rows[0].start_as_min, rows[0].end_as_min];
-        // 複数バー（応援等）はモーダルselect値との重なりが最大のもの
-        const { mins } = readPreset();
-        const ov = (s) => (mins ? Math.max(0, Math.min(s.end_as_min, mins[1]) - Math.max(s.start_as_min, mins[0])) : 0);
-        rows.sort((a, b) => ov(b) - ov(a));
-        return [rows[0].start_as_min, rows[0].end_as_min];
+        let live = rows[0];
+        if (rows.length > 1) {
+          // 複数バー（応援等）はモーダルselect値との重なりが最大のもの
+          const { mins } = readPreset();
+          const ov = (s) => (mins ? Math.max(0, Math.min(s.end_as_min, mins[1]) - Math.max(s.start_as_min, mins[0])) : 0);
+          rows.sort((a, b) => ov(b) - ov(a));
+          live = rows[0];
+        }
+        const cur = [live.start_as_min, live.end_as_min];
+        // 直前の版: らくしふは編集すると旧行を is_deleted で残す。同日の削除済み行のうち
+        // 生きている行と重なって時刻が違う最新のもの＝「らくしふを先に直してから❗を押した」
+        // ときの変更前時刻（本人要望2026-09-04「16時上がりのところを15:30に、を読み取って」）
+        const dels = all.filter((s) => s.is_deleted &&
+          (s.start_as_min !== cur[0] || s.end_as_min !== cur[1]) &&
+          Math.min(s.end_as_min, cur[1]) > Math.max(s.start_as_min, cur[0]))
+          .sort((a, b) => (b.id || 0) - (a.id || 0));
+        return { cur, old: dels.length ? [dels[0].start_as_min, dels[0].end_as_min] : null };
       } catch { return null; }
+    };
+    // 新旧の時刻から依頼文と対象時間帯を組む（終業だけ/始業だけ/両方で言い回しを変える）
+    const diffText = (oldT, newT) => {
+      const dS = oldT[0] !== newT[0], dE = oldT[1] !== newT[1];
+      if (dE && !dS) return {
+        change: `${hmTok(oldT[1])}あがりのところ、${hmStr(newT[1])}までに変更できませんか？`,
+        reqTime: `${hmStr(Math.min(oldT[1], newT[1]))}-${hmStr(Math.max(oldT[1], newT[1]))}` };
+      if (dS && !dE) return {
+        change: `${hmTok(oldT[0])}INのところ、${hmStr(newT[0])}INに変更できませんか？`,
+        reqTime: `${hmStr(Math.min(oldT[0], newT[0]))}-${hmStr(Math.max(oldT[0], newT[0]))}` };
+      return {
+        change: `${hmStr(oldT[0])}-${hmStr(oldT[1])}のところ、${hmStr(newT[0])}-${hmStr(newT[1])}に変更できませんか？`,
+        reqTime: `${hmStr(Math.min(oldT[0], newT[0]))}-${hmStr(Math.max(oldT[1], newT[1]))}` };
     };
     const mkBtn = (label, title, css, onClick) => {
       const b = document.createElement('button');
@@ -2650,7 +2676,8 @@
       'border:1px solid #e0b4b4;background:#fff5f5;color:#b03030;',
       async () => {
         const { dateStr, t, mins } = readPreset();
-        const orig = await fetchOrigShift(dateStr);
+        const got = await fetchOrigShift(dateStr);
+        const orig = got && got.cur;
         // 文言（本人指定2026-08-06「HH時あがりのところ、」/ 2026-08-11 新旧比較で全文まで組む）:
         //  select未編集(=元シフトと同値) or 元が引けない → 従来どおり前置きだけ
         //  終業だけ変更 → 「{元}あがりのところ、{新}までに変更できませんか？」
@@ -2661,24 +2688,21 @@
         let change = '';
         let reqTime = t;
         if (orig && mins && (orig[0] !== mins[0] || orig[1] !== mins[1])) {
-          const dS = orig[0] !== mins[0], dE = orig[1] !== mins[1];
-          if (dE && !dS) {
-            change = `${hmTok(orig[1])}あがりのところ、${hmStr(mins[1])}までに変更できませんか？`;
-            reqTime = `${hmStr(Math.min(orig[1], mins[1]))}-${hmStr(Math.max(orig[1], mins[1]))}`;
-          } else if (dS && !dE) {
-            change = `${hmTok(orig[0])}INのところ、${hmStr(mins[0])}INに変更できませんか？`;
-            reqTime = `${hmStr(Math.min(orig[0], mins[0]))}-${hmStr(Math.max(orig[0], mins[0]))}`;
-          } else if (Math.min(orig[1], mins[1]) > Math.max(orig[0], mins[0])) {
-            change = `${hmStr(orig[0])}-${hmStr(orig[1])}のところ、${hmStr(mins[0])}-${hmStr(mins[1])}に変更できませんか？`;
-            reqTime = `${hmStr(Math.min(orig[0], mins[0]))}-${hmStr(Math.max(orig[1], mins[1]))}`;
-          } else {
+          if (orig[0] !== mins[0] && orig[1] !== mins[1] &&
+              Math.min(orig[1], mins[1]) <= Math.max(orig[0], mins[0])) {
             // 両方違うのに新旧が重ならない＝既存バーの編集ではなく、空き枠クリックで出た
             // 新規入力モーダルの既定30分枠を拾った可能性が高い（本人指摘2026-08-29:
             // 「12:00-15:00のところ、11:30-12:00に変更できませんか？」）。
             // 全文は組まず前置きだけ入れて残りは手入力に任せる
             change = `${hmStr(orig[0])}-${hmStr(orig[1])}のところ、`;
             reqTime = `${hmStr(orig[0])}-${hmStr(orig[1])}`;
+          } else {
+            ({ change, reqTime } = diffText(orig, mins));
           }
+        } else if (orig && got.old) {
+          // select未編集＝らくしふを先に直してから❗を押したパターン（本人要望2026-09-04）。
+          // 変更前＝直前の版（is_deleted行）・変更後＝いまの登録値で全文を組む
+          ({ change, reqTime } = diffText(got.old, orig));
         } else {
           const endMin = orig ? orig[1] : (mins ? mins[1] : null);
           change = endMin != null ? `${hmTok(endMin)}あがりのところ、` : '';
