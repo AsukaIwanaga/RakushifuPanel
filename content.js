@@ -2187,6 +2187,20 @@
   // 仮WSとの差分の色（本人指定2026-09-03「オレンジで」）。パネルとらくしふ本体で共用。
   const RF_DIFF_COL = '#ea580c';
   const RF_DIFF_HATCH = 'repeating-linear-gradient(45deg,rgba(234,88,12,.28) 0 4px,rgba(234,88,12,.06) 4px 8px)';
+  // 仮WSの区分の短い表記と色（本人要望2026-09-08「仮WS上でキッチンなのかフロアなのかFKなのかを小さく表示」）。
+  // 色は仮WSレーン表(AWS_COL)と同系。NPM/FIXは斜線グラデなのでバッジ用に単色を持つ
+  const RF_AWS_SHORT = { F: 'F', K: 'K', FK: 'FK', MGT: '社員', cMGT: 'MGT', TR: 'TR',
+                         NPM: '非生産', FIX: '非生産', UNK: '?' };
+  const RF_AWS_FULL = { F: 'フロア', K: 'キッチン', FK: 'F/K共通', MGT: '正社員ライン',
+                        cMGT: 'MGT(クルー)', TR: 'TR', NPM: '非生産', FIX: '非生産', UNK: '不明' };
+  const RF_AWS_BADGE = { F: '#3b82f6', K: '#10b981', FK: '#8b5cf6', MGT: '#374151', cMGT: '#9ca3af',
+                         TR: '#eab308', NPM: '#d97706', FIX: '#d97706', UNK: '#9ca3af' };
+  // 区間[k,j)に入っている仮WSの区分をまとめた表記（例 "(K)"・"(F/FK)"）。av無しは空
+  const rfRoleStr = (av, k, j) => {
+    if (!av) return '';
+    const s = [...new Set(av.slice(k, j).filter(Boolean))].map((v) => RF_AWS_SHORT[v] || v);
+    return s.length ? `(${s.join('/')})` : '';
+  };
   const RF_IV_MIN = 12 * 60;
   let ivShadeSeq = 0;
   async function updateIvShade() {
@@ -2235,18 +2249,43 @@
       if (!d) continue;
       const track = tr.querySelector('.schedule-row');
       if (!track) continue;
-      const box = (k, j, del) => {
+      const box = (k, j, del, av) => {
         const el = document.createElement('div');
         el.className = 'rf-aws-diff';
+        // 足す区間は仮WSの区分（フロア/キッチン/FK…）ごとに小分けして拾う
+        // （本人要望2026-09-08「仮WS上でキッチンなのかフロアなのかFKなのかを小さく表示」）
+        const roles = [];
+        if (!del && av) {
+          let x = k;
+          while (x < j) {
+            const v = av[x];
+            let y = x + 1;
+            while (y < j && av[y] === v) y++;
+            if (v) roles.push([x, y, v]);
+            x = y;
+          }
+        }
+        const rn = [...new Set(roles.map((r) => RF_AWS_FULL[r[2]] || r[2]))].join('・');
         el.title = `${rfTm(k)}〜${rfTm(j)} ` +
-          (del ? 'らくしふにあって仮WSに無い（＝外す区間）' : '仮WSにあってらくしふに無い（＝足す区間）');
+          (del ? 'らくしふにあって仮WSに無い（＝外す区間）'
+               : `仮WSにあってらくしふに無い（＝足す区間${rn ? '・' + rn : ''}）`);
         el.style.cssText = `position:absolute;left:${k * 30}px;width:${(j - k) * 30}px;top:1px;bottom:1px;` +
           `z-index:260;pointer-events:none;box-sizing:border-box;border:2px solid ${RF_DIFF_COL};` +
-          `border-radius:5px;${del ? `background:${RF_DIFF_HATCH};` : ''}`;
+          `border-radius:5px;overflow:hidden;${del ? `background:${RF_DIFF_HATCH};` : ''}`;
+        // 区分バッジ（区分が変わる位置ごとに1つ）
+        for (const [x, , v] of roles) {
+          const b = document.createElement('span');
+          b.textContent = RF_AWS_SHORT[v] || v;
+          b.style.cssText = `position:absolute;left:${(x - k) * 30 + 2}px;top:2px;` +
+            `font:700 9px/1 'Hiragino Sans','Yu Gothic',sans-serif;padding:2px 3px;border-radius:3px;` +
+            `color:${v === 'TR' ? '#4a3800' : '#fff'};background:${RF_AWS_BADGE[v] || '#6b7280'};` +
+            'pointer-events:none;white-space:nowrap;';
+          el.appendChild(b);
+        }
         track.appendChild(el);
       };
       for (const [k, j] of rfRuns(d.del)) box(k, j, true);
-      for (const [k, j] of rfRuns(d.add)) box(k, j, false);
+      for (const [k, j] of rfRuns(d.add)) box(k, j, false, d.av);
     }
   }
   function updateReqLines() {
@@ -4673,7 +4712,8 @@
         while (j < 36 && sl[j] === v) j++;
         h += (j - k) * 0.5;
         const rl = sl[k - 1] === v ? '0' : '13px', rr = sl[j] === v ? '0' : '13px';
-        const lbl = (j - k) * SLOTW >= 40 && !AWS_PROD[v]
+        // F/K/FKの生産バーにも小さく文字を出す（本人要望2026-09-08「区分を小さく表示」・色だけだと覚えが要る）
+        const lbl = (j - k) * SLOTW >= (AWS_PROD[v] ? 30 : 40)
           ? `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;` +
             `color:${['TR', 'NPM', 'FIX'].includes(v) ? '#4a3800' : '#fff'};font-size:9px;white-space:nowrap;overflow:hidden;padding:0 3px">${esc(AWS_LAB[v] || v)}</span>` : '';
         segs += `<div title="${esc(`${tmOf(k)}〜${tmOf(j)} ${AWS_LAB[v] || v}`)}" ` +
@@ -6181,21 +6221,23 @@
         const lines = [];
         const only = [];            // らくしふにだけ居る人（仮WSから外した人）
         const seen = new Set();
-        const note = (nm, add, del) => {
-          const a = rfRuns(add).map(([x, y]) => `＋${rfTm(x)}〜${rfTm(y)}`);
+        const note = (nm, add, del, av) => {
+          // 足す区間には仮WSの区分（F/K/FK…）も添える（本人要望2026-09-08）
+          const a = rfRuns(add).map(([x, y]) => `＋${rfTm(x)}〜${rfTm(y)}${rfRoleStr(av, x, y)}`);
           const d = rfRuns(del).map(([x, y]) => `−${rfTm(x)}〜${rfTm(y)}`);
           lines.push(`${nm}: ${[...d, ...a].join(' ')}`);
         };
         for (const row of rows) {
           const nm = normName(row.name);
           seen.add(nm);
-          const dr = (row.slots || []).map((v) => !!v);
+          const av = row.slots || [];
+          const dr = av.map((v) => !!v);
           const rk = rkSlotsOf(per[nm], iso);
           const add = dr.map((v, i) => v && !rk[i]);
           const del = rk.map((v, i) => v && !dr[i]);
           if (!add.some(Boolean) && !del.some(Boolean)) continue;
-          byName[nm] = { add, del };
-          note(row.name, add, del);
+          byName[nm] = { add, del, av };
+          note(row.name, add, del, av);
         }
         for (const nm in per) {
           if (seen.has(nm) || !(per[nm].asg && per[nm].asg.has(iso))) continue;
