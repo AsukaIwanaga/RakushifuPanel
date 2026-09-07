@@ -741,6 +741,9 @@
         border: 1px solid var(--warn); border-radius: 0; padding: 1px 4px; white-space: nowrap; }
       .sc-title .sc-multi { font-size: 10px; font-weight: 700; color: var(--ink2); background: transparent;
         border: 1px solid var(--line2); border-radius: 0; padding: 1px 4px; white-space: nowrap; cursor: help; }
+      /* 種別チップ（実/希/休）。点線＋≈＝未設定でキーワード自動判定中（✏️で確定できる） */
+      .sc-title .sc-layer { font-size: 10px; font-weight: 700; background: transparent;
+        border-radius: 0; padding: 1px 4px; white-space: nowrap; cursor: help; }
       .sc-rej-form, .sc-del-form { display: flex; gap: 5px; margin-top: 5px; }
       .sc-rej-form input, .sc-del-form input { flex: 1; border: 1px solid var(--line2); border-radius: 0; padding: 4px 8px; font-size: 13px; background: var(--panel); color: var(--ink); }
       .sc-rej-form .sc-rej-do { border: 1px solid var(--mut); background: var(--mut); color: #fff; border-radius: 0; cursor: pointer; padding: 3px 11px; font-size: 12.5px; }
@@ -1150,12 +1153,33 @@
     } catch { resolve({ ok: false, error: '拡張更新済み・要ページ再読込' }); }
   });
 
+  // ===== 種別(layer・frontmatter 2026-09-07導入) =====
+  // 依頼がどの層に効くかの明示フィールド（本人の概念整理: 変更依頼=実シフトのライン、
+  // 希望依頼/希望時間の変更=1つ下の希望シフトそのもの。実シフトは希望の範囲内で引く）:
+  //   shift = 実シフトの変更依頼 / wish = 希望変更（後出し・時間変更） / off = 休み希望
+  // 空=旧ノート → 従来のキーワード判定にフォールバック（判定式は従来のまま残す）。
+  const scLayer = (c) => {
+    const v = String((c && c.layer) || '').trim();
+    return (v === 'shift' || v === 'wish' || v === 'off') ? v : '';
+  };
+  // 表示用: [チップ1文字, フル名, 色]（色はライン・チップの意味論と同系）
+  const SC_LAYERS = {
+    shift: ['実', '実シフトの変更依頼', '#b45309'],
+    wish: ['希', '希望変更（後出し・希望時間）', '#1d4ed8'],
+    off: ['休', '休み希望', '#b91c1c'],
+  };
+
   // クルー発の「純粋な休み希望」判定（依頼者=本人 かつ 休み系文言。「休み→勤務可」の
   // 逆方向は除外）。カードの工程表示と起票時の対象外チェックの両方で使う。
-  const scOffCrew = (c) => !!(c && c.requester && normName(c.requester) === normName(c.target) &&
-    (String(c.req_time || '').trim() === OFF_ALLDAY ||
-     /休み希望|休みへ変更|休みに|お休み/.test(`${c.change || ''} ${c.title || ''}`)) &&
-    !/勤務可|出勤でき|出勤可能|出れます/.test(String(c.change || '')));
+  // 種別が明示されていればそれが正（全員宛=休み募集は従来どおり対象外）。
+  const scOffCrew = (c) => {
+    const L = scLayer(c);
+    if (L) return L === 'off' && c.target !== '全員';
+    return !!(c && c.requester && normName(c.requester) === normName(c.target) &&
+      (String(c.req_time || '').trim() === OFF_ALLDAY ||
+       /休み希望|休みへ変更|休みに|お休み/.test(`${c.change || ''} ${c.title || ''}`)) &&
+      !/勤務可|出勤でき|出勤可能|出れます/.test(String(c.change || '')));
+  };
 
   const shiftPanel = $('#shiftPanel');
   let scFilter = 'open'; // 'open' | 'day' | 'all' | 'month'
@@ -1335,8 +1359,10 @@
     const res = await shiftApi('/api/shift/create', {
       target: r.name.replace(/\s+/g, ''),
       target_date: `${targetDate.getMonth() + 1}/${targetDate.getDate()}`,
-      // 休み系は対象時間=全日（本人指定2026-08-09）
+      // 休み系は対象時間=全日（本人指定2026-08-09）・種別=off。それ以外の要確定は
+      // 確定/仮確定ラインに対する操作＝実シフトの変更依頼（種別 shift）
       change: r.change, req_time: /休み|休暇/.test(String(r.change || '')) ? OFF_ALLDAY : r.req_time,
+      layer: /休み|休暇/.test(String(r.change || '')) ? 'off' : 'shift',
       requester: r.name.replace(/\s+/g, ''),
       source: 'らくしふ要確定', memo: `らくしふの要確定から自動起案（bar_id ${r.bar_id}）`,
     });
@@ -1434,8 +1460,13 @@
     // 出さない=チェックを外せば戻る可逆運用・vaultの「可視+可逆」原則）
     const allDoneBtn = scClosed(c) ? ''
       : `<button class="sc-all-done" data-p="${esc(c.path)}" title="残りのチェックを全部付けて完了にする（外せば戻せます）">✅全部完了</button>`;
+    // 種別チップ: 明示=実線 / 未設定（キーワード自動判定）=点線＋≈。✏️で確定できる
+    const layInfo = SC_LAYERS[scLayer(c) || (scOffCrew(c) ? 'off' : scAvailOnly(c) ? 'wish' : 'shift')];
+    const layChip = `<span class="sc-layer" style="color:${layInfo[2]};border:1px ${scLayer(c) ? 'solid' : 'dashed'} ${layInfo[2]};" ` +
+      `title="種別: ${esc(layInfo[1])}${scLayer(c) ? '' : '（キーワードからの自動判定・✏️で確定できます）'}">` +
+      `${scLayer(c) ? '' : '≈'}${esc(layInfo[0])}</span>`;
     return `<div class="sc-card${scClosed(c) ? ' done' : ''}${c.is_rejected ? ' rej' : ''}${lateWish ? ' late' : ''}" data-p="${esc(c.path)}">
-      <div class="sc-title">${lateWish ? '<span class="sc-late">🙋 後出し希望</span>' : head} ${esc(title)} ${multi} ${noDate}
+      <div class="sc-title">${lateWish ? '<span class="sc-late">🙋 後出し希望</span>' : head} ${layChip} ${esc(title)} ${multi} ${noDate}
         <span class="sc-meta"${lateWish ? ' title="希望を受け取るだけの記録です。承認・依頼・反映のチェックはありません"' : ''}>` +
         `${lateWish ? '受け取り済み' : `${checkedShown}/${useChecks.length}`}</span>
         ${lateWish ? '' : allDoneBtn}
@@ -1451,6 +1482,11 @@
           <input class="sc-edit-date-end" value="${esc(scSplitDate(c.target_date).to)}" placeholder="終了日 (期間なら/空欄可)">
         </div>
         <input class="sc-edit-change" value="${esc(c.change || '')}" placeholder="変更内容">
+        <select class="sc-edit-layer" title="種別: この依頼がどの層に効くか">
+          <option value=""${scLayer(c) ? '' : ' selected'}>種別: 未設定（キーワード自動判定）</option>
+          ${Object.entries(SC_LAYERS).map(([v, [, lbl]]) =>
+            `<option value="${v}"${scLayer(c) === v ? ' selected' : ''}>種別: ${esc(lbl)}</option>`).join('')}
+        </select>
         ${reqTimeWidget('sce', c.req_time)}
         <div style="display:flex;gap:4px;margin-top:4px">
           <button class="sc-edit-do" data-p="${esc(c.path)}">保存</button>
@@ -1481,6 +1517,8 @@
   // 「依頼として台帳の表示をする必要はなく枠だけ表示してもらえると嬉しい」）。
   // 「入れない/不可」を含む変更依頼や休み系は従来どおりカードを出す。
   const scAvailOnly = (c) => {
+    const L = scLayer(c);   // 種別が明示されていればそれが正（wish=希望変更・受け取るだけ）
+    if (L) return L === 'wish';
     if (!c || !c.requester || normName(c.requester) !== normName(c.target)) return false;
     const blob = `${c.change || ''} ${c.title || ''}`;
     if (scOffCrew(c)) return false;
@@ -1544,11 +1582,13 @@
   // チップの色は依頼帯(updateReqLines)と同じ意味論: 休み系=赤 / クルー発の途中希望=青 /
   // 承諾済み=緑◯ / 通常(依頼中)=黄 / 拒否=赤✕。完了・拒否は点線・淡色で残す（帯と同ルール）。
   function scCaseHue(c) {
+    const L = scLayer(c);   // 種別が明示されていればキーワード判定より優先
     const blob = `${c.change || ''} ${c.title || ''}`;
     const availWord = /勤務可|出勤でき|出勤可能|出れます|入れます/.test(blob);
-    const isOff = /休み|休暇/.test(blob) && !availWord;
+    const isOff = L ? L === 'off' : /休み|休暇/.test(blob) && !availWord;
     const storeInit = /先打ち|打診/.test(blob);
-    const isLate = !isOff && !storeInit && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWord);
+    const isLate = L ? L === 'wish'
+      : !isOff && !storeInit && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWord);
     if (c.is_rejected) return { bg: '#dc2626', mark: '✕' };
     const okd = !isOff && !isLate && c.accepted_done;
     return isOff ? { bg: '#dc2626', mark: '' }
@@ -1639,6 +1679,8 @@
   };
   // 出勤可系(途中希望・勤務可)の依頼か（休み系は除外）。週バッジ合流とチップ判定で共用
   const scAvailCase = (c) => {
+    const L = scLayer(c);   // 種別が明示されていればそれが正（wish=出勤可系/off・shiftは対象外）
+    if (L) return L === 'wish';
     const b = `${c.change || ''} ${c.title || ''}`;
     // 「出勤可」で「朝出勤可」「出勤可能」の両方を拾う（旧「出勤可能」のみだと
     // 起票タイトル「朝出勤可（後半WSに反映）」がマッチせず週バッジ/月間カレンダーに出なかった: 2026-08-31）
@@ -1732,8 +1774,9 @@
       mark.title = rel.map((c) =>
         `${c.is_rejected ? '🚫拒否' : c.is_done ? '✅' : `【${scStatusLabel(c)}】`} ${c.title}`).join('\n');
       box.appendChild(mark);
-      // 締切後の途中提出希望は専用の青チップも出す（本人指定2026-08-06）
-      if (pending.some((c) => /途中希望|追加希望|再提出/.test(`${c.change || ''} ${c.title || ''}`))) {
+      // 締切後の途中提出希望は専用の青チップも出す（本人指定2026-08-06）。種別明示が優先
+      if (pending.some((c) => scLayer(c) ? scLayer(c) === 'wish'
+            : /途中希望|追加希望|再提出/.test(`${c.change || ''} ${c.title || ''}`))) {
         const late = document.createElement('span');
         late.className = 'rf-sc-mark';
         late.textContent = '📝途中希望';
@@ -1921,12 +1964,14 @@
           }
           const blob = `${c.change || ''} ${c.title || ''}`;
           const rejected = c.is_rejected;
+          const LP = scLayer(c);   // 種別が明示されていればキーワード判定より優先
           // 逆方向（休み→勤務可）は休み扱いにしない（編集画面と同ルール・2026-08-13）
           const availWordP = /勤務可|出勤でき|出勤可能|出れます|入れます/.test(blob);
-          const isOff = /休み|休暇/.test(blob) && !availWordP;
+          const isOff = LP ? LP === 'off' : /休み|休暇/.test(blob) && !availWordP;
           // 店舗発（先打ち/打診）はクルーの途中希望ではない＝黄のまま（編集画面と同ルール・2026-09-03）
           const storeInitP = /先打ち|打診/.test(blob);
-          const isLate = !isOff && !storeInitP && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWordP);
+          const isLate = LP ? LP === 'wish'
+            : !isOff && !storeInitP && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWordP);
           // 承諾済みの出勤依頼(黄)は緑の枠（編集画面と同ルール・本人指定2026-08-09）
           const okd = !rejected && c.target !== '全員' && !isOff && !isLate && c.accepted_done;
           const bg = (rejected || isOff) ? '#dc2626' : isLate ? '#2563eb' : (okd ? '#16a34a' : '#f5b301');
@@ -2249,14 +2294,16 @@
         // 休み系=赤（本人指定2026-08-06）・途中提出の希望=青（本人指定2026-08-06「途中提出の
         // 希望はわかりやすい表示が欲しい」・起票時に【途中希望】を付ける運用）・通常=黄。拒否=赤✕
         const blob = `${c.change || ''} ${c.title || ''}`;
+        const L = scLayer(c);   // 種別が明示されていればキーワード判定より優先（2026-09-07）
         // 「休み → 勤務可に」のような逆方向（出られるようになった）は休み扱いにしない
         // （本人指摘2026-08-13: 鉄平さん8/24がグレーになっていた→青が正しい）
         const availWord = /勤務可|出勤でき|出勤可能|出れます|入れます/.test(blob);
-        const isOff = /休み|休暇/.test(blob) && !availWord;
+        const isOff = L ? L === 'off' : /休み|休暇/.test(blob) && !availWord;
         // 店舗発（先打ち/打診）はクルーの途中希望ではない＝黄のまま（本人指摘2026-09-03:
         // 山中9/24「未提出だが…出勤可能時間のため先打ち」が『出勤可能』に引っかかり青になっていた）
         const storeInit = /先打ち|打診/.test(blob);
-        const isLate = !isOff && !storeInit && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWord);
+        const isLate = L ? L === 'wish'
+          : !isOff && !storeInit && (/途中希望|追加希望|再提出|出勤希望/.test(blob) || availWord);
         // 店舗発の出勤依頼(黄)が承諾されたら緑の枠で囲う（本人指定2026-08-09）。
         // 休み/途中希望はクルー発=起票時点で承諾済みが常なので対象外（赤/青の意味を保つ）。
         const okd = !rejected && !zenin && !isOff && !isLate && c.accepted_done;
@@ -2383,6 +2430,11 @@
       `<input id="scNewDateEnd" placeholder="終了日 (期間なら/空欄可)">` +
       '</div>' +
       `<input id="scNewChange" placeholder="変更内容">` +
+      // 種別: 依頼がどの層に効くか（shift=実シフトのライン / wish・off=希望シフトそのもの）
+      `<select id="scNewLayer" title="種別: 変更依頼=確定/仮確定の実シフトへの依頼。希望変更・休み希望=1つ下の希望シフトそのものの変更（実シフトは希望の範囲内で引く）">` +
+      Object.entries(SC_LAYERS).map(([v, [, lbl]]) =>
+        `<option value="${v}"${v === 'shift' ? ' selected' : ''}>種別: ${esc(lbl)}</option>`).join('') +
+      `</select>` +
       // よく使う内容のワンタップ（クルー発の休みは自動で依頼済み/承諾チェック→反映待ちになる）
       '<div style="display:flex;gap:4px;margin:-2px 0 4px">' +
       '<button type="button" class="scn-preset" data-v="休みへ変更">🛌 休みへ変更</button>' +
@@ -2412,6 +2464,13 @@
       if ($('#scNewKind').value === 'crew') {
         $('#scNewRequester').value = ($('#scNewTarget').value || '').replace(/\s+/g, '');
       }
+    });
+    // 変更内容に休み系の文言を打ったら種別を「休み希望」へ自動追従
+    //（手で種別を選んだ後は上書きしない＝明示が最優先）
+    $('#scNewLayer').addEventListener('change', () => { $('#scNewLayer').dataset.manual = '1'; });
+    $('#scNewChange').addEventListener('input', () => {
+      const sel = $('#scNewLayer');
+      if (sel && !sel.dataset.manual && /休み|休暇/.test($('#scNewChange').value)) sel.value = 'off';
     });
     // 全員宛（休み募集）: 対象者欄を「休みにしたい人」に読み替える。
     // 送信時は target='全員'・requester=この人 にする（scNewCreateで処理）。
@@ -2568,6 +2627,11 @@
       }
     }
     if (opts && opts.change) $('#scNewChange').value = opts.change;
+    // 種別: 呼び出し元の明示 > 変更内容が休み系なら off > 既定 shift
+    if ($('#scNewLayer')) {
+      $('#scNewLayer').value = (opts && opts.layer) ||
+        (/休み|休暇/.test((opts && opts.change) || '') ? 'off' : 'shift');
+    }
     $('#scNewChange').focus();
     scRefresh();
   }
@@ -2721,7 +2785,7 @@
       'border:1px solid #b9c8e8;background:#f2f6fd;color:#1d4ed8;',
       () => {
         const { dateStr } = readPreset();
-        scOpenNewFor(name, { dateStr, reqTime: OFF_ALLDAY, change: '休みへ変更' });
+        scOpenNewFor(name, { dateStr, reqTime: OFF_ALLDAY, change: '休みへ変更', layer: 'off' });
       });
     cancel.insertAdjacentElement('afterend', btnOff);
     cancel.insertAdjacentElement('afterend', btn);
@@ -2825,11 +2889,12 @@
     if (t.matches('.scn-preset')) {   // 変更内容のワンタップ入力（休みへ変更 等）
       const el = $('#scNewChange');
       if (el) { el.value = t.dataset.v || ''; el.focus(); }
-      // 休み系は対象時間=全日（本人指定2026-08-09「休み希望の場合、時間は全日」）
+      // 休み系は対象時間=全日（本人指定2026-08-09「休み希望の場合、時間は全日」）・種別=休み希望
       if (/休み|休暇/.test(t.dataset.v || '')) {
         const p = reqTimeToHM(OFF_ALLDAY);
         const set = (cls, v) => { const s = $('#scNewForm').querySelector(`.scn-${cls}`); if (s) s.value = v; };
         set('sh', p.sh); set('sm', p.sm); set('eh', p.eh); set('em', p.em);
+        if ($('#scNewLayer')) $('#scNewLayer').value = 'off';
       }
       return;
     }
@@ -2872,8 +2937,9 @@
       const target = zenin ? '全員' : person;
       const requester = zenin ? person.replace(/\s+/g, '') : $('#scNewRequester').value;
       const reqTime = readReqTime($('#scNewForm'), 'scn');
+      const layer = ($('#scNewLayer') && $('#scNewLayer').value) || '';
       const r = await shiftApi('/api/shift/create', {
-        target, target_date: targetDate, change, req_time: reqTime,
+        target, target_date: targetDate, change, req_time: reqTime, layer,
         requester,
         source: $('#scNewSource').value, memo: $('#scNewMemo').value,
       });
@@ -2883,7 +2949,7 @@
       // なので自動チェック → カードは最初から「反映待ち」になる（本人報告2026-08-08
       // 「休み希望への対応が拡張だけでできない」＝工程が店舗発依頼向けのままだった）。
       const notePath = String((r.data && r.data.message) || '').trim();
-      const crewOff = !zenin && /休み|休暇/.test(String(change || '')) &&
+      const crewOff = !zenin && layer === 'off' &&
         normName(requester) && normName(requester) === normName(target);
       if (crewOff && notePath.startsWith('/')) {
         await shiftApi('/api/shift/flag', { path: notePath, key: 'requested_done', value: true });
@@ -2972,8 +3038,10 @@
       const noChecks = !cur || cur.checked_count === 0;
       t.disabled = true;
       const reqTime = readReqTime(f, 'sce');
+      const laySel = f.querySelector('.sc-edit-layer');
       const r = await shiftApi('/api/shift/edit', {
         path: t.dataset.p, target, target_date: targetDate, change, req_time: reqTime,
+        layer: laySel ? laySel.value : undefined,   // 空=未設定（自動判定）へ戻す
       });
       if (!r.ok) { alert(`編集失敗: ${r.error || r.data?.error || ''}`); t.disabled = false; return; }
       // まだチェックが1つも付いていない依頼は、更新後の内容でWowTalk文言を出し直す（本人指定）
