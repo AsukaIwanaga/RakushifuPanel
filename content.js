@@ -1760,8 +1760,12 @@
         continue;
       }
       if (pendingLive.length) {
-        // 進捗段階を状態語で表示（最初の未チェック工程＝今の状態）
-        const label = pendingLive.length === 1 ? scStatusLabel(pendingLive[0]) : `依頼${pendingLive.length}件`;
+        // 進捗段階を「向き＋状態語」で表示（打診=こちら発 / 未処理依頼=クルー発・2026-09-08）
+        const nAsk = pendingLive.filter((c) => scKind(c) === '打診').length;
+        const nCrew = pendingLive.length - nAsk;
+        const label = pendingLive.length === 1
+          ? `${scKind(pendingLive[0])}・${scStatusLabel(pendingLive[0])}`
+          : [nAsk ? `打診${nAsk}` : '', nCrew ? `未処理${nCrew}` : ''].filter(Boolean).join('・');
         mark.textContent = `🔄${label}`;
         mark.style.cssText = 'font:700 10px/14px -apple-system,"Hiragino Sans",sans-serif;' +
           'color:#b02a2a;background:#fdecec;border:1px solid #e8b4b4;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
@@ -1776,7 +1780,7 @@
           'color:#6b7280;background:#f1f2f4;border:1px solid #d3d6db;border-radius:4px;padding:1px 4px;white-space:nowrap;flex:none;';
       }
       mark.title = rel.map((c) =>
-        `${c.is_rejected ? '🚫拒否' : c.is_done ? '✅' : `【${scStatusLabel(c)}】`} ${c.title}`).join('\n');
+        `${c.is_rejected ? '🚫拒否' : c.is_done ? '✅' : `【${scKind(c)}・${scStatusLabel(c)}】`} ${c.title}`).join('\n');
       box.appendChild(mark);
       // 締切後の途中提出希望は専用の青チップも出す（本人指定2026-08-06）。種別明示が優先
       if (pending.some((c) => scLayer(c) ? scLayer(c) === 'wish'
@@ -1990,10 +1994,11 @@
           if (c.is_done) band.style.borderStyle = 'dashed';   // 完了済みの休みは点線枠
           const lab = document.createElement('div');
           lab.className = 'rf-req-line';
+          // 未完了は「向き」(打診/未処理依頼)を前置（本人指定2026-09-08。途中希望=受取専用は据え置き）
           lab.textContent = rejected ? '🚫拒否' : c.target === '全員' ? `🙋募集(${c.requester || ''}の代わり)`
-            : isOff ? (c.is_done ? '休み(済)' : '休み希望')
+            : isOff ? (c.is_done ? '休み(済)' : `${scKind(c)}・休み希望`)
             : isLate ? (c.is_done ? '途中希望(済)' : '途中希望')
-            : (c.is_done ? '変更済' : `依頼中(${scStatusLabel(c)})`);
+            : (c.is_done ? '変更済' : `${scKind(c)}(${scStatusLabel(c)})`);
           if (!rejected && c.accepted_done) lab.textContent = `◯${lab.textContent}`;  // 快諾済み
           lab.style.cssText = `position:absolute;left:${unit === '%' ? `${x}%` : `${x + 1}px`};` +
             `top:${1 + idx * 11}px;z-index:6;` +
@@ -2330,7 +2335,7 @@
             ? `✅ 対応済み(帯は目印として維持): ${c.title}`
             : zenin
               ? `🙋 休み募集(${scStatusLabel(c)}): ${c.requester || ''}さんの代わり ${c.change || ''}`.trim()
-              : `🔄 ${scStatusLabel(c)}: ${c.title}`;
+              : `🔄 ${scKind(c)}・${scStatusLabel(c)}: ${c.title}`;
         // 最背面の塗りに変更（本人指定2026-08-05「依頼中や拒否のラインも同様に最背面の塗りつぶしで」）。
         // 全高フィル＋左右の細エッジで区間を示す。z=2＝不足/過剰帯(z1)の上・バー(z200)の下。
         // クリック透過でシフト編集を妨げず、ホバー用の小チップ(前面)は従来どおり。
