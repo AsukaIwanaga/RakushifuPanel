@@ -2750,13 +2750,19 @@
         }
         const cur = [live.start_as_min, live.end_as_min];
         // 直前の版: らくしふは編集すると旧行を is_deleted で残す。同日の削除済み行のうち
-        // 生きている行と重なって時刻が違う最新のもの＝「らくしふを先に直してから❗を押した」
-        // ときの変更前時刻（本人要望2026-09-04「16時上がりのところを15:30に、を読み取って」）
+        // 時刻が違う最新のもの＝「らくしふを先に直してから❗を押した」ときの変更前時刻
+        // （本人要望2026-09-04「16時上がりのところを15:30に、を読み取って」）。
+        // 重なる行を優先しつつ、重ならなくても諦めない（本人報告2026-09-08: 11:30-16:00→
+        // 18:30-22:30の丸ごと移動で旧版が拾えず「22時30分あがりのところ、」と新終業が
+        // 主語になった）。無関係な削除行（後から足して取り消したバー等）の誤爆防止に、
+        // 重ならない候補は生きている行より古い（id小＝置換前に作られた）行に限る
         const dels = all.filter((s) => s.is_deleted &&
-          (s.start_as_min !== cur[0] || s.end_as_min !== cur[1]) &&
-          Math.min(s.end_as_min, cur[1]) > Math.max(s.start_as_min, cur[0]))
+          (s.start_as_min !== cur[0] || s.end_as_min !== cur[1]))
           .sort((a, b) => (b.id || 0) - (a.id || 0));
-        return { cur, old: dels.length ? [dels[0].start_as_min, dels[0].end_as_min] : null };
+        const ovl = dels.filter((s) => Math.min(s.end_as_min, cur[1]) > Math.max(s.start_as_min, cur[0]));
+        const older = dels.filter((s) => (s.id || 0) < (live.id || Infinity));
+        const pick = ovl[0] || older[0] || null;
+        return { cur, old: pick ? [pick.start_as_min, pick.end_as_min] : null };
       } catch { return null; }
     };
     // 新旧の時刻から依頼文と対象時間帯を組む（終業だけ/始業だけ/両方で言い回しを変える）
