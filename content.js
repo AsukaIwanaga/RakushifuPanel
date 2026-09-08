@@ -1677,6 +1677,10 @@
     const stage = SC_STATUS.find(([k]) => !c[k]);
     return stage ? stage[1] : '完了';
   };
+  // 依頼の向き: こちら(店長)発=「打診」/ クルー発(休ませて欲しい等)=「未処理依頼」（本人指定2026-09-08）。
+  // 判定は source（店舗判断/ShiftDraft=こちら発）→ requester=岩永飛鳥 の順。既存331件はこの2条件で綺麗に割れる
+  const scKind = (c) => (c.source === '店舗判断' || c.source === 'ShiftDraft' ||
+                         c.requester === '岩永飛鳥') ? '打診' : '未処理依頼';
   // 出勤可系(途中希望・勤務可)の依頼か（休み系は除外）。週バッジ合流とチップ判定で共用
   const scAvailCase = (c) => {
     const L = scLayer(c);   // 種別が明示されていればそれが正（wish=出勤可系/off・shiftは対象外）
