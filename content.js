@@ -3908,6 +3908,9 @@
     const fixPS = { F: zero(), K: zero() };
     const resolveOv = (v, base) => {
       if (!v) return { sec: base };
+      // スケジューラーのコマ特別値（2026-09-15）: NP=非生産（レーン区分で非生産PLAN）/ MGT=MGT業務（どこにも数えない）
+      if (v === 'MGT') return { skip: true };
+      if (v === 'NP') return { np: true, npSec: base === 'F' ? 'F' : 'K' };
       if (['F', 'K', 'FK'].includes(v)) return { sec: v };
       if (prodFixSec[v]) return { sec: prodFixSec[v] };
       if (ftSecById[v]) return { np: true, npSec: npSecOf(v) };
@@ -3928,7 +3931,7 @@
     if (tpl) {
       for (const rw of (tpl.rows || [])) if (planG[rw.sec])
         rowAdd(rw,
-          (tgt, k) => { if (tgt.np) { fixP[k >> 1] += 0.5; fixPS[tgt.npSec][k >> 1] += 0.5; } else planG[tgt.sec][k >> 1] += 0.5; },
+          (tgt, k) => { if (tgt.skip) return; if (tgt.np) { fixP[k >> 1] += 0.5; fixPS[tgt.npSec][k >> 1] += 0.5; } else planG[tgt.sec][k >> 1] += 0.5; },
           (sec) => HOURS.forEach((h, i) => { planG[sec][i] += Number((rw.hours || [])[i]) || 0; }));
       for (const id in (tpl.fixedHours || {})) {
         const sec = prodFixSec[id];
@@ -3958,7 +3961,7 @@
     if (tpl) {
       for (const rw of (tpl.rows || [])) if (planG30[rw.sec])
         rowAdd(rw,
-          (tgt, k) => { if (tgt.np) { fixP30[k] += 1; fixPS30[tgt.npSec][k] += 1; } else planG30[tgt.sec][k] += 1; },
+          (tgt, k) => { if (tgt.skip) return; if (tgt.np) { fixP30[k] += 1; fixPS30[tgt.npSec][k] += 1; } else planG30[tgt.sec][k] += 1; },
           (sec) => { for (let k = 0; k < N30; k++)
             planG30[sec][k] += Number((rw.h30 || [])[k] ?? (rw.hours || [])[k >> 1]) || 0; });
       const add30 = (id, k, v) => {
@@ -4137,6 +4140,8 @@
     };
     const slotInfo = (rw, k) => {   // 生産レーンの1コマ: {sec(計上先), np, kind, task}
       const ov = Array.isArray(rw.sec30) ? rw.sec30[k] : null;
+      if (ov === 'NP') return { sec: rw.sec, np: true, kind: 'task', task: { id: 'NP', label: '非生産' } };
+      if (ov === 'MGT') return { sec: rw.sec, np: false, mgt: true, kind: 'task', task: { id: 'MGT', label: 'MGT業務' } };
       if (ov && ftMap[ov]) return { sec: ftMap[ov].sec, np: !prodIds[ov], kind: 'task', task: ftMap[ov] };
       const eff = (ov === 'F' || ov === 'K' || ov === 'FK') ? ov : rw.sec;
       return { sec: eff, np: false, kind: (k < 2 || k >= 34) ? 'tl' : 'base' };
@@ -4147,6 +4152,7 @@
       for (let k = 0; k < 36; k++) {
         if (!Number(rw.h30[k])) continue;
         const si = slotInfo(rw, k);
+        if (si.mgt) { laneTot[k >> 1] += 0.5; continue; }   // MGT業務は生産/非生産/区分に数えない
         addSlot(k, si.sec, si.np, 1);
       }
     }
@@ -4199,6 +4205,7 @@
         for (let k = 0; k < 36; k++) {
           if (!Number(rw.h30[k])) continue;
           const si = slotInfo(rw, k);
+          if (si.mgt) continue;
           if (si.np) mnp[k] += 1; else (ms[si.sec] || ms.F)[k] += 1;
         }
       }
@@ -4269,8 +4276,8 @@
         let inner = '', title = `${tmOf(k)}〜${tmOf(j)}`;
         if (si.kind === 'task') {
           // 非生産タスク=黄(琥珀・本人指定2026-08-16「紫ではなく黄色で」)・生産(トップ/ラスト系)=斜線
-          style += `background:${si.np ? TASKC : hatch(base)};`;
-          title += ` ${si.task.label}${si.np ? '（非生産）' : '（生産）'}`;
+          style += `background:${si.np ? TASKC : si.mgt ? hatch('#374151') : hatch(base)};`;
+          title += ` ${si.task.label}${si.np ? '（非生産）' : si.mgt ? '（MGT業務）' : '（生産）'}`;
           if ((j - k) * SLOTW >= 40) inner = `<span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:9px;overflow:hidden;white-space:nowrap;padding:0 3px">${esc2(si.task.label)}</span>`;
         } else if (si.kind === 'tl') {
           style += `background:${hatch(base)};`;
@@ -4905,7 +4912,7 @@
         if (!Array.isArray(rw.sec30) || !Array.isArray(rw.h30) || rw.h30.length !== 36) continue;
         for (let k = 0; k < 36; k++) {
           const v = rw.sec30[k];
-          if (rw.h30[k] && v && !['F', 'K', 'FK'].includes(v) && !prodIds[v] && ftIds.has(v)) fx += 0.5;
+          if (rw.h30[k] && v && (v === 'NP' || (!['F', 'K', 'FK'].includes(v) && !prodIds[v] && ftIds.has(v)))) fx += 0.5;
         }
       }
       planFix = r1(fx);
