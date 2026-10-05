@@ -21,8 +21,12 @@
     { rowLabel: 'REQ（FK）',  head: 'REQ FK', cls: '' },
     { rowLabel: 'REQ（SUM）', head: 'REQ計',  cls: 'sum' },
   ];
-  // らくしふ実シフトの genre_id → F/K 分類（GT吉祥寺元町通: 2=フロア, 3=キッチン。
-  // 17=社員(REGULAR)・4=未使用 はクルーREQの比較対象外）
+  // URLに s=/g= が無い時の既定の店・ジャンル（2026-10-05 三鷹新川へ異動。正本は ~/my job/store_config.json。
+  // 三鷹新川=889 [2,3,4,5,17] / 旧 吉祥寺元町通=945 [2,3,4,17]。通常はページURLの s=/g= が優先される）
+  const DEFAULT_STORE_ID = '889';
+  const DEFAULT_GENRES = ['2', '3', '4', '5', '17'];
+  // らくしふ実シフトの genre_id → F/K 分類（新川・元町通とも 2=フロア, 3=キッチン。
+  // 17=社員(REGULAR)・4=清掃・5=RS(新川のみ・パートナー/募集中の枠) はクルーREQの比較対象外）
   const GENRES_F = [2];
   const GENRES_K = [3];
   // 正社員（この人のMGT/TRer/TRee時間は MGT H、その他の人のは CREW MGT H に計上）
@@ -323,7 +327,7 @@
     const q = new URLSearchParams();
     q.set('page_ctx_name', 'admin');
     q.set('store_id', storeId);
-    for (const g of (genreIds.length ? genreIds : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    for (const g of (genreIds.length ? genreIds : DEFAULT_GENRES)) q.append('genre_ids[]', g);
     q.set('start_date', ymd(date));
     q.set('end_date', ymd(date));
     q.set('is_staff_print_page', 'false');
@@ -1259,7 +1263,7 @@
     const p = new URLSearchParams(location.search);
     const q = new URLSearchParams();
     q.set('page_ctx_name', 'admin'); q.set('store_id', p.get('s'));
-    for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    for (const g of (p.getAll('g').length ? p.getAll('g') : DEFAULT_GENRES)) q.append('genre_ids[]', g);
     q.set('start_date', ymd(date)); q.set('end_date', ymd(date)); q.set('is_staff_print_page', 'false');
     const r = await fetch('/ajax/admin/v2/schedules?' + q, {
       credentials: 'include', headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
@@ -2062,7 +2066,7 @@
         const q = new URLSearchParams();
         q.set('page_ctx_name', 'admin');
         q.set('store_id', storeId);
-        for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+        for (const g of (p.getAll('g').length ? p.getAll('g') : DEFAULT_GENRES)) q.append('genre_ids[]', g);
         q.set('start_date', sd);
         q.set('end_date', ed);
         q.set('is_staff_print_page', 'false');
@@ -2724,8 +2728,8 @@
         const p2 = new URLSearchParams(location.search);
         const q = new URLSearchParams();
         q.set('page_ctx_name', 'admin');
-        q.set('store_id', p2.get('s') || '945');
-        for (const g of (p2.getAll('g').length ? p2.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+        q.set('store_id', p2.get('s') || DEFAULT_STORE_ID);
+        for (const g of (p2.getAll('g').length ? p2.getAll('g') : DEFAULT_GENRES)) q.append('genre_ids[]', g);
         q.set('start_date', iso);
         q.set('end_date', iso);
         q.set('is_staff_print_page', 'false');
@@ -3168,7 +3172,7 @@
     const q = new URLSearchParams();
     q.set('page_ctx_name', 'admin');
     q.set('store_id', storeId);
-    for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    for (const g of (p.getAll('g').length ? p.getAll('g') : DEFAULT_GENRES)) q.append('genre_ids[]', g);
     q.set('start_date', ymd(mon));
     q.set('end_date', ymd(sun));
     q.set('is_staff_print_page', 'false');
@@ -3230,13 +3234,13 @@
   async function mcalMonth(ym) {
     if (mcalCache[ym]) return mcalCache[ym];
     const p = new URLSearchParams(location.search);
-    const storeId = p.get('s') || '945';
+    const storeId = p.get('s') || DEFAULT_STORE_ID;
     const [y, m] = ym.split('-').map(Number);
     const last = new Date(y, m, 0).getDate();
     const q = new URLSearchParams();
     q.set('page_ctx_name', 'admin');
     q.set('store_id', storeId);
-    for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    for (const g of (p.getAll('g').length ? p.getAll('g') : DEFAULT_GENRES)) q.append('genre_ids[]', g);
     q.set('start_date', `${ym}-01`);
     q.set('end_date', `${ym}-${String(last).padStart(2, '0')}`);
     q.set('is_staff_print_page', 'false');
@@ -5076,7 +5080,7 @@
       (tmax > -99 ? ` ${tmax}°` : '');
     chip.title = Object.entries(day).map(([b, c]) =>
       `${b} ${c['概況']}${c.rain_mm ? ` ☔${c.rain_mm}mm` : ''} 最高${c.tmax}℃`).join('\n') +
-      `\n(${(wx.fetched_at || '')} open-meteo 吉祥寺)`;
+      `\n(${(wx.fetched_at || '')} open-meteo ${wx.place || wx.location || '店舗周辺'})`;
     chip.style.cssText = 'display:inline-block;font-size:11.5px;font-weight:500;color:#6b7280;' +
       'margin-right:14px;font-family:"Hiragino Sans","Helvetica Neue",-apple-system,sans-serif;white-space:nowrap;';
     anchor.after(chip);
@@ -5171,7 +5175,7 @@
     const q = new URLSearchParams();
     q.set('page_ctx_name', 'admin');
     q.set('store_id', storeId);
-    for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    for (const g of (p.getAll('g').length ? p.getAll('g') : DEFAULT_GENRES)) q.append('genre_ids[]', g);
     q.set('start_date', `${ym}-01`);
     q.set('end_date', `${ym}-${String(monthDays).padStart(2, '0')}`);
     q.set('is_staff_print_page', 'false');
@@ -6399,7 +6403,7 @@
       const q = new URLSearchParams();
       q.set('page_ctx_name', 'admin');
       q.set('store_id', storeId);
-      for (const g of (genreIds.length ? genreIds : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+      for (const g of (genreIds.length ? genreIds : DEFAULT_GENRES)) q.append('genre_ids[]', g);
       q.set('start_date', start);
       q.set('end_date', end);
       q.set('is_staff_print_page', 'false');
@@ -6482,7 +6486,7 @@
     if (!storeId) throw new Error('store_id 不明');
     const q = new URLSearchParams();
     q.set('page_ctx_name', 'admin'); q.set('store_id', storeId);
-    for (const g of (p.getAll('g').length ? p.getAll('g') : ['2', '3', '4', '17'])) q.append('genre_ids[]', g);
+    for (const g of (p.getAll('g').length ? p.getAll('g') : DEFAULT_GENRES)) q.append('genre_ids[]', g);
     q.set('start_date', ymd(date)); q.set('end_date', ymd(date)); q.set('is_staff_print_page', 'false');
     const r = await fetch('/ajax/admin/v2/schedules?' + q, {
       credentials: 'include', headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
@@ -7080,7 +7084,7 @@
 
   // ===== 店舗メモに「【修正客数】###」(LE客数の日予測) を入れる（次1週間・空の日だけ） =====
   // 口: GET/POST /ajax/(admin/)dailymemos（実測で確定）。既存メモがある日は触らない。
-  const MEMO_GENRES = ['2', '3', '4', '17'];
+  const MEMO_GENRES = DEFAULT_GENRES;
   async function dailyMemoMap(storeId, fromStr, toStr) {
     const q = new URLSearchParams(); q.set('store_id', storeId);
     for (const g of MEMO_GENRES) q.append('genre_ids[]', g);
