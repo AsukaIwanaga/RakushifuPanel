@@ -1,6 +1,6 @@
 #!/bin/sh
 # MacBookで1回だけ実行: 15分ごとの自動pullをlaunchdに登録する。
-#   sh ~/RakushifuPanel/scripts/setup-macbook.sh
+#   sh ~/claude/RakushifuPanel/scripts/setup-macbook.sh
 # 何度実行しても同じ状態になる（登録済みなら入れ直す）。
 set -eu
 

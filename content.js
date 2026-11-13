@@ -21,7 +21,7 @@
     { rowLabel: 'REQ（FK）',  head: 'REQ FK', cls: '' },
     { rowLabel: 'REQ（SUM）', head: 'REQ計',  cls: 'sum' },
   ];
-  // URLに s=/g= が無い時の既定の店・ジャンル（2026-10-05 三鷹新川へ異動。正本は ~/my job/store_config.json。
+  // URLに s=/g= が無い時の既定の店・ジャンル（2026-10-05 三鷹新川へ異動。正本は ~/claude/my job/store_config.json。
   // 三鷹新川=889 [2,3,4,5,17] / 旧 吉祥寺元町通=945 [2,3,4,17]。通常はページURLの s=/g= が優先される）
   const DEFAULT_STORE_ID = '889';
   const DEFAULT_GENRES = ['2', '3', '4', '5', '17'];
