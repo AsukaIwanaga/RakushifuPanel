@@ -930,6 +930,7 @@
     </div>
     <div id="wsLanesPanel">
       <div id="wsLanesBody" class="muted">モデルWS読込中…</div>
+      <div id="rfAsgBox"></div>
     </div>
     <div id="awsPanel">
       <div id="awsBody" class="muted">仮WS マンスリー読込中…</div>
@@ -4441,6 +4442,7 @@
   function renderWsLanes() {
     const el = $('#wsLanesBody');
     if (!el || !wsLanesPanel.classList.contains('open')) return;
+    renderAsgBox();
     const params = leMakerCache && leMakerCache.params;
     if (!params || !params.ws) {
       el.innerHTML = '<span class="muted">モデルWS読込中…（出ない時はパネルの「更新」）</span>';
@@ -7546,6 +7548,133 @@
     }
   }
 
+  // ===== 🎯 割り当て案（スケジューラー仮WSの「割り当て（業務）」）→ らくしふ =====（2026-11-16）
+  // 出所: :8790 /api/task-assign?month=（{iso:{assign:{user_id:[業務|null]*36}}}・6:00起点30分）
+  // 口: 中身と同じ PUT task_assign/bulk（そのシフトの区間タスクを丸ごと置換）。確定送信・削除はしない。
+  // ・割り当て語彙(IN/サカ/D/QC/FS/MS/All/FK/配送/スタンバイ/事務/トレーニング)以外の既存区間タスクは残す
+  //   （勉強会・面接など）。それと重なる枠は割り当て側を落とす。
+  // ・休憩は らくしふの現在値をそのまま送る（時間・休憩は変えない）。枠は休憩とシフト範囲でクリップ。
+  // ・スケジューラーで割り当てを保存していない人のシフトは触らない。
+  const ASG_VOCAB = ['IN', 'サカ', 'D', 'QC', 'FS', 'MS', 'All', 'FK', '配送', 'スタンバイ', '事務', 'トレーニング'];
+  let asgRows = null, asgStoreId = null;
+  async function buildAsgPlan(date) {
+    const iso = ymd(date);
+    const [ar, cur, taskMap] = await Promise.all([
+      draftApi(`/api/task-assign?month=${iso.slice(0, 7)}`),
+      fetchInstructedRaw(date),
+      fetchStoreTaskMap(new URLSearchParams(location.search).get('s')),
+    ]);
+    if (!ar || !ar.ok || !ar.data || !ar.data.ok) throw new Error('スケジューラー(:8790)から割り当て案が取れません');
+    const day = (ar.data.days || {})[iso];
+    if (!day || !day.assign || !Object.keys(day.assign).length) return { rows: [], none: true, storeId: cur.storeId };
+    const stripNote = (s) => (s || '').replace(/\s*[（(].*$/, '').trim();
+    const nameToId = {};
+    for (const [id, nm] of Object.entries(taskMap)) {
+      nameToId[nm] = +id; const b = stripNote(nm); if (b && !(b in nameToId)) nameToId[b] = +id;
+    }
+    const vocabIds = new Set(ASG_VOCAB.map((n) => nameToId[n]).filter(Boolean));
+    const nameOf = {};
+    for (const uu of (cur.users || [])) nameOf[uu.id] = (uu.name || '').replace(/\s+/g, ' ').trim();
+    const rows = [];
+    for (const s of cur.list) {
+      if (s.off || s.start_as_min == null) continue;
+      if (String(s.attending_store_id) !== String(cur.storeId)) continue;   // 他店応援は対象外（400）
+      if (s.attending_genre_id !== 2 && s.attending_genre_id !== 3) continue;
+      const a = day.assign[String(s.user_id)];
+      if (!a) continue;
+      const rests = apiRestToMin(s.rest_times);
+      const keep = (s.instructed_schedule_store_tasks || [])
+        .filter((t) => !vocabIds.has(t.store_task_id))
+        .map((t) => ({ id: t.store_task_id, start_as_min: t.start_time_as_min, end_as_min: t.end_time_as_min }));
+      const blocked = (m) => m < s.start_as_min || m >= s.end_as_min ||
+        rests.some(([rs, re]) => rs <= m && m < re) ||
+        keep.some((t) => t.start_as_min <= m && m < t.end_as_min);
+      // 5分刻みで「その時刻の業務」を引いて区間に畳む（休憩・既存タスクの端が30分境界でなくても正確に切る）
+      const want = []; const unknown = new Set(); let dropped = 0;
+      for (let m = s.start_as_min; m < s.end_as_min; m += 5) {
+        const i = Math.floor((m - 360) / 30);
+        const nm = (i >= 0 && i < 36) ? a[i] : null;
+        if (!nm) continue;
+        if (blocked(m)) { if (!(rests.some(([rs, re]) => rs <= m && m < re))) dropped += 5; continue; }
+        const id = nameToId[nm] || nameToId[stripNote(nm)];
+        if (!id) { unknown.add(nm); continue; }
+        const last = want[want.length - 1];
+        if (last && last.id === id && last.end_as_min === m) last.end_as_min = m + 5;
+        else want.push({ id, start_as_min: m, end_as_min: m + 5 });
+      }
+      const curV = (s.instructed_schedule_store_tasks || []).filter((t) => vocabIds.has(t.store_task_id))
+        .map((t) => ({ id: t.store_task_id, start_as_min: t.start_time_as_min, end_as_min: t.end_time_as_min }));
+      const key = (arr) => arr.slice().sort((x, y) => x.start_as_min - y.start_as_min)
+        .map((t) => `${t.id}@${t.start_as_min}-${t.end_as_min}`).join(',');
+      if (!want.length || key(want) === key(curV)) continue;   // 割り当て無し / 既に一致
+      const lab = (t) => `${taskMap[t.id] || t.id} ${hm(t.start_as_min)}-${hm(t.end_as_min)}`;
+      rows.push({
+        user_id: s.user_id, name: nameOf[s.user_id] || String(s.user_id),
+        genre: g2label(s.attending_genre_id), genre_id: s.attending_genre_id, shared: !!(s.is_shared || s.is_fixed),
+        time: `${hm(s.start_as_min)}-${hm(s.end_as_min)}`, s0: s.start_as_min,
+        desc: want.map(lab).join(' / '), before: curV.length ? sortTasks(curV).map(lab).join(' / ') : '',
+        note: [unknown.size ? `らくしふに無い業務: ${[...unknown].join('・')}` : '',
+               dropped ? `既存タスクと重なる${dropped}分は除外` : ''].filter(Boolean).join('／'),
+        sched: { id: s.id, rest_times: s.rest_times || [], store_tasks: keep.concat(want) },
+      });
+    }
+    rows.sort((x, y) => x.genre.localeCompare(y.genre) || x.s0 - y.s0);
+    return { rows, storeId: cur.storeId };
+  }
+  const sortTasks = (arr) => arr.slice().sort((x, y) => x.start_as_min - y.start_as_min);
+  function renderAsgBox() {
+    const box = $('#rfAsgBox');
+    if (!box) return;
+    const iso = ymd(targetDate);
+    if (box.dataset.iso === iso) return;
+    box.dataset.iso = iso;
+    asgRows = null;
+    box.innerHTML = `<div style="border-top:1px solid #e3e2dc;margin-top:10px;padding-top:8px;font-size:12.5px">` +
+      `<b>🎯 割り当て案 → らくしふ</b> <span class="muted" style="font-size:11px">${esc(iso)}・スケジューラー仮WSの「割り当て（業務）」を反映（確定送信・削除はしません／1件ずつ手押し）</span> ` +
+      `<button id="asgPlan" style="margin-left:6px">差分を確認</button>` +
+      `<a href="http://mac-mini.tail1f88ff.ts.net:8790/#act=${esc(iso)}" target="_blank" rel="noopener" style="margin-left:8px;font-size:11px;color:#1a5fb4;text-decoration:none">スケジューラーで編集↗</a>` +
+      `<div id="asgList" style="margin-top:6px"></div></div>`;
+  }
+  async function renderAsgPlan() {
+    const el = $('#asgList');
+    if (!el) return;
+    el.innerHTML = '<span class="muted">計算中…</span>';
+    let res;
+    try { res = await buildAsgPlan(targetDate); } catch (e) { el.innerHTML = `<span class="err">失敗: ${esc(e.message)}</span>`; return; }
+    asgRows = res.rows; asgStoreId = res.storeId;
+    if (res.none) { el.innerHTML = '<span class="muted">この日はスケジューラーで割り当てが保存されていません（仮WS → 🎯割り当て で作成）</span>'; return; }
+    if (!asgRows.length) { el.innerHTML = '<span style="color:#2e7d32">✓ らくしふの割り当ては案どおりです（引くものなし）</span>'; return; }
+    el.innerHTML = `<div style="margin:2px 0 4px">反映できる ${asgRows.length}件 ` +
+      `<button id="asgAll">▶ ${asgRows.length}件をまとめて引く</button></div>` +
+      asgRows.map((r, i) => `<div class="asgrow" data-i="${i}" style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;border-bottom:1px solid #eee">` +
+        `<span style="flex:0 0 150px"><b style="display:inline-block;width:18px;text-align:center;color:#fff;border-radius:3px;font-size:10px;background:${r.genre === 'F' ? '#2563eb' : '#2e9e5b'}">${esc(r.genre)}</b> ${esc(r.name)}<br><span class="muted" style="font-size:10.5px">${esc(r.time)}${r.shared ? ' ⚠共有済み' : ''}</span></span>` +
+        `<span style="flex:1;font-size:11.5px">${esc(r.desc)}` +
+        (r.before ? `<br><span class="muted" style="font-size:10.5px">いま: ${esc(r.before)}</span>` : '') +
+        (r.note ? `<br><span style="font-size:10.5px;color:#b26a00">${esc(r.note)}</span>` : '') + `</span>` +
+        `<button class="asgap" data-i="${i}">引く</button></div>`).join('');
+  }
+  async function applyAsgRow(i) {
+    const r = asgRows && asgRows[i];
+    if (!r) return false;
+    const token = rfCsrf();
+    if (!token) { alert('CSRFトークンが取れません。ページをリロードしてください。'); return false; }
+    const rowEl = $(`#asgList .asgrow[data-i="${i}"]`);
+    const btn = rowEl && rowEl.querySelector('.asgap');
+    if (btn) { btn.disabled = true; btn.textContent = '送信中'; }
+    try {
+      await taskAssignRequest(targetDate, asgStoreId, r.genre_id, r.sched, token);
+      if (btn) btn.textContent = '✓ 引いた';
+      if (rowEl) rowEl.style.opacity = '0.55';
+      return true;
+    } catch (e) {
+      if (btn) { btn.textContent = '再試行'; btn.disabled = false; }
+      if (rowEl) { rowEl.style.background = '#fdecea';
+        rowEl.querySelector('span:nth-child(2)').insertAdjacentHTML('beforeend', `<br><span style="color:#c0392b;font-size:10.5px">→ 失敗: ${esc(e.message)}</span>`); }
+      reportReflectFailure('割り当て', targetDate, r, e);
+      return false;
+    }
+  }
+
   // ===== らくしふ各人の行に、その人のShiftDraft原案を薄いバーで重ねる =====
   // 目的: らくしふの確定ライン（.schedule-bar）の下に「海賊版らくしふで描いた場合のシフト」を
   //       薄く出し、確定作業の下敷きにする。休憩は描かない（本人指定）。
@@ -7896,6 +8025,20 @@
   // 反映セクションのクリック（差分1件 or 一括）。確定には触れない。
   $('#ckPlan').addEventListener('click', () => withReflectLock(renderCkPlan));
   $('#taskPlan').addEventListener('click', () => withReflectLock(renderTaskPlan));
+  $('#rfAsgBox').addEventListener('click', async (ev) => {
+    if (ev.target.id === 'asgPlan') { withReflectLock(renderAsgPlan); return; }
+    const b = ev.target.closest('.asgap');
+    if (b) { const ok = await withReflectLock(() => applyAsgRow(+b.dataset.i)); scheduleReload(ok); return; }
+    if (ev.target.id === 'asgAll') {
+      const btn = ev.target;
+      const n = await withReflectLock(async () => {
+        btn.disabled = true; let w = 0;
+        for (let i = 0; i < asgRows.length; i++) { if (await applyAsgRow(i)) w += 1; }
+        btn.textContent = '完了'; return w;
+      });
+      scheduleReload(n);
+    }
+  });
   $('#reflect').addEventListener('click', async (ev) => {
     const tp = ev.target.closest('.tap');
     if (tp) { const i = +tp.dataset.i; const ok = await withReflectLock(() => applyTaskRow(i)); scheduleReload(ok); return; }
