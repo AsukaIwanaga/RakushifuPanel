@@ -7490,7 +7490,7 @@
       const label = (t) => `${taskMap[t.id] || t.id} ${hm(t.start_as_min)}-${hm(t.end_as_min)}`;
       rows.push({
         user_id: s.user_id, name: nameOf[s.user_id] || String(s.user_id),
-        genre: g2label(s.attending_genre_id), genre_id: s.attending_genre_id,
+        genre: s.attending_genre_id === 17 ? '正' : g2label(s.attending_genre_id), genre_id: s.attending_genre_id,
         desc: want.length ? want.map(label).join(' / ') : '（区間タスクを消す）',
         // 休憩も原案の値で送る（タスクと整合）。ただし**このバーの出勤範囲でクリップ**する。
         // らくしふが同一(人,区分)を複数バーに割っていると、別バーの休憩が混入して
@@ -7579,7 +7579,8 @@
     for (const s of cur.list) {
       if (s.off || s.start_as_min == null) continue;
       if (String(s.attending_store_id) !== String(cur.storeId)) continue;   // 他店応援は対象外（400）
-      if (s.attending_genre_id !== 2 && s.attending_genre_id !== 3) continue;
+      // 正社員ライン(genre17)も対象（本人要望2026-11-24。PUTは同じ口で genre_id=17 を渡す）
+      if (![2, 3, 17].includes(s.attending_genre_id)) continue;
       const a = day.assign[String(s.user_id)];
       if (!a) continue;
       const rests = apiRestToMin(s.rest_times);
@@ -7647,7 +7648,7 @@
     el.innerHTML = `<div style="margin:2px 0 4px">反映できる ${asgRows.length}件 ` +
       `<button id="asgAll">▶ ${asgRows.length}件をまとめて引く</button></div>` +
       asgRows.map((r, i) => `<div class="asgrow" data-i="${i}" style="display:flex;gap:8px;align-items:flex-start;padding:4px 0;border-bottom:1px solid #eee">` +
-        `<span style="flex:0 0 150px"><b style="display:inline-block;width:18px;text-align:center;color:#fff;border-radius:3px;font-size:10px;background:${r.genre === 'F' ? '#2563eb' : '#2e9e5b'}">${esc(r.genre)}</b> ${esc(r.name)}<br><span class="muted" style="font-size:10.5px">${esc(r.time)}${r.shared ? ' ⚠共有済み' : ''}</span></span>` +
+        `<span style="flex:0 0 150px"><b style="display:inline-block;width:18px;text-align:center;color:#fff;border-radius:3px;font-size:10px;background:${r.genre === 'F' ? '#2563eb' : r.genre === 'K' ? '#2e9e5b' : '#161616'}">${esc(r.genre)}</b> ${esc(r.name)}<br><span class="muted" style="font-size:10.5px">${esc(r.time)}${r.shared ? ' ⚠共有済み' : ''}</span></span>` +
         `<span style="flex:1;font-size:11.5px">${esc(r.desc)}` +
         (r.before ? `<br><span class="muted" style="font-size:10.5px">いま: ${esc(r.before)}</span>` : '') +
         (r.note ? `<br><span style="font-size:10.5px;color:#b26a00">${esc(r.note)}</span>` : '') + `</span>` +
